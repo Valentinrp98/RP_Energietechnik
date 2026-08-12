@@ -6,7 +6,7 @@
 
 const FIELD_KEYS = {
   // --- Matching-Felder ---
-  sevdesk_angebotsnummer:     'e442e2f3803eedfe77a2e4d7c5e180d33093e067',  
+  sevdesk_angebotsnummer:     '9935f33d1f8c5575da1aa3bdf1c2329bed92398b',  
   sevdesk_kunden_id:          '8926e917db5b38f34fccc43fe74f05a9730e247e',
   Module_Anzahl:               '46e74c317774c91ac843a431780ad24d2e59da03',
   Module_Marke:                '717c4708845a942034c80f4687862714d65c0311',
