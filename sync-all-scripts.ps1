@@ -8,10 +8,18 @@ $basePath = "C:\Users\valen\OneDrive\Documents\RP\Claude_Work_RP\RP-Google-Scrip
 $logPath = Join-Path $basePath "sync-log.txt"
 
 # Projektordner
+# Bundesland-aus-PLZ und Montagepartner-aus-Bundesland haben noch kein .clasp.json (nie per
+# "clasp clone <scriptId>" verknüpft) -- clasp pull schlägt dort fehl, bis das nachgeholt wird.
+# Ordnererstellung-bei-Gewonnen und Sheet-Sync existieren aktuell nur lokal als Code, noch nicht
+# im Apps-Script-Editor angelegt -- erst nach "clasp clone <scriptId>" dort hier eintragen.
 $projects = @(
     "Drive-Ordner-Automation",
     "Pipedrive-form-prefill-mail-trigger",
-    "Sevdesk-Pipdrive_sync"
+    "Sevdesk-Pipdrive_sync",
+    "Bundesland-aus-PLZ",
+    "Montagepartner-aus-Bundesland"
+    # "Ordnererstellung-bei-Gewonnen"  # TODO: einkommentieren, sobald per clasp verknüpft
+    # "Sheet-Sync"                     # TODO: einkommentieren, sobald per clasp verknüpft
 )
 
 # Heutiges Datum für Commit-Message
