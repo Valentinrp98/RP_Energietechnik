@@ -46,7 +46,7 @@ function testEinzelDeal() {
  * IDs einfach in der Liste unten eintragen/ändern und Funktion ausführen.
  */
 function fillBundeslandForAusgewaehlteDeals() {
-  const dealIds = [7253]; // hier eigene Deal-IDs eintragen, z.B. [7253, 7301, 7455]
+  const dealIds = [7253,7255]; // hier eigene Deal-IDs eintragen, z.B. [7253, 7301, 7455]
   dealIds.forEach(dealId => {
     const result = fillBundeslandForDeal(dealId);
     Logger.log(`Deal ${dealId}: ${result}`);

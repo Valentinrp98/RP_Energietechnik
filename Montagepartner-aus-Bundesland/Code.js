@@ -46,7 +46,7 @@ function testEinzelDeal() {
  * damit man die Ergebnisse im Sheet gezielt gegenchecken kann, bevor man auf alle Deals losläuft.
  */
 function fillMontagepartnerForAusgewaehlteDeals() {
-  const dealIds = [7266]; // hier eigene Deal-IDs eintragen, z.B. [7253, 7301, 7455]
+  const dealIds = [7266,7255]; // hier eigene Deal-IDs eintragen, z.B. [7253, 7301, 7455]
   dealIds.forEach(dealId => {
     const result = fillMontagepartnerForDeal(dealId);
     Logger.log(`Deal ${dealId}: ${result}`);
