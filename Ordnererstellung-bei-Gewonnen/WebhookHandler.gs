@@ -16,10 +16,19 @@ function doPost(e) {
     }
 
     const body = JSON.parse(e.postData.contents);
-    const data = body.data || {};
+    // Defensiv beide Payload-Formen lesen: Webhooks v2 liefert data/previous, v1 liefert current/previous.
+    // Welche Version tatsächlich registriert ist, hängt von registerPipedriveWebhook() ab (siehe
+    // SetupHelpers.gs) -- so bricht der Handler nicht still, falls sich das mal ändert.
+    const data = body.data || body.current || {};
     const previous = body.previous || {};
 
-    const istNeuGewonnen = data.status === 'won' && previous.status !== 'won';
+    // v2-Webhooks schicken in "previous" oft nur die tatsächlich geänderten Felder. Bei jeder
+    // beliebigen Änderung an einem BEREITS gewonnenen Deal fehlt "status" dann in previous ->
+    // previous.status wäre undefined -> "undefined !== 'won'" ist true -> jede Feldänderung sähe
+    // wie ein frischer Gewinn aus. Deshalb zusätzlich prüfen, ob "status" überhaupt im previous-
+    // Objekt vorkommt.
+    const statusHatSichGeaendert = Object.prototype.hasOwnProperty.call(previous, 'status');
+    const istNeuGewonnen = data.status === 'won' && statusHatSichGeaendert && previous.status !== 'won';
     if (!istNeuGewonnen) {
       return ContentService.createTextOutput('ignoriert (kein neuer Gewonnen-Status)');
     }

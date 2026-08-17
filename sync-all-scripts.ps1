@@ -17,9 +17,9 @@ $projects = @(
     "Pipedrive-form-prefill-mail-trigger",
     "Sevdesk-Pipdrive_sync",
     "Bundesland-aus-PLZ",
-    "Montagepartner-aus-Bundesland"
-    # "Ordnererstellung-bei-Gewonnen"  # TODO: einkommentieren, sobald per clasp verknüpft
-    # "Sheet-Sync"                     # TODO: einkommentieren, sobald per clasp verknüpft
+    "Montagepartner-aus-Bundesland",
+    "Ordnererstellung-bei-Gewonnen",
+    "Sheet-Sync"
 )
 
 # Heutiges Datum für Commit-Message

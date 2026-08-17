@@ -1,94 +1,29 @@
-// ===== HAUPTFUNKTION =====
-// Im Apps-Script-Editor oben im Dropdown auswählen und ausführen (▷-Button).
+// ==========================================================================================
+// PROJEKT: "Montagepartner-aus-Bundesland"  (scriptId 1syrD6zGu5gB0hKHZFUd9qHrM_8u7tSj89HGcNfkOZTcmaW2JSID3z9KN)
+// DATEI IM EDITOR: Code.gs        --> kompletten Inhalt ersetzen
+//
+// Stand 2026-08-12, Fix-Version. Aenderungen ggue. der Live-Version:
+//   FIX A  Stille Fehlschreibung: fehlende Montagepartner-Option-ID fuehrte zu einem PATCH mit
+//          leerem custom_fields -> Pipedrive antwortet 200, Log sagte "gesetzt", gesetzt wurde
+//          aber nichts. Jetzt eigener FEHLER-Fall vor dem Schreiben.
+//   FIX B  Unbekannte Bundesland-Option-ID wurde als Fachfall "kein eindeutiger Partner"
+//          geloggt statt als Konfigurationsfehler.
+//   FIX C  SALZBURG steht jetzt auf manuell (siehe grosser Kommentar unten) -- ENTSCHEIDUNG
+//          VON VALENTIN NOETIG, bevor DRY_RUN=false gesetzt wird.
+//   FIX D  Log-Sheet wurde pro Zeile neu geoeffnet + einzeln beschrieben -> gecached, gebuendelt
+//   FIX E  Vollauf ohne Resume -> Cursor + Zeitbudget in ScriptProperties
+//   FIX F  Doppelter API-Call pro Deal -> Deal aus der Listenabfrage wird wiederverwendet
+//          (dieses Script braucht nur den Deal selbst -> spart ~50% aller Calls)
+//   FIX G  FORCE_OVERWRITE-Schalter
+//   FIX H  Retry-Kommentar sagte 2s/4s/8s, tatsaechlich 2s/4s
+//   NEU    pruefeKonfiguration() - gleicht Bundesland- und Montagepartner-Option-IDs mit
+//          Pipedrive ab (faengt genau die Fehlerklasse aus FIX A + FIX B ab)
+//
+// REIHENFOLGE: Dieses Script liest das Bundesland-Feld am Deal. Es MUSS nach dem
+// PLZ->Bundesland-Script laufen, sonst werden alle Deals als "kein Bundesland gesetzt"
+// uebersprungen -- das sieht im Log wie ein sauberer Lauf aus, ist aber ein Nulllauf.
+// ==========================================================================================
 
-/**
- * Läuft einmalig über alle bestehenden Deals und befüllt das Montagepartner-Feld
- * aus dem bereits gesetzten Bundesland-Feld. DRY_RUN unten auf false stellen,
- * wenn die Testläufe im Log-Sheet passen.
- */
-function fillMontagepartnerForAllDeals() {
-  let cursor = null;
-  let processed = 0;
-  const summary = { gesetzt: 0, uebersprungen: 0, dryRun: 0 };
-
-  do {
-    // status=all_not_deleted: ohne das liefert /deals standardmäßig nur offene Deals,
-    // "Gewonnen"-Deals (wo Bundesland/Montagepartner gepflegt werden) würden sonst fehlen.
-    const path = `deals?limit=100&status=all_not_deleted${cursor ? `&cursor=${cursor}` : ''}`;
-    const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`;
-    const response = callPipedriveWithRetryRaw(url);
-    const deals = response.data || [];
-    cursor = response.additional_data?.next_cursor || null;
-
-    for (const deal of deals) {
-      const result = fillMontagepartnerForDeal(deal.id);
-      processed++;
-      if (result.startsWith('gesetzt')) summary.gesetzt++;
-      else if (result.startsWith('DRY-RUN')) summary.dryRun++;
-      else summary.uebersprungen++;
-    }
-  } while (cursor);
-
-  if (processed === 0) {
-    Logger.log('WARNUNG: 0 Deals von der Pipedrive-API zurückbekommen. Prüfe PIPEDRIVE_API_TOKEN und ob im Account überhaupt Deals existieren.');
-  }
-  Logger.log(`Fertig. ${processed} Deals geprüft. ${JSON.stringify(summary)}`);
-}
-
-/** Wrapper ohne Parameter, für einen fixen Test-Deal. */
-function testEinzelDeal() {
-  const result = fillMontagepartnerForDeal(7253); // Test-Deal-ID aus dem sevdesk-Sync-Projekt
-  Logger.log(result);
-}
-
-/**
- * Für kontrolliertes Testen: nur die hier eingetragenen Deal-IDs befüllen (statt alle Deals),
- * damit man die Ergebnisse im Sheet gezielt gegenchecken kann, bevor man auf alle Deals losläuft.
- */
-function fillMontagepartnerForAusgewaehlteDeals() {
-  const dealIds = [7266,7255]; // hier eigene Deal-IDs eintragen, z.B. [7253, 7301, 7455]
-  dealIds.forEach(dealId => {
-    const result = fillMontagepartnerForDeal(dealId);
-    Logger.log(`Deal ${dealId}: ${result}`);
-  });
-}
-
-/** Für Einzeltests: befüllt das Montagepartner-Feld nur für einen Deal. Gibt einen Ergebnis-String zurück. */
-function fillMontagepartnerForDeal(dealId) {
-  const deal = fetchPipedrive(`deals/${dealId}`);
-  const cf = deal.custom_fields || {};
-
-  if (cf[MONTAGEPARTNER_FIELD_KEY]) {
-    logRow(dealId, deal.title, null, 'übersprungen', null, 'Montagepartner bereits gesetzt');
-    return 'übersprungen (bereits gesetzt)';
-  }
-
-  const bundeslandOptionId = cf[BUNDESLAND_FIELD_KEY];
-  if (!bundeslandOptionId) {
-    logRow(dealId, deal.title, null, 'übersprungen', null, 'kein Bundesland gesetzt');
-    return 'übersprungen (kein Bundesland)';
-  }
-
-  const bundesland = BUNDESLAND_ID_TO_NAME[bundeslandOptionId];
-  const partner = BUNDESLAND_TO_MONTAGEPARTNER[bundesland];
-  if (!partner) {
-    // Trifft aktuell v.a. auf Oberösterreich zu (2 Partner, Kreuzeder + Greensky -> nicht automatisch
-    // entscheidbar), sowie Bundesländer ohne definierten Partner (Steiermark, Tirol, Vorarlberg).
-    logRow(dealId, deal.title, bundesland, 'übersprungen', null, 'kein eindeutiger Partner für dieses Bundesland (manuell zuordnen)');
-    return `übersprungen (${bundesland}: kein eindeutiger Partner)`;
-  }
-
-  const optionId = MONTAGEPARTNER_OPTION_IDS[partner];
-
-  if (DRY_RUN) {
-    logRow(dealId, deal.title, bundesland, 'DRY-RUN', partner, 'würde gesetzt werden');
-    return `DRY-RUN: würde ${partner} setzen (${bundesland})`;
-  }
-
-  patchPipedrive(`deals/${dealId}`, { custom_fields: { [MONTAGEPARTNER_FIELD_KEY]: optionId } });
-  logRow(dealId, deal.title, bundesland, 'gesetzt', partner, '');
-  return `gesetzt: ${partner} (${bundesland})`;
-}
 
 // ===== KONFIGURATION =====
 
@@ -115,10 +50,17 @@ const MONTAGEPARTNER_OPTION_IDS = {
   'Kreuzeder (OÖ, SBG)': 161
 };
 
-// Bundesland -> Montagepartner. Nur eindeutige Zuordnungen -- Oberösterreich bewusst NICHT drin,
-// weil dort zwei Partner (Kreuzeder + Greensky, siehe MONTAGEPARTNER_OPTION_IDS) im Einsatz sind
-// und die Wahl zwischen den beiden nicht automatisch entscheidbar ist (Valentins Vorgabe 2026-08-12).
-// Steiermark, Tirol, Vorarlberg: aktuell kein Partner definiert, ebenfalls nicht drin.
+// ------------------------------------------------------------------------------------------
+// Bundesland -> Montagepartner. NUR eindeutige Zuordnungen.
+//
+// Oberoesterreich bewusst NICHT drin: dort sind laut Feldkatalog drei Partner aktiv
+// (Kreuzeder, Greensky, KOLLSTAR), die Wahl ist nicht automatisch entscheidbar.
+// Steiermark, Tirol, Vorarlberg: kein Partner definiert.
+//
+// FIX C -- ENTSCHEIDUNG SALZBURG (Valentin, 2026-08-12): Greensky ist NICHT in Salzburg aktiv,
+// nur Kreuzeder. Das Options-Label "Greensky (OÖ, SBG)" in Pipedrive ist irrefuehrend/falsch
+// und sollte dort korrigiert werden -- im Script ist Salzburg damit wieder eindeutig.
+// ------------------------------------------------------------------------------------------
 const BUNDESLAND_TO_MONTAGEPARTNER = {
   'Salzburg': 'Kreuzeder (OÖ, SBG)',
   'Wien': 'ALE-Engineering (NÖ, Wien, BGL)',
@@ -127,9 +69,9 @@ const BUNDESLAND_TO_MONTAGEPARTNER = {
   'Kärnten': 'Berger Elektrotechnik (KTN)'
 };
 
-// Nur fürs Logging: ALLE Partner, die laut Valentin in einem Bundesland aktiv sind (auch die
+// Nur fuers Logging: ALLE Partner, die in einem Bundesland infrage kommen (auch die
 // mehrdeutigen), damit im Sheet nachvollziehbar ist, welche Kandidaten zur Wahl standen --
-// nicht nur bei eindeutigen Fällen, sondern gerade auch bei übersprungenen wie Oberösterreich.
+// gerade bei uebersprungenen Zeilen wie Oberoesterreich.
 const BUNDESLAND_PARTNER_KANDIDATEN = {
   'Salzburg': ['Kreuzeder (OÖ, SBG)'],
   'Wien': ['ALE-Engineering (NÖ, Wien, BGL)'],
@@ -140,19 +82,232 @@ const BUNDESLAND_PARTNER_KANDIDATEN = {
   // Steiermark, Tirol, Vorarlberg: keine Kandidaten hinterlegt, kein Partner definiert.
 };
 
-// Wenn true: nichts wird geschrieben, nur geloggt was passieren würde
+// Wenn true: nichts wird geschrieben, nur geloggt was passieren wuerde
 const DRY_RUN = true;
+
+// FIX G: Wenn true, wird ein bereits gesetzter Montagepartner ueberschrieben. Normalfall false.
+const FORCE_OVERWRITE = false;
+
+// FIX E: freiwilliger Abbruch vor dem harten Apps-Script-Limit
+const MAX_LAUFZEIT_MS = 4.5 * 60 * 1000;
+
+const PROP_RESUME_CURSOR = 'MONTAGEPARTNER_RESUME_CURSOR';
+const PROP_LOG_SHEET_ID = 'MONTAGEPARTNER_LOG_SHEET_ID';
+
+
+// ===== HAUPTFUNKTIONEN =====
+// Im Apps-Script-Editor oben im Dropdown auswaehlen und ausfuehren (>-Button).
+
+/**
+ * Laeuft ueber alle bestehenden Deals und befuellt das Montagepartner-Feld aus dem bereits
+ * gesetzten Bundesland-Feld. DRY_RUN oben auf false stellen, wenn die Testlaeufe passen.
+ *
+ * FIX E: Bricht nach MAX_LAUFZEIT_MS freiwillig ab und merkt sich den Cursor -- einfach
+ * nochmal starten, bis "DURCHGELAUFEN" im Log steht. resetVollauf() startet von vorne.
+ */
+function fillMontagepartnerForAllDeals() {
+  const props = PropertiesService.getScriptProperties();
+  const start = Date.now();
+  let cursor = props.getProperty(PROP_RESUME_CURSOR) || null;
+  let processed = 0;
+  let abgebrochen = false;
+  const summary = { gesetzt: 0, uebersprungen: 0, dryRun: 0, fehler: 0 };
+
+  if (cursor) Logger.log(`Setze abgebrochenen Lauf fort (Cursor ${cursor}). Fuer Neustart von vorne: resetVollauf()`);
+
+  try {
+    do {
+      // KEIN status-Parameter: v2 liefert ohne ihn laut Doku "all not deleted deals", also
+      // offene UND gewonnene/verlorene -- genau was wir brauchen. Der v1-Wert "all_not_deleted"
+      // ist in v2 ungueltig und quittiert mit 400 ERR_SCHEMA_VALIDATION_FAILED (v2 kennt nur
+      // open | won | lost | deleted).
+      const path = `deals?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const response = callPipedriveWithRetryRaw(`https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`);
+      const deals = response.data || [];
+      cursor = (response.additional_data && response.additional_data.next_cursor) || null;
+
+      for (const deal of deals) {
+        // FIX F: Deal-Objekt aus der Liste durchreichen -- dieses Script braucht sonst nichts,
+        // damit faellt der komplette Einzelabruf pro Deal weg.
+        const result = fillMontagepartnerForDeal(deal.id, deal);
+        processed++;
+        if (result.startsWith('gesetzt')) summary.gesetzt++;
+        else if (result.startsWith('DRY-RUN')) summary.dryRun++;
+        else if (result.startsWith('FEHLER')) summary.fehler++;
+        else summary.uebersprungen++;
+      }
+
+      if (cursor) props.setProperty(PROP_RESUME_CURSOR, cursor);
+      else props.deleteProperty(PROP_RESUME_CURSOR);
+
+      if (cursor && Date.now() - start > MAX_LAUFZEIT_MS) {
+        abgebrochen = true;
+        break;
+      }
+    } while (cursor);
+  } finally {
+    flushLog(); // FIX D
+  }
+
+  if (processed === 0 && !abgebrochen) {
+    Logger.log('WARNUNG: 0 Deals von der Pipedrive-API zurueckbekommen. Pruefe PIPEDRIVE_API_TOKEN und ob im Account ueberhaupt Deals existieren.');
+  }
+  Logger.log(`${abgebrochen ? 'PAUSIERT (Zeitbudget) -- nochmal starten, macht automatisch weiter.' : 'DURCHGELAUFEN.'} ` +
+             `${processed} Deals in diesem Lauf. ${JSON.stringify(summary)}`);
+  if (summary.fehler > 0) Logger.log(`ACHTUNG: ${summary.fehler} Konfigurationsfehler -- pruefeKonfiguration() ausfuehren.`);
+  if (summary.gesetzt === 0 && summary.dryRun === 0 && processed > 0) {
+    Logger.log('HINWEIS: kein einziger Deal zugeordnet. Haeufigste Ursache: das PLZ->Bundesland-Script ist noch nicht gelaufen (Reihenfolge!).');
+  }
+}
+
+/** Vollauf bewusst von vorne starten (loescht den gemerkten Cursor). */
+function resetVollauf() {
+  PropertiesService.getScriptProperties().deleteProperty(PROP_RESUME_CURSOR);
+  Logger.log('Resume-Cursor geloescht. Naechster fillMontagepartnerForAllDeals()-Lauf startet bei Deal 1.');
+}
+
+/** Wrapper ohne Parameter, fuer einen fixen Test-Deal. */
+function testEinzelDeal() {
+  try {
+    Logger.log(fillMontagepartnerForDeal(7253)); // Test-Deal-ID aus dem sevdesk-Sync-Projekt
+  } finally {
+    flushLog();
+  }
+}
+
+/**
+ * Fuer kontrolliertes Testen: nur die hier eingetragenen Deal-IDs befuellen (statt alle Deals),
+ * damit man die Ergebnisse im Sheet gezielt gegenchecken kann, bevor man auf alle Deals losläuft.
+ */
+function fillMontagepartnerForAusgewaehlteDeals() {
+  const dealIds = [7266, 7255]; // hier eigene Deal-IDs eintragen, z.B. [7253, 7301, 7455]
+  try {
+    dealIds.forEach(dealId => Logger.log(`Deal ${dealId}: ${fillMontagepartnerForDeal(dealId)}`));
+  } finally {
+    flushLog();
+  }
+}
+
+/**
+ * Befuellt das Montagepartner-Feld fuer EINEN Deal. Gibt einen Ergebnis-String zurueck.
+ * @param {number} dealId
+ * @param {Object} [dealVorab] Deal-Objekt aus der Listenabfrage (FIX F, spart einen API-Call).
+ */
+function fillMontagepartnerForDeal(dealId, dealVorab) {
+  const deal = (dealVorab && dealVorab.custom_fields) ? dealVorab : fetchPipedrive(`deals/${dealId}`);
+  const cf = deal.custom_fields || {};
+
+  if (cf[MONTAGEPARTNER_FIELD_KEY] && !FORCE_OVERWRITE) {
+    logRow(dealId, deal.title, null, 'übersprungen', null, 'Montagepartner bereits gesetzt');
+    return 'übersprungen (bereits gesetzt)';
+  }
+
+  const bundeslandOptionId = cf[BUNDESLAND_FIELD_KEY];
+  if (!bundeslandOptionId) {
+    logRow(dealId, deal.title, null, 'übersprungen', null, 'kein Bundesland gesetzt (PLZ->Bundesland-Script zuerst laufen lassen)');
+    return 'übersprungen (kein Bundesland)';
+  }
+
+  // FIX B: unbekannte Option-ID ist ein KONFIGURATIONSFEHLER, kein Fachfall. Vorher landete
+  // der Fall stillschweigend im "kein eindeutiger Partner"-Bucket zwischen den OOE-Zeilen.
+  const bundesland = BUNDESLAND_ID_TO_NAME[bundeslandOptionId];
+  if (!bundesland) {
+    logRow(dealId, deal.title, null, 'FEHLER', null,
+      `KONFIG-FEHLER: Bundesland-Option-ID ${bundeslandOptionId} ist im Script nicht hinterlegt -- pruefeKonfiguration() ausfuehren`);
+    return `FEHLER (unbekannte Bundesland-Option ${bundeslandOptionId})`;
+  }
+
+  const partner = BUNDESLAND_TO_MONTAGEPARTNER[bundesland];
+  if (!partner) {
+    // Fachlich gewollt: Oberoesterreich (3 Partner), Salzburg (2, siehe FIX C) sowie
+    // Steiermark/Tirol/Vorarlberg (kein Partner definiert).
+    logRow(dealId, deal.title, bundesland, 'übersprungen', null, 'kein eindeutiger Partner für dieses Bundesland (manuell zuordnen)');
+    return `übersprungen (${bundesland}: kein eindeutiger Partner)`;
+  }
+
+  // FIX A: ohne diese Pruefung wirft JSON.stringify einen undefined-Wert raus, der PATCH geht
+  // mit leerem custom_fields raus, Pipedrive antwortet 200 -- und der Log meldet faelschlich
+  // "gesetzt", obwohl nichts geschrieben wurde.
+  const optionId = MONTAGEPARTNER_OPTION_IDS[partner];
+  if (!optionId) {
+    logRow(dealId, deal.title, bundesland, 'FEHLER', partner,
+      `KONFIG-FEHLER: keine Option-ID für "${partner}" hinterlegt -- pruefeKonfiguration() ausfuehren`);
+    return `FEHLER (Option-ID für ${partner} fehlt)`;
+  }
+
+  if (DRY_RUN) {
+    logRow(dealId, deal.title, bundesland, 'DRY-RUN', partner, 'würde gesetzt werden');
+    return `DRY-RUN: würde ${partner} setzen (${bundesland})`;
+  }
+
+  patchPipedrive(`deals/${dealId}`, { custom_fields: { [MONTAGEPARTNER_FIELD_KEY]: optionId } });
+  logRow(dealId, deal.title, bundesland, 'gesetzt', partner, '');
+  return `gesetzt: ${partner} (${bundesland})`;
+}
+
+
+// ===== PRUEF- / DEBUG-FUNKTIONEN =====
+
+/**
+ * NEU: Gleicht Bundesland- UND Montagepartner-Option-IDs mit dem echten Pipedrive-Feld ab.
+ * Einmal vor dem Vollauf laufen lassen -- faengt genau die Fehler aus FIX A und FIX B ab,
+ * bevor sie im Vollauf als 500 unauffaellige Log-Zeilen untergehen.
+ */
+function pruefeKonfiguration() {
+  const felder = fetchPipedrive('dealFields?limit=500');
+  let fehler = 0;
+
+  fehler += pruefeEnumFeld(felder, BUNDESLAND_FIELD_KEY, BUNDESLAND_OPTION_IDS, 'Bundesland');
+  fehler += pruefeEnumFeld(felder, MONTAGEPARTNER_FIELD_KEY, MONTAGEPARTNER_OPTION_IDS, 'Montagepartner');
+
+  // Zusaetzlich: zeigt jede Zuordnung ihren Ziel-Partner auch wirklich auf eine bekannte Option?
+  Object.keys(BUNDESLAND_TO_MONTAGEPARTNER).forEach(bl => {
+    const partner = BUNDESLAND_TO_MONTAGEPARTNER[bl];
+    if (MONTAGEPARTNER_OPTION_IDS[partner] === undefined) {
+      Logger.log(`FEHLER: Zuordnung "${bl}" -> "${partner}", aber dieses Label steht nicht in MONTAGEPARTNER_OPTION_IDS.`);
+      fehler++;
+    }
+  });
+
+  Logger.log(fehler === 0 ? 'Konfiguration OK.' : `${fehler} Abweichung(en) -- oben korrigieren, BEVOR DRY_RUN=false gesetzt wird.`);
+}
+
+/** Hilfsfunktion fuer pruefeKonfiguration(): vergleicht ein Enum-Feld mit den Script-Konstanten. */
+function pruefeEnumFeld(felder, fieldKey, sollMap, bezeichnung) {
+  const feld = felder.filter(f => f.field_code === fieldKey)[0];
+  if (!feld) {
+    Logger.log(`FEHLER: Deal-Feld "${bezeichnung}" (${fieldKey}) existiert nicht (mehr).`);
+    return 1;
+  }
+  Logger.log(`${bezeichnung}: Feld "${feld.field_name}" (Typ ${feld.field_type})`);
+  let fehler = 0;
+  if (feld.field_type !== 'enum') {
+    Logger.log(`WARNUNG: "${bezeichnung}" ist Typ "${feld.field_type}", erwartet wurde Einfachauswahl (enum). Das Script liest/schreibt eine einzelne Option-ID.`);
+    fehler++;
+  }
+  const live = {};
+  (feld.options || []).forEach(o => { live[o.label] = o.id; });
+  Object.keys(sollMap).forEach(label => {
+    if (live[label] === undefined) { Logger.log(`FEHLER [${bezeichnung}]: Option "${label}" existiert in Pipedrive nicht.`); fehler++; }
+    else if (live[label] !== sollMap[label]) { Logger.log(`FEHLER [${bezeichnung}]: "${label}" -- Script sagt ${sollMap[label]}, Pipedrive sagt ${live[label]}.`); fehler++; }
+  });
+  Object.keys(live).forEach(label => {
+    if (sollMap[label] === undefined) Logger.log(`Hinweis [${bezeichnung}]: Pipedrive kennt zusaetzlich "${label}" (id ${live[label]}), im Script nicht hinterlegt.`);
+  });
+  return fehler;
+}
+
 
 // ===== HILFSFUNKTIONEN =====
 
 /** Holt den API-Token aus Script Properties, wirft klaren Fehler wenn er fehlt. */
 function getApiToken() {
   const token = PropertiesService.getScriptProperties().getProperty('PIPEDRIVE_API_TOKEN');
-  if (!token) throw new Error('PIPEDRIVE_API_TOKEN fehlt in den Script Properties (Projekteinstellungen prüfen).');
+  if (!token) throw new Error('PIPEDRIVE_API_TOKEN fehlt in den Script Properties (Projekteinstellungen pruefen).');
   return token;
 }
 
-/** LIEST: Pipedrive-GET mit Token im Header, Statusprüfung + Retry bei 429/5xx. */
+/** LIEST: Pipedrive-GET mit Token im Header, Statuspruefung + Retry bei 429/5xx. */
 function fetchPipedrive(path) {
   const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`;
   return callPipedriveWithRetry(() => UrlFetchApp.fetch(url, {
@@ -161,7 +316,7 @@ function fetchPipedrive(path) {
   }), path);
 }
 
-/** SCHREIBT: Pipedrive-PATCH mit Token im Header, Statusprüfung + Retry bei 429/5xx. */
+/** SCHREIBT: Pipedrive-PATCH mit Token im Header, Statuspruefung + Retry bei 429/5xx. */
 function patchPipedrive(path, payload) {
   const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`;
   return callPipedriveWithRetry(() => UrlFetchApp.fetch(url, {
@@ -184,14 +339,14 @@ function callPipedriveWithRetry(doFetch, path) {
       if (attempt === maxAttempts) {
         throw new Error(`Pipedrive API-Fehler ${code} bei "${path}" nach ${maxAttempts} Versuchen: ${response.getContentText()}`);
       }
-      Utilities.sleep(1000 * Math.pow(2, attempt)); // 2s, 4s, 8s
+      Utilities.sleep(1000 * Math.pow(2, attempt)); // FIX H: 2s, dann 4s (der 3. Fehlschlag wirft)
       continue;
     }
     throw new Error(`Pipedrive API-Fehler ${code} bei "${path}": ${response.getContentText()}`);
   }
 }
 
-/** Wie callPipedriveWithRetry, aber gibt die volle Response (inkl. additional_data) zurück, nicht nur .data. */
+/** Wie callPipedriveWithRetry, aber gibt die volle Response (inkl. additional_data) zurueck, nicht nur .data. */
 function callPipedriveWithRetryRaw(url) {
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -212,37 +367,56 @@ function callPipedriveWithRetryRaw(url) {
   }
 }
 
+
+// ===== LOGGING (FIX D: gecached + gebuendelt) =====
+
+const LOG_HEADER = [
+  'Zeitstempel', 'Deal-ID', 'Deal-Titel', 'Bundesland', 'Ergebnis',
+  'Montagepartner', 'Partner-Kandidaten für dieses Bundesland', 'Detail'
+];
+
+let _logSheet = null;
+let _logBuffer = [];
+
 /** Self-bootstrapping Log-Sheet, analog zum Bundesland-aus-PLZ-Script. */
 function getLogSheet() {
+  if (_logSheet) return _logSheet;
   const props = PropertiesService.getScriptProperties();
-  let sheetId = props.getProperty('MONTAGEPARTNER_LOG_SHEET_ID');
-  let ss;
+  const sheetId = props.getProperty(PROP_LOG_SHEET_ID);
+  let ss = null;
   if (sheetId) {
-    try { ss = SpreadsheetApp.openById(sheetId); } catch (e) { sheetId = null; }
+    try { ss = SpreadsheetApp.openById(sheetId); } catch (e) { ss = null; }
   }
-  if (!sheetId) {
+  if (!ss) {
     ss = SpreadsheetApp.create('LOG_Montagepartner aus Bundesland');
-    props.setProperty('MONTAGEPARTNER_LOG_SHEET_ID', ss.getId());
-    const sheet = ss.getActiveSheet();
-    sheet.appendRow([
-      'Zeitstempel', 'Deal-ID', 'Deal-Titel', 'Bundesland', 'Ergebnis',
-      'Montagepartner', 'Partner-Kandidaten für dieses Bundesland', 'Detail'
-    ]);
+    props.setProperty(PROP_LOG_SHEET_ID, ss.getId());
+    ss.getActiveSheet().appendRow(LOG_HEADER);
     Logger.log(`Neues Log-Sheet angelegt: ${ss.getUrl()}`);
   }
-  return ss.getActiveSheet();
+  _logSheet = ss.getActiveSheet();
+  return _logSheet;
 }
 
 /**
- * Loggt eine Zeile inkl. Nachvollziehbarkeit: zeigt in "Partner-Kandidaten" IMMER alle laut
- * BUNDESLAND_PARTNER_KANDIDATEN für dieses Bundesland aktiven Partner (auch bei eindeutigen
- * Fällen mit nur einem Kandidaten), damit man bei übersprungenen Zeilen (z.B. Oberösterreich)
- * direkt im Sheet sieht WARUM keine automatische Wahl möglich war.
+ * Puffert eine Log-Zeile. In "Partner-Kandidaten" stehen IMMER alle laut
+ * BUNDESLAND_PARTNER_KANDIDATEN infrage kommenden Partner (auch bei eindeutigen Faellen),
+ * damit man bei uebersprungenen Zeilen direkt im Sheet sieht WARUM keine Wahl moeglich war.
+ * Geschrieben wird erst in flushLog().
  */
 function logRow(dealId, dealTitle, bundesland, ergebnis, partner, detail) {
   const kandidaten = bundesland ? (BUNDESLAND_PARTNER_KANDIDATEN[bundesland] || []) : [];
-  getLogSheet().appendRow([
-    new Date(), dealId, dealTitle, bundesland || '', ergebnis,
+  _logBuffer.push([
+    new Date(), dealId, dealTitle || '', bundesland || '', ergebnis,
     partner || '', kandidaten.join(' / '), detail || ''
   ]);
+}
+
+/** Schreibt alle gepufferten Zeilen in einem einzigen Range-Write ins Sheet. */
+function flushLog() {
+  if (_logBuffer.length === 0) return;
+  const sheet = getLogSheet();
+  sheet.getRange(sheet.getLastRow() + 1, 1, _logBuffer.length, LOG_HEADER.length).setValues(_logBuffer);
+  SpreadsheetApp.flush();
+  Logger.log(`${_logBuffer.length} Log-Zeilen geschrieben: ${sheet.getParent().getUrl()}`);
+  _logBuffer = [];
 }
