@@ -7,29 +7,36 @@
  * Für den zeitgesteuerten Trigger gedacht (siehe SetupHelpers.gs).
  */
 function syncNeueZeilen() {
+  starteLauf('syncNeueZeilen');
   let cursor = null;
   let processed = 0;
   const summary = { angelegt: 0, uebersprungen: 0, dryRun: 0 };
 
-  do {
-    const path = `deals?status=won&limit=100${cursor ? `&cursor=${cursor}` : ''}`;
-    const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`;
-    const response = callPipedriveWithRetryRaw(url);
-    const deals = response.data || [];
-    cursor = response.additional_data?.next_cursor || null;
+  try {
+    do {
+      const path = `deals?status=won&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`;
+      const response = callPipedriveWithRetryRaw(url);
+      const deals = response.data || [];
+      cursor = response.additional_data?.next_cursor || null;
 
-    for (const deal of deals) {
-      // deal kommt schon vollständig aus der Liste (inkl. custom_fields) -- kein zusätzlicher
-      // Einzelabruf pro Deal nötig, spart bei jedem 15-Minuten-Lauf viele API-Calls.
-      const result = createSheetRowForDeal(deal);
-      processed++;
-      if (result.startsWith('angelegt')) summary.angelegt++;
-      else if (result.startsWith('DRY-RUN')) summary.dryRun++;
-      else summary.uebersprungen++;
-    }
-  } while (cursor);
-
-  Logger.log(`Fertig. ${processed} gewonnene Deals geprüft. ${JSON.stringify(summary)}`);
+      for (const deal of deals) {
+        // deal kommt schon vollständig aus der Liste (inkl. custom_fields) -- kein zusätzlicher
+        // Einzelabruf pro Deal nötig, spart bei jedem 15-Minuten-Lauf viele API-Calls.
+        const result = createSheetRowForDeal(deal);
+        processed++;
+        if (result.startsWith('angelegt')) summary.angelegt++;
+        else if (result.startsWith('DRY-RUN')) summary.dryRun++;
+        else summary.uebersprungen++;
+      }
+    } while (cursor);
+  } finally {
+    // KETTE_BLOCKIERT trifft genau den bekannten Fall "0 von 437 Zeilen, weil noch kein
+    // Ordner-Link gesetzt ist" -- der sah bisher aus wie ein sauberer Lauf.
+    logLaufEnde(summary.angelegt === 0 && summary.dryRun === 0 && processed > 0 ? 'KETTE_BLOCKIERT' : 'OK',
+                Object.assign({ geprueft: processed }, summary));
+    flushLog();
+  }
 }
 
 /**
@@ -52,7 +59,7 @@ function createSheetRowForDeal(deal) {
   const partnerOptionId = cf[MONTAGEPARTNER_FIELD_KEY];
   const partner = MONTAGEPARTNER_ID_TO_NAME[partnerOptionId];
   if (!partner) {
-    logRow('pipedrive_to_sheet', dealId, null, 'Zeile anlegen', 'FEHLER', `unbekannte Montagepartner-Options-ID ${partnerOptionId}`);
+    logRow('zeile anlegen', dealId, null, null, 'FEHLER', `unbekannte Montagepartner-Options-ID ${partnerOptionId}`);
     return `FEHLER: unbekannte Montagepartner-Options-ID ${partnerOptionId}`;
   }
 
@@ -60,19 +67,19 @@ function createSheetRowForDeal(deal) {
   try {
     sheet = openPartnerSheet(partner);
   } catch (err) {
-    logRow('pipedrive_to_sheet', dealId, partner, 'Zeile anlegen', 'übersprungen', err.message);
+    logRow('zeile anlegen', dealId, partner, null, 'übersprungen', err.message);
     return `übersprungen (${err.message})`;
   }
 
   const dealIdCol = findColumnIndexByHeader(sheet, COL.dealId);
   if (!dealIdCol) {
-    logRow('pipedrive_to_sheet', dealId, partner, 'Zeile anlegen', 'übersprungen', `Spalte "${COL.dealId}" fehlt im Sheet -- einmalig anlegen`);
+    logRow('zeile anlegen', dealId, partner, null, 'übersprungen', `Spalte "${COL.dealId}" fehlt im Sheet -- einmalig anlegen`);
     return `übersprungen (Spalte "${COL.dealId}" fehlt im Partner-Sheet)`;
   }
 
   const bestehendeZeile = findRowByDealId(sheet, dealIdCol, dealId);
   if (bestehendeZeile) {
-    logRow('pipedrive_to_sheet', dealId, partner, 'Zeile anlegen', 'übersprungen', `Zeile ${bestehendeZeile} existiert bereits`);
+    logRow('zeile anlegen', dealId, partner, null, 'übersprungen', `Zeile ${bestehendeZeile} existiert bereits`);
     return `übersprungen (Zeile ${bestehendeZeile} existiert bereits)`;
   }
 
@@ -95,7 +102,7 @@ function createSheetRowForDeal(deal) {
   const speicherKwh = cf[SPEICHER_KWH_FIELD_KEY] || '';
 
   if (DRY_RUN) {
-    logRow('pipedrive_to_sheet', dealId, partner, 'Zeile anlegen', 'DRY-RUN', `würde Zeile für "${name}" anlegen`);
+    logRow('zeile anlegen', dealId, partner, null, 'DRY-RUN', `würde Zeile für "${name}" anlegen`);
     return `DRY-RUN: würde Zeile für "${name}" im ${partner}-Sheet anlegen`;
   }
 
@@ -125,16 +132,23 @@ function createSheetRowForDeal(deal) {
     if (col) sheet.getRange(newRow, col).setValue(wert);
   });
 
-  // Alle pipedrive_to_sheet-Felder (DC-/AC-/IB-Termin, Materiallieferung, ...) gleich mit dem
-  // aktuellen Pipedrive-Wert befüllen, statt bis zum nächsten 15-Minuten-Sync zu warten.
+  // Alle pipedrive_to_sheet- UND bidirektionalen Felder (DC-/AC-/IB-Termin, Materiallieferung, ...)
+  // gleich mit dem aktuellen Pipedrive-Wert befüllen, statt bis zum nächsten 15-Minuten-Sync zu warten.
   SYNC_FIELD_CONFIG
-    .filter(f => f.direction === 'pipedrive_to_sheet' && !f.pipedriveFieldKey.startsWith('TODO_'))
+    .filter(f => (f.direction === 'pipedrive_to_sheet' || f.direction === 'bidirektional') && !f.pipedriveFieldKey.startsWith('TODO_'))
     .forEach(fieldConfig => {
       const col = findColumnIndexByHeader(sheet, fieldConfig.sheetColumnHeader);
       const wert = cf[fieldConfig.pipedriveFieldKey];
       if (col && wert !== undefined) sheet.getRange(newRow, col).setValue(wert);
     });
 
-  logRow('pipedrive_to_sheet', dealId, partner, 'Zeile anlegen', 'angelegt', `Zeile ${newRow}`);
+  // Beantwortet ein für alle Mal "woher kommt diese Zeile" -- und macht sichtbar, dass sie
+  // nicht von Hand eingetragen wurde (also auch nicht von Hand gelöscht werden sollte).
+  if (nameCol) {
+    sheet.getRange(newRow, nameCol).setNote(
+      `Automatisch angelegt am ${notizZeitstempel()}\naus Pipedrive-Deal ${dealId}`);
+  }
+
+  logRow('zeile anlegen', dealId, partner, null, 'angelegt', `Zeile ${newRow}`);
   return `angelegt: Zeile ${newRow} im ${partner}-Sheet`;
 }

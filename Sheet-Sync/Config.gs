@@ -19,35 +19,23 @@ const SPEICHER_KWH_FIELD_KEY = 'd8e9435192bb719365e9bc3186dcba540dff26bd';
 // KEIN Ja/Nein-Feld, siehe Begründung in IDEEN-Felder-und-Aktionen.md Abschnitt 1).
 const MONTAGE_ABGESCHLOSSEN_AM_FIELD_KEY = '69dd6586f2a762a912b9131dee404acf711fc1a5'; // Pipedrive-Feld "Fertigmeldung am"
 
-// "IB erledigt" schreibt NICHT in ein eigenes Datumsfeld, sondern in das bestehende Einfachauswahl-
-// Feld "Fortschritt" -- Valentins Vorgabe 2026-08-13: das Feld soll (Stufe für Stufe, künftig auch
-// für andere Stages) automatisch befüllbar sein, bleibt aber gleichzeitig ein Feld, das RP auch
-// manuell im Pipedrive-UI umstellt. Deshalb bewusst OHNE Rückwärts-Sperre/Regressions-Schutz --
-// einfacher Direkt-Schreiber, wie ein manueller Klick im UI. Falls falsch gesetzt, korrigiert RP
-// das genauso manuell wie jeden anderen Fortschritt-Wert auch.
-// WICHTIG (2026-08-17, per Fehler live entdeckt): "Fortschritt" ist trotz Options-Liste in
-// listDealFieldsHelper() KEIN echtes enum-/set-Feld, sondern vom field_type her "autocomplete"
-// (wie ZPN) -- Pipedrive nimmt beim Schreiben den TEXT-Label, nicht die numerische Options-ID.
-// Fehler war: "Expected 'string' as autocomplete custom field value for field '...'". Gilt aus
-// demselben Grund vermutlich auch für "Netzstatus" (noch nicht live bestätigt, aber strukturell
-// identisch) -- deshalb hier ebenfalls auf Label-Strings umgestellt statt Options-IDs. Die reine
-// Options-Liste in listDealFieldsHelper() reicht also NICHT, um enum vs. autocomplete zu
-// unterscheiden -- beide liefern "options", nur autocomplete-Felder speichern trotzdem als String.
-const FORTSCHRITT_FIELD_KEY = 'fa77cb3c2a12790f5de5879ccb7b076b5c98ab44';
-const FORTSCHRITT_LABELS = {
-  Erstgespraech: 'Erstgespräch',
-  NetzUebergeben: 'Netz übergeben',
-  ZaehlpunktDa: 'Zählpunkt da',
-  ArRaus: 'AR raus',
-  AnzahlungDa: 'Anzahlung da',
-  Geliefert: 'Geliefert',
-  Zweitgespraech: 'Zweitgespräch',
-  Montiert: 'Montiert',
-  IbErfolgt: 'IB erfolgt',
-  Foerderzusage: 'Förderzusage',
-  Fertigmeldung: 'Fertigmeldung'
-};
-const IB_ERLEDIGT_FIELD_KEY = FORTSCHRITT_FIELD_KEY;
+// AUFGERAEUMT 2026-08-17: Hier standen FORTSCHRITT_FIELD_KEY, FORTSCHRITT_LABELS und
+// IB_ERLEDIGT_FIELD_KEY. Alle drei zeigten auf das Deal-Feld
+// fa77cb3c2a12790f5de5879ccb7b076b5c98ab44 ("Fortschritt", Typ varchar_auto) -- dieses Feld ist in
+// Pipedrive GELOESCHT.
+//
+// Vorgeschichte, damit der Fehler nicht nochmal gemacht wird: "IB erledigt" schrieb hier die
+// Options-ID 231 in dieses Feld und bekam HTTP 400 ("Expected 'string' as autocomplete custom field
+// value"). Daraus wurde geschlossen, das Feld sei ein getarntes enum -- das war eine Verwechslung.
+// Der Feld-Dump vom 2026-08-17 zeigt: "Fortschritt" hatte GAR KEINE Optionen, die 11
+// Meilenstein-Optionen (223-233) gehoeren zum Feld "Erledigt". Der 400er kam schlicht davon, dass
+// eine Zahl in ein Textfeld geschrieben wurde. Merke: der field_type entscheidet, nicht die
+// Anwesenheit einer Options-Liste.
+//
+// Ersatz: "IB erledigt" schreibt jetzt in das Datumsfeld "IB erledigt am" (siehe SYNC_FIELD_CONFIG
+// weiter unten), und die Meilenstein-Anzeige macht das eigene Projekt "Fortschritt-Script" ueber die
+// Felder "Erledigt" (set) und "Fortschritt" (neues Textfeld, dfa17bef...). Beide gehoeren
+// AUSSCHLIESSLICH diesem Script -- aus Sheet-Sync nicht mehr beschreiben.
 
 // Aktivitäts-Typ für die IB-erledigt-Meldung -- 'task' ist ein Pipedrive-Standardtyp, funktioniert
 // also ohne weitere Konfiguration. Falls RP einen eigenen Aktivitätstyp dafür anlegt (z.B. eigenes
@@ -69,6 +57,10 @@ const NETZSTATUS_OPTION_IDS = {
   zaehlpunktDa: 185,
   fertigmeldungRaus: 186
 };
+// Für lesbare Logs: Options-ID -> Klartext. Ohne das steht im Log "Netzstatus -> 186".
+const NETZSTATUS_ID_TO_LABEL = Object.fromEntries(
+  Object.entries(NETZSTATUS_OPTION_IDS).map(([name, id]) => [id, name])
+);
 // DC-/AC-Termin nochmal als eigene Konstanten (stehen sonst nur inline in SYNC_FIELD_CONFIG) --
 // werden für den Kundentermin-Eskalations-Check gebraucht (NetzanmeldungEskalation.gs).
 const DC_TERMIN_FIELD_KEY = '6e4dc4e9017957ddadebddac3dd622ca3afe8676';
@@ -95,6 +87,11 @@ const MONTAGE_ABGESCHLOSSEN_ORDNERNAME = 'Montage abgeschlossen';
 // danach (Valentins Vorgabe 2026-08-13) -- lässt Zeit für Nacharbeit/Korrekturen, bevor der
 // Ordner als endgültig fertig einsortiert wird. Siehe OrdnerAbschluss.gs.
 const ORDNER_VERSCHIEBEN_WARTETAGE = 7;
+
+// Nach so vielen Tagen werden Erfolgs-/Änderungs-Notizen im Partner-Sheet wieder entfernt,
+// damit nicht jede Zelle dauerhaft ein Notiz-Eck trägt. Fehler-Notizen (⚠) bleiben IMMER
+// stehen -- die sind ja das offene Problem. Siehe raeumeAlteNotizen() in SetupHelpers.gs.
+const NOTIZ_AUFRAEUM_TAGE = 30;
 
 const MONTAGEPARTNER_OPTION_IDS = {
   'ALE-Engineering (NÖ, Wien, BGL)': 157,
@@ -192,26 +189,30 @@ const SYNC_FIELD_CONFIG = [
     pipedriveFieldKey: '86f6ce58bb7129c5c4e312038342f601713c7742',
     direction: 'sheet_to_pipedrive'
   },
-  // Die folgenden 4 Termine/Werte werden intern von RP in Pipedrive gepflegt (Terminübersicht am
-  // Deal) -- sollen für den Montagepartner nur sichtbar sein, nicht von ihm im Sheet überschreibbar.
-  // Deshalb pipedrive_to_sheet, nicht umgekehrt. field_codes noch einzutragen (listDealFieldsHelper()).
+  // DC-/AC-/IB-Termin: ECHTE Zwei-Wege-Synchronisierung (Valentins Vorgabe 2026-08-17) -- sowohl
+  // RP (direkt in Pipedrive) als auch der Montagepartner (im Sheet) dürfen diese Termine setzen/
+  // ändern, letzter Schreibvorgang gewinnt. Bewusst akzeptiertes Risiko: ändern beide fast
+  // gleichzeitig, überschreibt der später laufende 15-Minuten-Sync die andere Änderung -- dagegen
+  // gibt es hier keine Sperre. Deshalb NICHT mehr in protectDealIdColumn() geschützt (die schützt
+  // nur noch echte pipedrive_to_sheet-Felder) und der onEdit-Trigger reagiert jetzt auch auf diese
+  // drei Spalten.
   {
     label: 'DC-Termin',
     sheetColumnHeader: COL.dcTermin,
     pipedriveFieldKey: '6e4dc4e9017957ddadebddac3dd622ca3afe8676',
-    direction: 'pipedrive_to_sheet'
+    direction: 'bidirektional'
   },
   {
     label: 'AC-Termin',
     sheetColumnHeader: COL.acTermin,
     pipedriveFieldKey: '0277ea7463b980044e0062e46467979ccc292127',
-    direction: 'pipedrive_to_sheet'
+    direction: 'bidirektional'
   },
   {
     label: 'IB-Termin',
     sheetColumnHeader: COL.ibTermin,
     pipedriveFieldKey: 'ba820255728739b29c451287808fbe18f1c94b8e',
-    direction: 'pipedrive_to_sheet'
+    direction: 'bidirektional'
   },
   {
     label: 'Materiallieferung',
@@ -248,13 +249,27 @@ const SYNC_FIELD_CONFIG = [
     valueType: 'checkbox_to_option',
     checkedOptionValue: NETZSTATUS_OPTION_IDS.eingereicht
   },
+  // GEAENDERT 2026-08-17: schreibt NICHT mehr in "Fortschritt". Grund: das neue Projekt
+  // "Fortschritt-Script" berechnet dort alle 15 Minuten eine Balken-Zeile
+  // ("▰▰▰▰▱▱▱▱▱▱▱ 4/11 · Anzahlung da · wa:Kunde"). Zwei Schreiber auf einem Feld haetten sich
+  // gegenseitig ueberschrieben -- "Fortschritt" gehoert ab jetzt allein dem Fortschritt-Script.
+  //
+  // Stattdessen ein eigenes Datumsfeld "IB erledigt am", genau nach dem Muster von "Fertigmeldung":
+  //   - valueType checkbox_to_date existiert bereits, es ist KEIN Code-Fix in FieldSync.gs noetig
+  //   - der Duplikat-Aktivitaets-Schutz weiter unten vergleicht den Pipedrive-Wert und funktioniert
+  //     damit weiter. Haette man den Feld-Write einfach ganz entfernt, waere dieser Schutz
+  //     weggefallen und jeder wiederholte Trigger haette eine neue Aktivitaet angelegt.
+  //   - ein Datum beantwortet ob UND wann; das Fortschritt-Script leitet "IB erfolgt" daraus ab und
+  //     zwar genauer als aus dem nur GEPLANTEN IB-Termin
+  // Feld "IB erledigt am" (Typ Datum) am 2026-08-17 in Pipedrive angelegt. Derselbe field_code
+  // steht in Fortschritt-Script/Config.gs als IB_ERLEDIGT_AM_FIELD_KEY -- beide muessen
+  // uebereinstimmen, sonst schreibt der Partner in ein Feld, das dort niemand liest.
   {
     label: 'IB erledigt',
     sheetColumnHeader: COL.ibErledigt,
-    pipedriveFieldKey: IB_ERLEDIGT_FIELD_KEY,
+    pipedriveFieldKey: '6625e4db471a6601a70766facc04d2d421f89810',
     direction: 'sheet_to_pipedrive',
-    valueType: 'checkbox_to_option',
-    checkedOptionValue: FORTSCHRITT_LABELS.IbErfolgt,
+    valueType: 'checkbox_to_date',
     // Zusätzlich zum Feldwert eine Aktivität anlegen -- der eigentliche Anruf-Ersatz, weil RP es
     // aktiv im Deal-Verlauf/der Aufgabenliste sieht statt nur einen still geänderten Feldwert.
     // Valentins Vorgabe 2026-08-13: "Aktivität müssen wir machen!"
@@ -402,33 +417,118 @@ function findNextEmptyRowFor(sheet, colIndexes) {
 }
 
 // ===== LOGGING =====
+// Gepuffert statt appendRow pro Zeile: ein appendRow ist ein einzelner Sheets-Schreibvorgang,
+// und syncPipedriveToSheetFields() kann pro Lauf vierstellig viele Zeilen erzeugen (im DRY-Lauf
+// jedes Mal aufs Neue, weil ja nichts geschrieben wird). Gepuffert ist es EIN setValues().
 
-// Handle-Cache für die Dauer EINER Skript-Ausführung -- Apps Script startet bei jeder Ausführung
-// (Trigger-Lauf, manueller Test) mit frischem globalem Zustand, das Cachen hier spart also nur
-// wiederholte openById()-Calls INNERHALB eines Laufs mit vielen logRow()-Aufrufen, ohne Risiko
-// einer veralteten Referenz über mehrere Läufe hinweg.
+const LOG_HEADER = [
+  'Zeitstempel', 'Lauf-ID', 'Funktion', 'Modus', 'Aktion',
+  'Deal-ID', 'Partner/Sheet', 'Feld', 'Ergebnis', 'Detail'
+];
+
+// Neue Property (V2), weil das bestehende Log-Sheet die alte 7-Spalten-Kopfzeile hat.
+// Das alte Sheet bleibt erhalten, es wird nur nicht mehr beschrieben.
+const PROP_LOG_SHEET_ID = 'SHEETSYNC_LOG_SHEET_ID_V2';
+
 let _logSheetCache = null;
+let _logBuffer = [];
+let _laufId = '-';
+let _laufFunktion = '-';
+let _laufStart = 0;
+
+/**
+ * Am Anfang JEDER Einstiegsfunktion aufrufen. Vergibt eine kurze Lauf-ID, die in jeder Zeile
+ * dieses Laufs steht -- damit lässt sich aus einer FEHLER-Zeile heraus per Filter der komplette
+ * Lauf ansehen. Nötig, weil fünf verschiedene Funktionen (zwei davon zeitgleich) in dasselbe
+ * Log-Sheet schreiben.
+ */
+function starteLauf(funktionsName) {
+  _laufId = Utilities.getUuid().slice(0, 8);
+  _laufFunktion = funktionsName;
+  _laufStart = Date.now();
+  Logger.log(`[${_laufId}] ${funktionsName} gestartet (${DRY_RUN ? 'DRY' : 'LIVE'})`);
+  return _laufId;
+}
 
 function getLogSheet() {
   if (_logSheetCache) return _logSheetCache;
-
   const props = PropertiesService.getScriptProperties();
-  let sheetId = props.getProperty('SHEETSYNC_LOG_SHEET_ID');
-  let ss;
+  const sheetId = props.getProperty(PROP_LOG_SHEET_ID);
+  let ss = null;
   if (sheetId) {
-    try { ss = SpreadsheetApp.openById(sheetId); } catch (e) { sheetId = null; }
+    try { ss = SpreadsheetApp.openById(sheetId); } catch (e) { ss = null; }
   }
-  if (!sheetId) {
-    ss = SpreadsheetApp.create('LOG_Sheet-Sync');
-    props.setProperty('SHEETSYNC_LOG_SHEET_ID', ss.getId());
-    const sheet = ss.getActiveSheet();
-    sheet.appendRow(['Zeitstempel', 'Richtung', 'Deal-ID', 'Partner/Sheet', 'Feld', 'Ergebnis', 'Detail']);
+  if (!ss) {
+    ss = SpreadsheetApp.create('LOG_Sheet-Sync (V2)');
+    props.setProperty(PROP_LOG_SHEET_ID, ss.getId());
+    ss.getActiveSheet().appendRow(LOG_HEADER);
     Logger.log(`Neues Log-Sheet angelegt: ${ss.getUrl()}`);
   }
   _logSheetCache = ss.getActiveSheet();
   return _logSheetCache;
 }
 
-function logRow(richtung, dealId, partnerOderSheet, feld, ergebnis, detail) {
-  getLogSheet().appendRow([new Date(), richtung, dealId || '', partnerOderSheet || '', feld || '', ergebnis, detail || '']);
+/**
+ * aktion: 'sheet→pipedrive' | 'pipedrive→sheet' | 'zeile anlegen' | 'drive' | 'aktivität' | 'lauf'
+ * Bewusst NICHT mehr "Richtung": OrdnerAbschluss und NetzanmeldungEskalation schreiben gar nichts
+ * ins Sheet, standen aber trotzdem auf 'pipedrive_to_sheet'.
+ */
+function logRow(aktion, dealId, partnerOderSheet, feld, ergebnis, detail) {
+  _logBuffer.push([
+    new Date(), _laufId, _laufFunktion, DRY_RUN ? 'DRY' : 'LIVE', aktion,
+    dealId || '', partnerOderSheet || '', feld || '', ergebnis, detail || ''
+  ]);
+}
+
+/**
+ * Eine Zeile pro Lauf -- die einzige, die man täglich anschauen muss, und die spätere
+ * Dashboard-Zeile. status: 'OK' | 'KETTE_BLOCKIERT' | 'FEHLER'
+ */
+function logLaufEnde(status, summary) {
+  const dauer = Math.round((Date.now() - _laufStart) / 1000);
+  logRow('lauf', null, null, null, status, `${JSON.stringify(summary)} -- ${dauer}s`);
+  Logger.log(`[${_laufId}] ${_laufFunktion} ${status}: ${JSON.stringify(summary)} (${dauer}s)`);
+}
+
+function flushLog() {
+  if (_logBuffer.length === 0) return;
+  const sheet = getLogSheet();
+  sheet.getRange(sheet.getLastRow() + 1, 1, _logBuffer.length, LOG_HEADER.length).setValues(_logBuffer);
+  _logBuffer = [];
+}
+
+/** Werte für Notizen/Logs lesbar machen -- niemals "null" oder "undefined" an eine Zelle. */
+function zeigeWert(w) {
+  if (w === null || w === undefined || w === '') return '(leer)';
+  // Sheets liefert Datumszellen als echtes Date-Objekt -- ungefiltert würde String(w) den vollen
+  // JS-Zeitstempel inkl. Wochentag/Uhrzeit/Zeitzone ausgeben ("Tue Aug 18 2026 00:00:00 GMT+0200
+  // (Central European Summer Time)"), was in einer Notiz/einem Log niemand lesen will.
+  if (w instanceof Date) return Utilities.formatDate(w, Session.getScriptTimeZone(), 'dd.MM.yyyy');
+  return String(w);
+}
+
+/** Einheitlicher Zeitstempel für alle Zell-Notizen. */
+function notizZeitstempel() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy HH:mm');
+}
+
+/**
+ * Setzt eine Notiz an einer bestimmten Spalte in der Sheet-Zeile eines Deals. Für Vorgänge, die
+ * NICHT vom Sheet ausgehen (Ordner-Archivierung, Eskalation) -- der Partner soll trotzdem im
+ * Sheet sehen, dass etwas passiert ist, statt es per Anruf zu erfahren. Schluckt Fehler bewusst:
+ * eine fehlende Notiz darf den eigentlichen Vorgang nie scheitern lassen.
+ */
+function setzeNotizAmDeal(deal, partner, spaltenHeader, text) {
+  if (DRY_RUN || !partner) return;
+  try {
+    const sheet = openPartnerSheet(partner);
+    const dealIdCol = findColumnIndexByHeader(sheet, COL.dealId);
+    const col = findColumnIndexByHeader(sheet, spaltenHeader);
+    if (!dealIdCol || !col) return;
+    const row = findRowByDealId(sheet, dealIdCol, deal.id);
+    if (!row) return;
+    sheet.getRange(row, col).setNote(text);
+  } catch (e) {
+    Logger.log(`Notiz für Deal ${deal.id} konnte nicht gesetzt werden: ${e.message}`);
+  }
 }

@@ -92,7 +92,14 @@ function fetchPipedrive(path) {
   }), path);
 }
 
-/** SCHREIBT: Pipedrive-PATCH mit Token im Header, Statusprüfung + Retry bei 429/5xx. */
+/**
+ * SCHREIBT: Pipedrive-PATCH mit Token im Header, Statusprüfung + Retry bei 429/5xx.
+ * Gotcha aus Sheet-Sync (2026-08-17), falls hier mal ein Auswahlfeld beschrieben wird: manche
+ * Felder mit Options-Liste (z.B. "Fortschritt") sind trotzdem field_type "autocomplete" und
+ * wollen den Text-Label als String, nicht die numerische Options-ID -- andere (z.B. "Netzstatus")
+ * sind echte "single option"-Felder und wollen umgekehrt die ID, kein Label. Vor dem ersten
+ * Schreiben also einmal live testen, nicht aus der Feldstruktur raten.
+ */
 function patchPipedrive(path, payload) {
   const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`;
   return callPipedriveWithRetry(() => UrlFetchApp.fetch(url, {
@@ -122,24 +129,81 @@ function callPipedriveWithRetry(doFetch, path) {
   }
 }
 
+// ===== LOGGING =====
+// Gepuffert statt appendRow pro Zeile, mit Lauf-ID/Funktion/Modus -- 1:1 dasselbe Muster wie im
+// Schwesterprojekt Sheet-Sync (2026-08-17 dort eingeführt, hier übernommen): appendRow ist ein
+// einzelner Sheets-Schreibvorgang, bei processAusgewaehlteDeals() mit vielen Deal-IDs summiert
+// sich das unnötig. Die Lauf-ID erlaubt es, aus einer einzelnen FEHLER-Zeile heraus per Filter
+// den kompletten Lauf (Webhook-Aufruf oder manueller Batch) nachzuvollziehen.
+
+const LOG_HEADER = ['Zeitstempel', 'Lauf-ID', 'Funktion', 'Modus', 'Deal-ID', 'Deal-Titel', 'Montagepartner', 'Ergebnis', 'Ordner-Link', 'Detail'];
+
+// Neue Property (V2), weil das bestehende Log-Sheet die alte 7-Spalten-Kopfzeile hat. Das alte
+// Sheet bleibt erhalten, es wird nur nicht mehr beschrieben.
+const PROP_LOG_SHEET_ID = 'ORDNER_LOG_SHEET_ID_V2';
+
+let _logSheetCache = null;
+let _logBuffer = [];
+let _laufId = '-';
+let _laufFunktion = '-';
+let _laufStart = 0;
+
+/**
+ * Am Anfang JEDES Einstiegspunkts aufrufen (doPost, testEinzelDeal, processAusgewaehlteDeals) --
+ * NICHT in processGewonnenDeal() selbst, das ist der wiederverwendete Arbeiter, keine eigene
+ * Lauf-Ebene (gleiche Unterscheidung wie handleSingleCellEdit vs. handleSheetEdit in Sheet-Sync).
+ */
+function starteLauf(funktionsName) {
+  _laufId = Utilities.getUuid().slice(0, 8);
+  _laufFunktion = funktionsName;
+  _laufStart = Date.now();
+  Logger.log(`[${_laufId}] ${funktionsName} gestartet (${DRY_RUN ? 'DRY' : 'LIVE'})`);
+  return _laufId;
+}
+
 /** Self-bootstrapping Log-Sheet, analog zu den anderen RP-Scripts. */
 function getLogSheet() {
+  if (_logSheetCache) return _logSheetCache;
   const props = PropertiesService.getScriptProperties();
-  let sheetId = props.getProperty('ORDNER_LOG_SHEET_ID');
-  let ss;
+  const sheetId = props.getProperty(PROP_LOG_SHEET_ID);
+  let ss = null;
   if (sheetId) {
-    try { ss = SpreadsheetApp.openById(sheetId); } catch (e) { sheetId = null; }
+    try { ss = SpreadsheetApp.openById(sheetId); } catch (e) { ss = null; }
   }
-  if (!sheetId) {
-    ss = SpreadsheetApp.create('LOG_Ordnererstellung bei Gewonnen');
-    props.setProperty('ORDNER_LOG_SHEET_ID', ss.getId());
-    const sheet = ss.getActiveSheet();
-    sheet.appendRow(['Zeitstempel', 'Deal-ID', 'Deal-Titel', 'Montagepartner', 'Ergebnis', 'Ordner-Link', 'Detail']);
+  if (!ss) {
+    ss = SpreadsheetApp.create('LOG_Ordnererstellung bei Gewonnen (V2)');
+    props.setProperty(PROP_LOG_SHEET_ID, ss.getId());
+    ss.getActiveSheet().appendRow(LOG_HEADER);
     Logger.log(`Neues Log-Sheet angelegt: ${ss.getUrl()}`);
   }
-  return ss.getActiveSheet();
+  _logSheetCache = ss.getActiveSheet();
+  return _logSheetCache;
 }
 
 function logRow(dealId, dealTitle, partner, ergebnis, ordnerLink, detail) {
-  getLogSheet().appendRow([new Date(), dealId, dealTitle || '', partner || '', ergebnis, ordnerLink || '', detail || '']);
+  _logBuffer.push([
+    new Date(), _laufId, _laufFunktion, DRY_RUN ? 'DRY' : 'LIVE',
+    dealId || '', dealTitle || '', partner || '', ergebnis, ordnerLink || '', detail || ''
+  ]);
+}
+
+/** Eine Zeile pro Lauf -- praktisch bei processAusgewaehlteDeals() mit mehreren Deal-IDs. */
+function logLaufEnde(status, summary) {
+  const dauer = Math.round((Date.now() - _laufStart) / 1000);
+  logRow(null, null, null, status, null, `${JSON.stringify(summary)} -- ${dauer}s`);
+  Logger.log(`[${_laufId}] ${_laufFunktion} ${status}: ${JSON.stringify(summary)} (${dauer}s)`);
+}
+
+function flushLog() {
+  if (_logBuffer.length === 0) return;
+  const sheet = getLogSheet();
+  sheet.getRange(sheet.getLastRow() + 1, 1, _logBuffer.length, LOG_HEADER.length).setValues(_logBuffer);
+  _logBuffer = [];
+}
+
+/** Werte für Logs lesbar machen -- niemals "null"/"undefined" in eine Log-Zeile. */
+function zeigeWert(w) {
+  if (w === null || w === undefined || w === '') return '(leer)';
+  if (w instanceof Date) return Utilities.formatDate(w, Session.getScriptTimeZone(), 'dd.MM.yyyy');
+  return String(w);
 }

@@ -6,8 +6,11 @@
 // (siehe installTriggers() in SetupHelpers.gs).
 
 function verschiebeAbgeschlosseneOrdner() {
+  starteLauf('verschiebeAbgeschlosseneOrdner');
   if (MONTAGE_ABGESCHLOSSEN_AM_FIELD_KEY.startsWith('TODO_')) {
     Logger.log('MONTAGE_ABGESCHLOSSEN_AM_FIELD_KEY noch nicht in Config.gs eingetragen -- nichts zu tun.');
+    logLaufEnde('KETTE_BLOCKIERT', { grund: 'MONTAGE_ABGESCHLOSSEN_AM_FIELD_KEY fehlt' });
+    flushLog();
     return;
   }
 
@@ -16,55 +19,63 @@ function verschiebeAbgeschlosseneOrdner() {
   let geprueft = 0;
   const summary = { verschoben: 0, uebersprungen: 0, dryRun: 0, fehler: 0 };
 
-  do {
-    const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals?status=won&limit=100`
-      + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
-    const response = callPipedriveWithRetryRaw(url);
-    const deals = response.data || [];
-    cursor = response.additional_data?.next_cursor || null;
+  try {
+    do {
+      const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals?status=won&limit=100`
+        + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
+      const response = callPipedriveWithRetryRaw(url);
+      const deals = response.data || [];
+      cursor = response.additional_data?.next_cursor || null;
 
-    deals.forEach(deal => {
-      geprueft++;
-      const cf = deal.custom_fields || {};
-      const abgeschlossenAm = cf[MONTAGE_ABGESCHLOSSEN_AM_FIELD_KEY];
-      if (!abgeschlossenAm) return; // noch nicht als "Montage abgeschlossen" fertiggemeldet
+      deals.forEach(deal => {
+        geprueft++;
+        const cf = deal.custom_fields || {};
+        const partner = MONTAGEPARTNER_ID_TO_NAME[cf[MONTAGEPARTNER_FIELD_KEY]] || null;
+        const abgeschlossenAm = cf[MONTAGE_ABGESCHLOSSEN_AM_FIELD_KEY];
+        if (!abgeschlossenAm) return; // noch nicht als "Montage abgeschlossen" fertiggemeldet
 
-      const tageSeitFertigmeldung = (heute - new Date(abgeschlossenAm)) / (1000 * 60 * 60 * 24);
-      if (tageSeitFertigmeldung < ORDNER_VERSCHIEBEN_WARTETAGE) {
-        summary.uebersprungen++; // Wartefrist noch nicht um
-        return;
-      }
-
-      const ordnerLink = cf[KUNDENORDNER_LINK_FIELD_KEY];
-      if (!ordnerLink) {
-        logRow('pipedrive_to_sheet', deal.id, null, 'Ordner-Verschiebung', 'FEHLER', 'Fertiggemeldet, aber kein Kundenordner-Link am Deal -- Ordnererstellung-bei-Gewonnen geprüft?');
-        summary.fehler++;
-        return;
-      }
-
-      try {
-        const ergebnis = verschiebeKundenOrdner(ordnerLink, DRY_RUN);
-        if (ergebnis === 'bereits_verschoben') {
-          summary.uebersprungen++; // idempotent -- schon erledigt, kein Fehler
+        const tageSeitFertigmeldung = (heute - new Date(abgeschlossenAm)) / (1000 * 60 * 60 * 24);
+        if (tageSeitFertigmeldung < ORDNER_VERSCHIEBEN_WARTETAGE) {
+          summary.uebersprungen++; // Wartefrist noch nicht um
           return;
         }
-        const detail = `${MONTAGE_ABGESCHLOSSEN_ORDNERNAME}, ${Math.floor(tageSeitFertigmeldung)} Tage seit Fertigmeldung`;
-        if (ergebnis === 'waere_verschoben') {
-          logRow('pipedrive_to_sheet', deal.id, null, 'Ordner-Verschiebung', 'DRY-RUN', `würde nach "${detail}" verschieben`);
-          summary.dryRun++;
-        } else {
-          logRow('pipedrive_to_sheet', deal.id, null, 'Ordner-Verschiebung', 'verschoben', `nach "${detail}"`);
-          summary.verschoben++;
-        }
-      } catch (err) {
-        logRow('pipedrive_to_sheet', deal.id, null, 'Ordner-Verschiebung', 'FEHLER', err.message);
-        Logger.log(`FEHLER bei Ordner-Verschiebung für Deal ${deal.id}: ${err.message}`);
-        summary.fehler++;
-      }
-    });
-  } while (cursor);
 
-  Logger.log(`Fertig. ${geprueft} gewonnene Deals geprüft. ${JSON.stringify(summary)}`);
+        const ordnerLink = cf[KUNDENORDNER_LINK_FIELD_KEY];
+        if (!ordnerLink) {
+          logRow('drive', deal.id, partner, 'Ordner-Verschiebung', 'FEHLER', 'Fertiggemeldet, aber kein Kundenordner-Link am Deal -- Ordnererstellung-bei-Gewonnen geprüft?');
+          summary.fehler++;
+          return;
+        }
+
+        try {
+          const ergebnis = verschiebeKundenOrdner(ordnerLink, DRY_RUN);
+          if (ergebnis === 'bereits_verschoben') {
+            summary.uebersprungen++; // idempotent -- schon erledigt, kein Fehler
+            return;
+          }
+          const detail = `${MONTAGE_ABGESCHLOSSEN_ORDNERNAME}, ${Math.floor(tageSeitFertigmeldung)} Tage seit Fertigmeldung`;
+          if (ergebnis === 'waere_verschoben') {
+            logRow('drive', deal.id, partner, 'Ordner-Verschiebung', 'DRY-RUN', `würde nach "${detail}" verschieben`);
+            summary.dryRun++;
+          } else {
+            logRow('drive', deal.id, partner, 'Ordner-Verschiebung', 'verschoben', `nach "${detail}"`);
+            summary.verschoben++;
+            // Partner soll das im Sheet sehen, nicht nur RP in Pipedrive -- der Link bleibt
+            // funktionsfähig (Google Drive Links überleben ein moveTo), nur der Pfad ändert sich.
+            setzeNotizAmDeal(deal, partner, COL.ordnerLink,
+              `📁 Auftrag archiviert am ${notizZeitstempel()}\nOrdner liegt jetzt unter "${MONTAGE_ABGESCHLOSSEN_ORDNERNAME}". Der Link funktioniert weiter.`);
+          }
+        } catch (err) {
+          logRow('drive', deal.id, partner, 'Ordner-Verschiebung', 'FEHLER', err.message);
+          Logger.log(`FEHLER bei Ordner-Verschiebung für Deal ${deal.id}: ${err.message}`);
+          summary.fehler++;
+        }
+      });
+    } while (cursor);
+  } finally {
+    logLaufEnde(summary.fehler > 0 ? 'FEHLER' : 'OK', Object.assign({ geprueft }, summary));
+    flushLog();
+  }
 }
 
 /**

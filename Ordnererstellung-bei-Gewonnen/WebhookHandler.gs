@@ -7,6 +7,7 @@
  * Reagiert nur auf den Wechsel status -> "won", ignoriert alles andere.
  */
 function doPost(e) {
+  starteLauf('doPost (Webhook)');
   try {
     // Einfache Absicherung: Secret muss als Query-Param an der Webhook-URL mitgegeben werden,
     // sonst könnte jeder im Internet diese URL aufrufen und Ordner anlegen lassen.
@@ -39,5 +40,7 @@ function doPost(e) {
   } catch (err) {
     Logger.log(`FEHLER im Webhook-Handler: ${err.message}`);
     return ContentService.createTextOutput('error: ' + err.message);
+  } finally {
+    flushLog();
   }
 }

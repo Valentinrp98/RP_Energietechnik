@@ -78,8 +78,13 @@ function debugAdressFeld() {
 
 /** Für Einzeltests: einen bekannten Deal durchlaufen lassen (Deal-ID unten anpassen). */
 function testEinzelDeal() {
-  const result = processGewonnenDeal(7253); // Test-Deal-ID aus dem sevdesk-Sync-Projekt, ggf. anpassen
-  Logger.log(result);
+  starteLauf('testEinzelDeal');
+  try {
+    const result = processGewonnenDeal(7253); // Test-Deal-ID aus dem sevdesk-Sync-Projekt, ggf. anpassen
+    Logger.log(result);
+  } finally {
+    flushLog();
+  }
 }
 
 /**
@@ -87,9 +92,21 @@ function testEinzelDeal() {
  * Webhook zu warten), damit man die Ergebnisse im Log-Sheet gezielt gegenchecken kann.
  */
 function processAusgewaehlteDeals() {
+  starteLauf('processAusgewaehlteDeals');
   const dealIds = [7253]; // hier eigene Deal-IDs eintragen, z.B. [7253, 7301, 7455]
-  dealIds.forEach(dealId => {
-    const result = processGewonnenDeal(dealId);
-    Logger.log(`Deal ${dealId}: ${result}`);
-  });
+  const summary = { angelegt: 0, uebersprungen: 0, dryRun: 0, fehler: 0 };
+
+  try {
+    dealIds.forEach(dealId => {
+      const result = processGewonnenDeal(dealId);
+      Logger.log(`Deal ${dealId}: ${result}`);
+      if (result.startsWith('angelegt')) summary.angelegt++;
+      else if (result.startsWith('DRY-RUN')) summary.dryRun++;
+      else if (result.startsWith('FEHLER')) summary.fehler++;
+      else summary.uebersprungen++;
+    });
+  } finally {
+    logLaufEnde(summary.fehler > 0 ? 'FEHLER' : 'OK', summary);
+    flushLog();
+  }
 }
