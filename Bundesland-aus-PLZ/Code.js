@@ -1,4 +1,12 @@
 // ==========================================================================================
+
+
+
+//resetVollauf()
+//DRY_RUN = false, speichern
+//fillBundeslandForAllDeals() — bei PAUSIERT einfach nochmal starten, bis DURCHGELAUFEN kommt. Diesmal ohne resetVollauf() dazwischen, der Cursor soll ja fortsetzen.
+
+// ==========================================================================================
 // PROJEKT: "PLZ(GKZ)-->BL_Auto-Allocation"  (scriptId 1Rez1BwtFgGP4bzkSQiK8dTBiDCyCNP4vNlOWE6IPwJsd1fxk_U8sFVHy)
 // DATEI IM EDITOR: Code.gs        --> kompletten Inhalt ersetzen
 // Zweite Datei "Bundesland-lookup.gs" (PLZ_BUNDESLAND / PLZ_QUELLE) bleibt UNVERAENDERT.
@@ -52,7 +60,7 @@ const PLZ_FIELD_KEY = '5fef394025c936df4b58763b2b58c340fbb0d251';
 const ADRESSE_FIELD_KEY = '432e4e165de7e9f474643c3d3a5552e2ec976f55';
 
 // Wenn true: nichts wird geschrieben, nur geloggt was passieren wuerde
-const DRY_RUN = true;
+const DRY_RUN = false;
 
 // Wenn true, wird ein bereits gesetztes Bundesland ueberschrieben. Normalfall false --
 // nur einschalten, wenn z.B. PLZ nachtraeglich korrigiert wurden.
@@ -86,8 +94,8 @@ const PROP_LOG_SHEET_ID = 'BUNDESLAND_LOG_SHEET_ID_V3';
 
 // Wenn true: Deals, die vor CUTOFF_DATE angelegt wurden (deal.add_time), werden uebersprungen
 // und nicht angefasst -- z.B. um einen Altbestand bewusst unveraendert zu lassen.
-const CUTOFF_ENABLED = false;
-const CUTOFF_DATE = new Date('2026-07-01');
+const CUTOFF_ENABLED = true;
+const CUTOFF_DATE = new Date('2026-06-01');
 
 
 // ===== HAUPTFUNKTIONEN =====
