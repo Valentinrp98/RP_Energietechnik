@@ -80,7 +80,7 @@ function debugAdressFeld() {
 function testEinzelDeal() {
   starteLauf('testEinzelDeal');
   try {
-    const result = processGewonnenDeal(7253); // Test-Deal-ID aus dem sevdesk-Sync-Projekt, ggf. anpassen
+    const result = processGewonnenDeal(7334); // Test-Deal-ID aus dem sevdesk-Sync-Projekt, ggf. anpassen
     Logger.log(result);
   } finally {
     flushLog();
