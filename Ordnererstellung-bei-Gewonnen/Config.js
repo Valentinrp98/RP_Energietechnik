@@ -39,11 +39,11 @@ const MONTAGEPARTNER_ID_TO_NAME = Object.fromEntries(
 // Testumgebung (2026-08-12, Valentins Test-Setup): WIEN-Dummy-Partner und OÖ-Dummy-Partner haben
 // je schon "Montage offen"/"Montage abgeschlossen" (WIEN) bzw. nur "Montage offen" (OÖ) angelegt.
 const PARTNER_TO_DRIVE_FOLDER_ID = {
-  'ALE-Engineering (NÖ, Wien, BGL)': '10BaT1-qjhlhBK0h9QYUki6wGQNUdGGcE', // Testumgebung: WIEN-Dummy-Partner
-  'Berger Elektrotechnik (KTN)': 'TODO_DRIVE_FOLDER_ID_BERGER',
-  'Greensky (OÖ, SBG)': 'TODO_DRIVE_FOLDER_ID_GREENSKY',
-  'KOLLSTAR (OÖ)': '1Ej7Tl7fz5j2-zQGjpNiV2mQCG7ve0u_n', // Testumgebung: OÖ-Dummy-Partner
-  'Kreuzeder (OÖ, SBG)': 'TODO_DRIVE_FOLDER_ID_KREUZEDER'
+  'ALE-Engineering (NÖ, Wien, BGL)': '1XIBb_UvDaNON3t38sR2PSxWzsyUnw75d', //Produktivordner
+  'Berger Elektrotechnik (KTN)': '13oW_ltohWezbjiuFWUdZZXgM6NtndcD_',
+  'Greensky (OÖ, SBG)': '14j-TzXjnCNVgx9SqCcTilX3gsGB0DnF5',
+  'KOLLSTAR (OÖ)': '1ZeOW8gm0jhVDNG9920Yori7pde1G6bpw', // Produktivordner
+  'Kreuzeder (OÖ, SBG)': '1zAdnKf5VPEuUqQsdDWSb9D5btaf_7t1K'
 };
 
 // Name des Unterordners im Partner-Root, in den neue Kundenordner rein sollen.
@@ -51,7 +51,7 @@ const MONTAGE_OFFEN_ORDNERNAME = 'Montage offen';
 
 // Unterordner-Struktur pro Kunde (aus dem bestehenden Prototyp OrdnerfürKundenerstellen_hardcoded_names.js übernommen)
 const KUNDEN_UNTERORDNER_NAMEN = [
-  '1_AB',
+  '1_AB-bei-FS',
   '2_Projektdokumentation',
   '3_Stromrechnung',
   '4_Fotos',

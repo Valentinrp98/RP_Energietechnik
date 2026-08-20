@@ -1,6 +1,25 @@
 // ===== KERNLOGIK =====
 
 /**
+ * Löst eine Google-Drive-Verknüpfung (Shortcut) zu ihrem Zielordner auf.
+ * DriveApp (Basisdienst) kann Shortcuts nicht auflösen -- dafür bräuchte es den Advanced-Drive-
+ * Service. Stattdessen direkter REST-Call gegen die Drive-API v3 mit dem Script-eigenen
+ * OAuth-Token (den hat das Script bereits, weil DriveApp an anderer Stelle schreibt).
+ * Gibt null zurück, wenn der Call fehlschlägt oder kein Ziel gefunden wird -- bewusst kein throw,
+ * der Aufrufer soll das wie "Ordner nicht gefunden" behandeln, nicht wie ein API-Totalausfall.
+ */
+function loeseShortcutAuf(shortcutId) {
+  const url = `https://www.googleapis.com/drive/v3/files/${shortcutId}?fields=shortcutDetails`;
+  const response = UrlFetchApp.fetch(url, {
+    headers: { Authorization: `Bearer ${ScriptApp.getOAuthToken()}` },
+    muteHttpExceptions: true
+  });
+  if (response.getResponseCode() !== 200) return null;
+  const targetId = JSON.parse(response.getContentText()).shortcutDetails?.targetId;
+  return targetId ? DriveApp.getFolderById(targetId) : null;
+}
+
+/**
  * Kompletter Ablauf für einen Deal: Montagepartner ermitteln, Kundenordner im richtigen
  * Partner-Hauptordner anlegen, Link zurück nach Pipedrive schreiben. Gibt Ergebnis-String zurück.
  * DRY_RUN=true: es wird nichts angelegt/geschrieben, nur geloggt was passieren würde.
@@ -73,12 +92,26 @@ function processGewonnenDealUnlocked(dealId) {
   // "Montage offen" muss im Partner-Root bereits existieren -- wird bewusst nicht automatisch
   // angelegt, ein fehlender Ordner ist ein Setup-Fehler und soll auffallen statt stillschweigend
   // eine neue Ordnerstruktur zu erzeugen, die vom Partner nicht erwartet wird.
+  //
+  // Fall Kreuzeder (2026-08-19, Produktivtest Deal 6961): manche Partner sind nur per Shortcut
+  // eingebunden (zeigt auf einen Ordner im eigenen Drive des Partners). getFoldersByName() findet
+  // das nicht -- ein Shortcut hat einen anderen mimeType als ein echter Ordner. Deshalb Fallback:
+  // Shortcut mit passendem Namen suchen und über die Drive-REST-API auflösen.
   const montageOffenIter = partnerRoot.getFoldersByName(MONTAGE_OFFEN_ORDNERNAME);
-  if (!montageOffenIter.hasNext()) {
-    logRow(dealId, deal.title, partner, 'übersprungen', null, `Unterordner "${MONTAGE_OFFEN_ORDNERNAME}" fehlt im Partner-Root -- manuell anlegen`);
+  let parentFolder = null;
+  if (montageOffenIter.hasNext()) {
+    parentFolder = montageOffenIter.next();
+  } else {
+    const shortcutIter = partnerRoot.getFilesByName(MONTAGE_OFFEN_ORDNERNAME);
+    const shortcut = shortcutIter.hasNext() ? shortcutIter.next() : null;
+    if (shortcut && shortcut.getMimeType() === 'application/vnd.google-apps.shortcut') {
+      parentFolder = loeseShortcutAuf(shortcut.getId());
+    }
+  }
+  if (!parentFolder) {
+    logRow(dealId, deal.title, partner, 'übersprungen', null, `Unterordner "${MONTAGE_OFFEN_ORDNERNAME}" fehlt im Partner-Root (auch nicht als Verknüpfung gefunden) -- manuell prüfen`);
     return `übersprungen (Unterordner "${MONTAGE_OFFEN_ORDNERNAME}" fehlt bei "${partner}")`;
   }
-  const parentFolder = montageOffenIter.next();
 
   if (DRY_RUN) {
     logRow(dealId, deal.title, partner, 'DRY-RUN', null, `würde Ordner "${ordnerName}" in Partnerordner ${parentFolderId} anlegen`);
