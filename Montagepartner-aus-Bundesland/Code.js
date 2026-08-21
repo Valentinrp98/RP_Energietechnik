@@ -47,43 +47,49 @@ const MONTAGEPARTNER_OPTION_IDS = {
   'Berger Elektrotechnik (KTN)': 158,
   'Greensky (OÖ, SBG)': 159,
   'KOLLSTAR (OÖ)': 160,
-  'Kreuzeder (OÖ, SBG)': 161
+  'Kreuzeder (OÖ, SBG)': 161,
+  'Tiroler Partner (T)': 243,
+  'Vorarlberg Partner (V)': 244
 };
 
 // ------------------------------------------------------------------------------------------
-// Bundesland -> Montagepartner. NUR eindeutige Zuordnungen.
-//
-// Oberoesterreich bewusst NICHT drin: dort sind laut Feldkatalog drei Partner aktiv
-// (Kreuzeder, Greensky, KOLLSTAR), die Wahl ist nicht automatisch entscheidbar.
-// Steiermark, Tirol, Vorarlberg: kein Partner definiert.
+// Bundesland -> Montagepartner. Seit 2026-08-20 (Valentins Entscheidung) ALLE 9 Bundesländer
+// eindeutig zugeordnet: Oberoesterreich komplett zu Kreuzeder (Greensky/KOLLSTAR bleiben als
+// Pipedrive-Optionen bestehen, sind aber kein automatisches Bundesland-Ziel mehr), Steiermark
+// zu ALE, neue eigene Partner fuer Tirol und Vorarlberg angelegt.
 //
 // FIX C -- ENTSCHEIDUNG SALZBURG (Valentin, 2026-08-12): Greensky ist NICHT in Salzburg aktiv,
 // nur Kreuzeder. Das Options-Label "Greensky (OÖ, SBG)" in Pipedrive ist irrefuehrend/falsch
 // und sollte dort korrigiert werden -- im Script ist Salzburg damit wieder eindeutig.
 // ------------------------------------------------------------------------------------------
 const BUNDESLAND_TO_MONTAGEPARTNER = {
-  'Salzburg': 'Kreuzeder (OÖ, SBG)',
   'Wien': 'ALE-Engineering (NÖ, Wien, BGL)',
   'Niederösterreich': 'ALE-Engineering (NÖ, Wien, BGL)',
   'Burgenland': 'ALE-Engineering (NÖ, Wien, BGL)',
-  'Kärnten': 'Berger Elektrotechnik (KTN)'
+  'Steiermark': 'ALE-Engineering (NÖ, Wien, BGL)',
+  'Kärnten': 'Berger Elektrotechnik (KTN)',
+  'Oberösterreich': 'Kreuzeder (OÖ, SBG)',
+  'Salzburg': 'Kreuzeder (OÖ, SBG)',
+  'Tirol': 'Tiroler Partner (T)',
+  'Vorarlberg': 'Vorarlberg Partner (V)'
 };
 
-// Nur fuers Logging: ALLE Partner, die in einem Bundesland infrage kommen (auch die
-// mehrdeutigen), damit im Sheet nachvollziehbar ist, welche Kandidaten zur Wahl standen --
-// gerade bei uebersprungenen Zeilen wie Oberoesterreich.
+// Nur fuers Logging: ALLE Partner, die in einem Bundesland infrage kommen -- seit 2026-08-20
+// pro Bundesland nur noch genau einer, da alle eindeutig zugeordnet sind.
 const BUNDESLAND_PARTNER_KANDIDATEN = {
-  'Salzburg': ['Kreuzeder (OÖ, SBG)'],
   'Wien': ['ALE-Engineering (NÖ, Wien, BGL)'],
   'Niederösterreich': ['ALE-Engineering (NÖ, Wien, BGL)'],
   'Burgenland': ['ALE-Engineering (NÖ, Wien, BGL)'],
+  'Steiermark': ['ALE-Engineering (NÖ, Wien, BGL)'],
   'Kärnten': ['Berger Elektrotechnik (KTN)'],
-  'Oberösterreich': ['Kreuzeder (OÖ, SBG)', 'Greensky (OÖ, SBG)', 'KOLLSTAR (OÖ)']
-  // Steiermark, Tirol, Vorarlberg: keine Kandidaten hinterlegt, kein Partner definiert.
+  'Oberösterreich': ['Kreuzeder (OÖ, SBG)'],
+  'Salzburg': ['Kreuzeder (OÖ, SBG)'],
+  'Tirol': ['Tiroler Partner (T)'],
+  'Vorarlberg': ['Vorarlberg Partner (V)']
 };
 
 // Wenn true: nichts wird geschrieben, nur geloggt was passieren wuerde
-const DRY_RUN = true;
+const DRY_RUN = false;
 
 // FIX G: Wenn true, wird ein bereits gesetzter Montagepartner ueberschrieben. Normalfall false.
 const FORCE_OVERWRITE = false;
@@ -180,7 +186,13 @@ function testEinzelDeal() {
  * damit man die Ergebnisse im Sheet gezielt gegenchecken kann, bevor man auf alle Deals losläuft.
  */
 function fillMontagepartnerForAusgewaehlteDeals() {
-  const dealIds = [7266, 7255]; // hier eigene Deal-IDs eintragen, z.B. [7253, 7301, 7455]
+  // Aus dem ersten Projektdoku-Generator-Live-Batch (21.08.) als "kein Kundenordner-Link" aufgefallen,
+  // dann hier als "kein Montagepartner gesetzt" haengengeblieben. Reihenfolge: ERST
+  // fillBundeslandForAusgewaehlteDeals() (Bundesland-aus-PLZ) laufen lassen, dann diese Funktion --
+  // sonst werden alle 14 wieder als "kein Bundesland gesetzt" uebersprungen.
+  const dealIds = [
+    4945, 5142, 5237, 5373, 5530, 5749, 5758, 5829, 5972, 6013, 6027, 6198, 6326, 6592
+  ];
   try {
     dealIds.forEach(dealId => Logger.log(`Deal ${dealId}: ${fillMontagepartnerForDeal(dealId)}`));
   } finally {
