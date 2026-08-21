@@ -209,12 +209,19 @@ function fillMontagepartnerForDeal(dealId, dealVorab) {
   const deal = (dealVorab && dealVorab.custom_fields) ? dealVorab : fetchPipedrive(`deals/${dealId}`);
   const cf = deal.custom_fields || {};
 
+  // Bundesland VOR dem "bereits gesetzt"-Check aufloesen (steht schon in cf) und in JEDE
+  // logRow-Zeile dieser Funktion mitgeben -- vorher gingen "bereits gesetzt"-Zeilen mit
+  // bundesland=null ins Log, und genau damit liess sich nicht filtern, ob ein bereits gesetzter
+  // Partner ueberhaupt zum Bundesland passt (bei 325 manuell gepflegten Zuordnungen keine
+  // akademische Frage). Ist noch kein Bundesland gesetzt, bleibt der Wert weiterhin null.
+  const bundeslandOptionId = cf[BUNDESLAND_FIELD_KEY];
+  const bundesland = bundeslandOptionId ? BUNDESLAND_ID_TO_NAME[bundeslandOptionId] : null;
+
   if (cf[MONTAGEPARTNER_FIELD_KEY] && !FORCE_OVERWRITE) {
-    logRow(dealId, deal.title, null, 'übersprungen', null, 'Montagepartner bereits gesetzt');
+    logRow(dealId, deal.title, bundesland, 'übersprungen', null, 'Montagepartner bereits gesetzt');
     return 'übersprungen (bereits gesetzt)';
   }
 
-  const bundeslandOptionId = cf[BUNDESLAND_FIELD_KEY];
   if (!bundeslandOptionId) {
     logRow(dealId, deal.title, null, 'übersprungen', null, 'kein Bundesland gesetzt (PLZ->Bundesland-Script zuerst laufen lassen)');
     return 'übersprungen (kein Bundesland)';
@@ -222,7 +229,6 @@ function fillMontagepartnerForDeal(dealId, dealVorab) {
 
   // FIX B: unbekannte Option-ID ist ein KONFIGURATIONSFEHLER, kein Fachfall. Vorher landete
   // der Fall stillschweigend im "kein eindeutiger Partner"-Bucket zwischen den OOE-Zeilen.
-  const bundesland = BUNDESLAND_ID_TO_NAME[bundeslandOptionId];
   if (!bundesland) {
     logRow(dealId, deal.title, null, 'FEHLER', null,
       `KONFIG-FEHLER: Bundesland-Option-ID ${bundeslandOptionId} ist im Script nicht hinterlegt -- pruefeKonfiguration() ausfuehren`);
