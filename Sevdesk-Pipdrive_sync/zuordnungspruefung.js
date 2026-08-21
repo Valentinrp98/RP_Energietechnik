@@ -46,6 +46,30 @@ const AUDIT_PAARE_NUR_ANGEBOTSNUMMER = [
   { deal: 6771, order: '2026-425-A' }
 ];
 
+// --- Gruppe C: 2. Runde Namensabgleich (21.08.2026 14:48-14:50 LIVE geschrieben, Status
+//     "direkt beschrieben" im Sync-Log) -- die 27 Deals aus syncPerNameVormatchingMassentransfer().
+//     Neun davon hatten in dem Lauf MEHRERE Order-Revisionen desselben Kontakts (6207, 4945, 5237,
+//     5530, 5972, 6037, 6198, 6593, 4876) -- also genau die Fälle, wo "neueste genommen" nur nach
+//     update-Timestamp entscheidet, ohne orderType/Status zu prüfen. Diese Gruppe ist der Grund für
+//     den Re-Check: das Flag "Kontakt hat X Aufträge -- neuester wurde geraten" unten macht sichtbar,
+//     ob Adresse/Geld/Status bei genau diesen 9 trotzdem passen.
+const AUDIT_PAARE_GESCHRIEBEN_RUNDE2 = [
+  { deal: 6207, order: '2026-357-A' },  { deal: 7071, order: '2026-322-A' },
+  { deal: 7072, order: '2026-342-A' },  { deal: 7186, order: '2026-597-A' },
+  { deal: 7282, order: '2026-608-A' },  { deal: 7334, order: '2026-609-A' },
+  { deal: 4945, order: '2025-1616-A' }, { deal: 5142, order: '2025-1704-A' },
+  { deal: 5237, order: '2026-97-A'  },  { deal: 5373, order: '2025-1853-A' },
+  { deal: 5530, order: '2025-2054-A' }, { deal: 5749, order: '2025-2101-A' },
+  { deal: 5758, order: '2026-617-A' },  { deal: 5829, order: '2026-37-A'  },
+  { deal: 5972, order: '2026-480-A' },  { deal: 6006, order: '2026-323-A' },
+  { deal: 6013, order: '2026-231-A' },  { deal: 6027, order: '2026-113-A' },
+  { deal: 6037, order: '2026-429-A' },  { deal: 6198, order: '2026-54-A'  },
+  { deal: 6326, order: '2026-340-A' },  { deal: 6454, order: '2026-317-A' },
+  { deal: 6592, order: '2026-449-A' },  { deal: 6593, order: '2026-331-A' },
+  { deal: 6952, order: '2026-488-A' },  { deal: 4876, order: '2026-321-A' },
+  { deal: 6439, order: '2026-318-A' }
+];
+
 // ============================================================================
 // HILFSFUNKTIONEN
 // ============================================================================
@@ -135,7 +159,8 @@ function pruefeZuordnungAlle() {
   const zeilen = [];
   const gruppen = [
     { label: 'GESCHRIEBEN', paare: AUDIT_PAARE_GESCHRIEBEN },
-    { label: 'nur Angebotsnr.', paare: AUDIT_PAARE_NUR_ANGEBOTSNUMMER }
+    { label: 'nur Angebotsnr.', paare: AUDIT_PAARE_NUR_ANGEBOTSNUMMER },
+    { label: 'GESCHRIEBEN Runde 2', paare: AUDIT_PAARE_GESCHRIEBEN_RUNDE2 }
   ];
 
   gruppen.forEach(gruppe => {
@@ -233,7 +258,7 @@ function pruefeZuordnungAlle() {
       if (angebotsnummerImDeal && angebotsnummerImDeal !== paar.order) {
         flags.push(`🔴 Deal trägt jetzt Angebotsnummer "${angebotsnummerImDeal}", laut Log geschrieben wurde "${paar.order}"`);
       }
-      if (gruppe.label === 'GESCHRIEBEN' && (moduleImDeal === null || moduleImDeal === undefined)) {
+      if (gruppe.label.indexOf('GESCHRIEBEN') === 0 && (moduleImDeal === null || moduleImDeal === undefined)) {
         flags.push('🟡 Module_Anzahl im Deal leer, obwohl Log SUCCESS meldet');
       }
 
