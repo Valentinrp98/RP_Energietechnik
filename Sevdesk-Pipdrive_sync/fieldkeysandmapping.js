@@ -20,7 +20,7 @@ const FIELD_KEYS = {
 };
 
 const ENUM_OPTION_IDS = {
-  Module_Marke:    { 'Aiko': 107, 'Sigenergy': 108, 'Fronius': 109, 'Huawei': 110, 'SUNOVA': 138, 'LUXOR': 139, 'DAS': 140, 'TRINASOLAR': 141 },
+  Module_Marke:    { 'Aiko': 107, 'Sigenergy': 108, 'Fronius': 109, 'Huawei': 110, 'SUNOVA': 138, 'LUXOR': 139, 'DAS': 140, 'TRINASOLAR': 141, 'JASOLAR': 247 },
   Heizstab:        { 'Ja': 123, 'Nein': 124 },
   System_Marke:    { 'Sigenergy': 125, 'Fronius': 126, 'Huawei': 127, 'Growatt': 128, 'SolaX': 129, 'SofarSolar': 130, 'BYD': 131 },
   Notstrom_Typ:    { 'Automatisch': 132, 'Händisch': 133, 'Nein': 134 },

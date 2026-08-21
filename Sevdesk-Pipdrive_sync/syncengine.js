@@ -25,6 +25,17 @@ const SYNC_STATE_KEY = 'SYNCED_ORDERS';   // Script Property: {orderId: updateTi
 const MAX_ORDERS_PER_RUN = 25;            // Obergrenze pro Lauf (Rest folgt im nächsten Takt)
 const MAX_RUNTIME_MS = 4 * 60 * 1000;     // Freiwilliger Stopp bei 4 Min (Apps-Script-Limit: 6 Min)
 
+// Person-Custom-Fields, 1:1 aus Ordnererstellung-bei-Gewonnen/Projektdoku-Generator übernommen --
+// gleiche Pipedrive-Felder, hier nur gelesen (für die Name/Adresse-Log-Liste, siehe unten).
+const ADRESSE_FIELD_KEY = '432e4e165de7e9f474643c3d3a5552e2ec976f55';
+const PLZ_FIELD_KEY = '5fef394025c936df4b58763b2b58c340fbb0d251';
+
+// Wenn true: nichts wird nach Pipedrive geschrieben, nur geloggt was passieren würde (inkl. aller
+// erkannten Felder). Betrifft NUR den schreibenden Schritt (writeArticleFieldsToDeal) -- Lesen/
+// Matchen läuft immer live, sonst könnte man ja nichts prüfen. Default true, wie in den anderen
+// RP-Scripts (Ordnererstellung-bei-Gewonnen etc.) -- bewusst umschalten, bevor scharf geschrieben wird.
+const DRY_RUN = false;
+
 // ============================================================================
 // HTTP-HELPER: einheitliche Auth + robustes JSON-Parsing für beide APIs
 // ============================================================================
@@ -165,13 +176,21 @@ function findTargetDeal(order) {
   return { dealId: null, matchedBy: null, ambiguous: false, candidates: [] };
 }
 
-/** Liest den Wert eines einzelnen Custom Fields aus einem Deal (für die Angebotsnummer/Kundennummer-Gegenprobe). */
+/**
+ * Liest den Wert eines einzelnen Custom Fields aus einem Deal (für die Angebotsnummer/Kundennummer-Gegenprobe).
+ * BUGFIX (2026-08-21): `cf[fieldKey] !== undefined` allein reicht nicht -- ein leeres Pipedrive-Feld
+ * liefert `null` (nicht `undefined`), und `String(null)` ergibt den STRING "null", der in der
+ * Gegenprobe (`if (kundeCheck && ...)`) truthy ist. Das hat bei jedem Deal ohne gesetzte Kundennummer
+ * fälschlich einen "vermutlich falscher Deal"-Konflikt ausgelöst, obwohl das Feld einfach nur leer
+ * war -- betraf die komplette Angebotsnummer-Matching-Logik, nicht nur Einzelfälle.
+ */
 function getDealCustomFieldValue(dealId, fieldKey) {
   if (!fieldKey || fieldKey.indexOf('PLACEHOLDER') === 0) return null;
   const data = pipedriveFetch(`/deals/${dealId}?custom_fields=${fieldKey}`, { method: 'get' });
   if (!data.success || !data.data) return null;
   const cf = data.data.custom_fields || {};
-  return cf[fieldKey] !== undefined ? String(cf[fieldKey]) : null;
+  const wert = cf[fieldKey];
+  return (wert !== undefined && wert !== null) ? String(wert) : null;
 }
 
 // ============================================================================
@@ -264,6 +283,25 @@ function resetSyncState() {
 // HAUPT-FUNKTION: ein einzelner Auftrag
 // ============================================================================
 
+/**
+ * Baut eine vollständige, lesbare Zeile aus allen erkannten Feldern -- nicht nur die grobe
+ * Summary, sondern jedes Feld einzeln benannt, so wie es (bei DRY_RUN=false) nach Pipedrive
+ * geschrieben würde. Damit sieht man beim DRY_RUN-Log genau, was das Script erkannt hat.
+ */
+function formatiereErkannteFelder(aggregated) {
+  const f = aggregated.fields;
+  const teile = [
+    `Module: ${f.Module_Anzahl || 0}x ${f.Module_Marke || '-'}`,
+    `WR: ${f.WR_Leistung_kW || '-'} (System-Marke: ${f.System_Marke || '-'})`,
+    `Speicher: ${f.Speicher_Kapazitaet_kWh || '-'}`,
+    `Notstrom: ${f.Notstrom_Typ}`,
+    `Wallbox: ${f.Wallbox_Typ}`,
+    `Heizstab: ${f.Heizstab}`
+  ];
+  const zeile = teile.join(' | ');
+  return aggregated.summary ? `${zeile} || Rohpositionen: ${aggregated.summary}` : zeile;
+}
+
 function syncOrderToPipedrive(orderId) {
   let dealId = null;
 
@@ -289,14 +327,19 @@ function syncOrderToPipedrive(orderId) {
 
     dealId = match.dealId;
     const aggregated = aggregatePositions(order.positions);
-    writeArticleFieldsToDeal(dealId, aggregated);
+    const erkannt = formatiereErkannteFelder(aggregated);
 
-    const details = aggregated.unknownArticles.length > 0
-      ? `[${match.matchedBy}] ${aggregated.summary} | ⚠️ Unbekannt: ${aggregated.unknownArticles.join(', ')}`
-      : `[${match.matchedBy}] ${aggregated.summary}`;
+    if (!DRY_RUN) {
+      writeArticleFieldsToDeal(dealId, aggregated);
+    }
 
-    logSyncResult('SUCCESS', dealId, label, '-', details);
-    Logger.log(`✓ ${label} → Deal ${dealId} (${match.matchedBy})`);
+    const warnung = aggregated.unknownArticles.length > 0
+      ? ` | ⚠️ Unbekannt: ${aggregated.unknownArticles.join(', ')}`
+      : '';
+    const details = `[${match.matchedBy}] ${erkannt}${warnung}`;
+
+    logSyncResult(DRY_RUN ? 'DRY_RUN' : 'SUCCESS', dealId, label, '-', details);
+    Logger.log(`${DRY_RUN ? '(DRY_RUN, nichts geschrieben) ' : ''}✓ ${label} → Deal ${dealId} (${match.matchedBy})`);
     return true;
 
   } catch (e) {
@@ -304,6 +347,378 @@ function syncOrderToPipedrive(orderId) {
     Logger.log(`✗ Order ${orderId}: ${e.message}`);
     return false;
   }
+}
+
+// ============================================================================
+// EINZELDEAL OHNE STATUS-FILTER: Artikel-Daten schon vor "Angenommen" holen
+// ============================================================================
+// syncPendingOrders() filtert bewusst auf status=500 (Angenommen), weil der Live-Betrieb nur
+// abgeschlossene Aufträge automatisch verarbeiten soll. Für einen manuell ausgewählten Deal soll
+// das nicht gelten -- sucht hier direkt über die Angebotsnummer, IN JEDEM sevdesk-Status.
+// Sicherheitsregel (Valentins eigenes Prinzip, siehe CLAUDE.md "bei Mehrdeutigkeit nicht raten"):
+// findet die Suche mehr als 1 Auftrag zur selben Angebotsnummer, wird NICHTS geschrieben.
+//
+// UNGETESTET: der Query-Parameter `orderNumber=` ist von den bestehenden, live bestätigten Calls
+// (/Order/{id}, /Order?status=) abgeleitet, aber noch nicht live gegen sevdesk verifiziert -- vor
+// dem ersten echten Einsatz einmal mit einem bekannten Testfall gegenchecken (Logger.log zeigt die
+// rohe sevdesk-Antwort, falls `objects` leer bleibt obwohl der Auftrag existiert).
+
+/**
+ * Holt Artikel-Daten für EINEN Pipedrive-Deal direkt aus sevdesk, unabhängig vom Auftragsstatus.
+ * Voraussetzung: der Deal hat schon eine Angebotsnummer eingetragen (FIELD_KEYS.sevdesk_angebotsnummer).
+ * Bei genau 1 Treffer: normaler Sync (writeArticleFieldsToDeal). Bei 0 oder >1 Treffern: nur loggen,
+ * NICHTS schreiben.
+ */
+function syncEinzelDealOhneStatusFilter(dealId) {
+  const dealData = pipedriveFetch(`/deals/${dealId}?custom_fields=${FIELD_KEYS.sevdesk_angebotsnummer}`, { method: 'get' });
+  if (!dealData.success || !dealData.data) {
+    logSyncResult('ERROR', dealId, null, 'Deal nicht gefunden/lesbar', JSON.stringify(dealData).substring(0, 200));
+    return false;
+  }
+  const angebotsnummer = (dealData.data.custom_fields || {})[FIELD_KEYS.sevdesk_angebotsnummer];
+  if (!angebotsnummer) {
+    logSyncResult('ERROR', dealId, null, 'Keine Angebotsnummer am Deal hinterlegt',
+      'Ohne Angebotsnummer kann sevdesk nicht sicher durchsucht werden -- manuell eintragen, dann erneut versuchen');
+    return false;
+  }
+
+  const orderData = sevdeskFetch(`/Order?orderNumber=${encodeURIComponent(angebotsnummer)}`);
+  const treffer = orderData.objects || [];
+
+  if (treffer.length === 0) {
+    logSyncResult('ERROR', dealId, angebotsnummer, 'Kein sevdesk-Auftrag mit dieser Angebotsnummer gefunden', '');
+    Logger.log(`✗ Deal ${dealId}: kein sevdesk-Auftrag zu Angebotsnummer "${angebotsnummer}"`);
+    return false;
+  }
+  if (treffer.length > 1) {
+    logSyncResult('WARNUNG', dealId, angebotsnummer,
+      `${treffer.length} sevdesk-Aufträge mit derselben Angebotsnummer gefunden`,
+      `Order-IDs: ${treffer.map(o => o.id).join(', ')} -- nichts geschrieben, manuell prüfen`);
+    Logger.log(`⚠️ Deal ${dealId}: ${treffer.length} Treffer für "${angebotsnummer}" -- abgebrochen, keine Ratelogik`);
+    return false;
+  }
+
+  // Genau 1 Treffer -- weiter über die bestehende, bereits getestete Sync-Logik (gleicher Weg wie
+  // syncPendingOrders, nur ohne den Status-Filter davor).
+  return syncOrderToPipedrive(treffer[0].id);
+}
+
+/** Für Einzeltests im Editor: Deal-ID unten eintragen (▷-Button ruft ohne Argumente auf). */
+function testEinzelDealOhneStatusFilter() {
+  const dealId = 7253; // hier Deal-ID eintragen
+  const erfolg = syncEinzelDealOhneStatusFilter(dealId);
+  Logger.log(erfolg ? '✓ Sync erfolgreich' : '✗ Sync nicht durchgeführt -- siehe Log/Sync-Log-Sheet');
+}
+
+/**
+ * Schreibt Artikel-Daten direkt auf einen BEREITS BEKANNTEN Deal (aus Namensabgleich gefunden),
+ * OHNE über die generische Angebotsnummer/Kundennummer-Rediscovery von findTargetDeal() zu gehen.
+ *
+ * BUGFIX (2026-08-21): syncPerNameVormatching() rief zuvor syncOrderToPipedrive(orderId) auf, die
+ * intern versucht, den Ziel-Deal SELBST zu finden -- unnötig UND riskant, wenn wir den Deal doch
+ * schon über den Namensabgleich sicher kennen. Da diese Deals nie eine Angebotsnummer/Kundennummer
+ * in Pipedrive hatten, hätte die Rediscovery vermutlich für JEDEN Treffer "Kein Pipedrive Deal
+ * gefunden" ergeben -- der komplette Namens-Vormatching-Batch hätte also nie tatsächlich
+ * geschrieben, nur die Vorab-Log-Zeile hätte Erfolg vorgetäuscht. Diese Funktion schreibt die
+ * Angebotsnummer als Nebeneffekt gleich mit auf den bekannten Deal (für Nachvollziehbarkeit/
+ * künftige Läufe über die normale Route), dann direkt die Artikel-Felder -- kein Ratespiel mehr.
+ */
+function syncDirektAufBekannterDeal(dealId, orderId) {
+  try {
+    const order = fetchOrderFromSevdesk(orderId);
+    const aggregated = aggregatePositions(order.positions);
+    const erkannt = formatiereErkannteFelder(aggregated);
+
+    if (!DRY_RUN) {
+      if (order.orderNumber) {
+        pipedriveFetch(`/deals/${dealId}`, {
+          method: 'patch',
+          contentType: 'application/json',
+          payload: JSON.stringify({ custom_fields: { [FIELD_KEYS.sevdesk_angebotsnummer]: order.orderNumber } })
+        });
+      }
+      writeArticleFieldsToDeal(dealId, aggregated);
+    }
+
+    const warnung = aggregated.unknownArticles.length > 0
+      ? ` | ⚠️ Unbekannt: ${aggregated.unknownArticles.join(', ')}`
+      : '';
+    const details = `[Namensabgleich, Order ${order.orderNumber || orderId}] ${erkannt}${warnung}`;
+
+    logSyncResult(DRY_RUN ? 'DRY_RUN' : 'SUCCESS', dealId, order.orderNumber || orderId, '-', details);
+    Logger.log(`${DRY_RUN ? '(DRY_RUN, nichts geschrieben) ' : ''}✓ Deal ${dealId} direkt beschrieben (Order ${order.orderNumber || orderId})`);
+    return true;
+  } catch (e) {
+    logSyncResult('ERROR', dealId, orderId, e.message, '');
+    Logger.log(`✗ Deal ${dealId} / Order ${orderId}: ${e.message}`);
+    return false;
+  }
+}
+
+// ============================================================================
+// VORMATCHING PER NAME: für Deals OHNE Angebotsnummer
+// ============================================================================
+// syncEinzelDealOhneStatusFilter() braucht zwingend eine Angebotsnummer am Deal. Für Deals, wo die
+// noch fehlt, bleibt nur der Name als Anker -- deutlich unsicherer (Namensgleichheit, Tippfehler),
+// deshalb strikt nach demselben Prinzip wie überall sonst: nur bei GENAU 1 Treffer schreiben, sonst
+// nur loggen und den Fall dem Menschen zur Entscheidung vorlegen (siehe CLAUDE.md).
+//
+// UNGETESTET wie oben: /Contact liefert bei sevdesk je nach Kontakttyp entweder `name` (Firma) oder
+// `surename`+`familyname` (Person) -- Feldnamen aus der bestehenden fetchOrderFromSevdesk()-Nutzung
+// von /Contact/{id} übernommen, die Kombination beider Felder für den Vergleich ist aber noch nicht
+// live verifiziert. Vor dem ersten echten Einsatz mit einem bekannten Namen gegenchecken.
+
+/** Namen zu vergleichbarer Form normalisieren (lowercase, Whitespace vereinheitlicht). */
+function nameNormalisiert(roh) {
+  return String(roh || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Holt ALLE sevdesk-Aufträge unabhängig vom Status (Pagination wie syncPendingOrders, nur ohne
+ * status=-Filter). Matched wird über `addressName` -- das Feld, das den Kundennamen so trägt, wie
+ * er auf dem Angebot/Auftrag STEHT, unabhängig vom verknüpften Contact-Datensatz.
+ *
+ * KORREKTUR (2026-08-20): Erste Fassung hat über den verknüpften Contact (`contact.id` ->
+ * /Contact/{id} -> name/surename+familyname) gematcht. Das lieferte bei ~24/30 echten Kunden
+ * "kein Treffer", obwohl der Kunde nachweislich in sevdesk existiert (händisch in der sevdesk-
+ * Angebote-Suche bestätigt, z.B. "Metehan Hilal Arac"). Root Cause: `addressName` am Auftrag und
+ * der Name im verknüpften Contact-Datensatz sind zwei UNABHÄNGIGE Felder und können auseinanderlaufen
+ * -- addressName ist näher an dem, was die sevdesk-UI selbst durchsucht. Direkt darauf zu matchen
+ * spart zusätzlich den kompletten /Contact-Preload (kein N+1-Risiko mehr, einfacher Code).
+ * Siehe project_sevdesk_pipedrive_sync.md für Details.
+ */
+function holeAlleAuftraegeMitKundenname() {
+  const treffer = [];
+  let offset = 0;
+  const limit = 100;
+
+  while (true) {
+    const data = sevdeskFetch(`/Order?limit=${limit}&offset=${offset}`);
+    if (!data.objects || data.objects.length === 0) break;
+    data.objects.forEach(o => {
+      if (!o.addressName || !o.contact || !o.contact.id) return;
+      treffer.push({
+        orderId: o.id, orderNumber: o.orderNumber, contactId: o.contact.id,
+        update: o.update || o.orderDate || '', kundenName: nameNormalisiert(o.addressName)
+      });
+    });
+    if (data.objects.length < limit) break;
+    offset += limit;
+    if (offset > 20000) { Logger.log('⚠️ Sicherheitsnetz bei 20000 Aufträgen erreicht -- es gibt mehr, als geladen wurden!'); break; }
+  }
+  return treffer;
+}
+
+/** Wie formatAdresse() in Projektdoku-Generator/Config.js -- gleiche Feldstruktur (Google-Maps-
+ *  Autocomplete füllt Subfelder, freie Texteingabe füllt nur `value`), hier lokal dupliziert, weil
+ *  Sevdesk-Pipdrive_sync ein eigenes Apps-Script-Projekt ist (kein Datei-Teilen zwischen Projekten). */
+function holeAdresseFuerLog(person) {
+  if (!person || !person.custom_fields) return '(keine Adresse)';
+  const adressFeld = person.custom_fields[ADRESSE_FIELD_KEY];
+  const plzFeld = person.custom_fields[PLZ_FIELD_KEY];
+  const adresse = adressFeld && typeof adressFeld === 'object'
+    ? (adressFeld.formatted_address || adressFeld.value || '')
+    : (adressFeld ? String(adressFeld) : '');
+  const plzText = plzFeld ? String(plzFeld) : '';
+  const plzSchonDrin = plzText && adresse.includes(plzText);
+  const teile = [adresse, !plzSchonDrin ? plzText : ''].filter(Boolean);
+  return teile.length ? teile.join(', ') : '(keine Adresse)';
+}
+
+/**
+ * Reine Log-Liste Name/Adresse für eine Deal-Liste -- keine sevdesk-Abfrage, kein Schreiben.
+ * Zum Vor-Check bevor man Vormatching per Name laufen lässt: zeigt, was überhaupt an Name/Adresse
+ * in Pipedrive steht, damit man Namensgleichheiten (zwei "Maier") schon vorher im Blick hat.
+ * Ergebnis kommt sowohl in Logger.log (direkt im Editor sichtbar) als auch als eigene INFO-Zeile
+ * im Sync-Log-Sheet (persistent, auch nach Schließen des Editors nachlesbar).
+ */
+function listeNameUndAdresse(dealIds) {
+  dealIds.forEach(dealId => {
+    const dealData = pipedriveFetch(`/deals/${dealId}`, { method: 'get' });
+    if (!dealData.success || !dealData.data) {
+      Logger.log(`Deal ${dealId}: nicht gefunden/lesbar`);
+      logSyncResult('INFO', dealId, null, 'Name/Adresse-Check: Deal nicht gefunden/lesbar', '');
+      return;
+    }
+    const personRef = dealData.data.person_id;
+    const personId = personRef && (personRef.value || personRef);
+    if (!personId) {
+      Logger.log(`Deal ${dealId} (${dealData.data.title}): keine Person verknüpft`);
+      logSyncResult('INFO', dealId, null, 'Name/Adresse-Check: keine Person verknüpft', dealData.data.title || '');
+      return;
+    }
+    const personData = pipedriveFetch(`/persons/${personId}`, { method: 'get' });
+    const person = personData.success ? personData.data : null;
+    const name = person ? person.name : dealData.data.title;
+    const adresse = holeAdresseFuerLog(person);
+
+    Logger.log(`Deal ${dealId}: ${name} -- ${adresse}`);
+    logSyncResult('INFO', dealId, null, 'Name/Adresse-Check', `${name} -- ${adresse}`);
+  });
+}
+
+/** Für Einzeltests im Editor: Deal-IDs unten eintragen (▷-Button ruft ohne Argumente auf). */
+function testListeNameUndAdresse() {
+  const dealIds = [7253]; // hier die zu prüfenden Deal-IDs eintragen
+  listeNameUndAdresse(dealIds);
+}
+
+/**
+ * Massen-Vorschau Name/Adresse für die 32 Fulfillment-Deals -- vor dem Vormatching per Name
+ * ausführen, um Namensgleichheiten/fehlende Adressen vorab zu sehen.
+ */
+function listeNameUndAdresseMassentransfer() {
+  // 6591 und 7107 (beide Mario Messiha, identischer Name+Adresse) bewusst ausgelassen -- er hat
+  // mehrere Deals, Namensmatching kann die beiden nicht unterscheiden. Bei Bedarf später einzeln
+  // mit der richtigen Angebotsnummer nachziehen (syncEinzelDealOhneStatusFilter).
+  const dealIds = [
+    7065, 6970, 5587, 6694, 5779, 6922, 5984, 6659, 6084, 5837, 6686,
+    6804, 5867, 6971, 6843, 7096, 6406, 7129, 5728, 6179, 6738, 6219, 6771,
+    7059, 5307, 7177, 6908, 6018, 5663, 6493
+  ];
+  listeNameUndAdresse(dealIds);
+}
+
+/**
+ * Manuell bestätigte Namens-Abweichungen zwischen Pipedrive-Person und sevdesk-Kundenname (Stand
+ * 2026-08-20/21, live in der sevdesk-UI gegengecheckt von Valentin -- siehe project_sevdesk_
+ * pipedrive_sync.md). Der sevdesk-Auftrag läuft auf Ehepartner statt auf die Pipedrive-Person.
+ *
+ * Kalman/Waldhaus waren hier ursprünglich auch drin (Firmenname statt Person), matchten aber trotz
+ * exakt passendem addressName nicht (2026-08-21, Ursache ungeklärt -- evtl. Pagination-Timing bei
+ * holeAlleAuftraegeMitKundenname). Laufen jetzt stattdessen über die zuverlässigere Angebotsnummer-
+ * Route (setzeBekannteAngebotsnummernUndSync), nicht mehr über diese Namens-Override-Liste.
+ */
+const NAME_UEBERSCHREIBUNGEN = {
+  5663: 'Johanna Seitz'  // Christian Seitz -- Auftrag läuft auf die Ehefrau
+};
+
+/**
+ * Vormatching per Name für Deals ohne Angebotsnummer. dealIds = Array von Pipedrive Deal-IDs.
+ * Holt den Personennamen aus Pipedrive (oder nimmt die Override aus NAME_UEBERSCHREIBUNGEN, falls
+ * vorhanden), vergleicht gegen alle sevdesk-Aufträge (per Kundenname aus addressName).
+ * Genau 1 Treffer -> normaler Sync über syncOrderToPipedrive(). 0 oder >1 Treffer -> nur Log-Eintrag
+ * (inkl. Pipedrive-Adresse, damit man die Kandidaten bei >1 Treffer manuell unterscheiden kann).
+ */
+function syncPerNameVormatching(dealIds) {
+  Logger.log('Lade alle sevdesk-Aufträge + Kundennamen (einmalig, dann pro Deal wiederverwendet)...');
+  const alleAuftraege = holeAlleAuftraegeMitKundenname();
+  Logger.log(`${alleAuftraege.length} Aufträge mit Kundenname geladen.`);
+
+  dealIds.forEach(dealId => {
+    const dealData = pipedriveFetch(`/deals/${dealId}`, { method: 'get' });
+    if (!dealData.success || !dealData.data) {
+      logSyncResult('ERROR', dealId, null, 'Deal nicht gefunden/lesbar', '');
+      return;
+    }
+    const personRef = dealData.data.person_id;
+    const personId = personRef && (personRef.value || personRef);
+    if (!personId) {
+      logSyncResult('ERROR', dealId, null, 'Kein Personenname am Deal ermittelbar (kein person_id)', '');
+      return;
+    }
+    // person_id am Deal ist nur eine Referenz ({value, ...}), der Name steht NICHT eingebettet mit
+    // drin -- deshalb wie bei listeNameUndAdresse() ein separater /persons/{id}-Call.
+    const personData = pipedriveFetch(`/persons/${personId}`, { method: 'get' });
+    const personName = personData.success && personData.data ? personData.data.name : null;
+    if (!personName) {
+      logSyncResult('ERROR', dealId, null, 'Kein Personenname ermittelbar (person_id vorhanden, aber /persons-Call ohne Namen)', '');
+      return;
+    }
+    const ueberschriebenerName = NAME_UEBERSCHREIBUNGEN[dealId];
+    const sucheName = ueberschriebenerName || personName;
+    const gesuchterName = nameNormalisiert(sucheName);
+    if (ueberschriebenerName) {
+      Logger.log(`ℹ️ Deal ${dealId}: suche mit bestätigtem Override "${ueberschriebenerName}" statt Pipedrive-Name "${personName}"`);
+    }
+
+    const treffer = alleAuftraege.filter(a => a.kundenName === gesuchterName);
+    // Nach ECHTEM Kontakt dedupen, nicht nach Auftrag -- ein realer Kunde kann mehrere Order-
+    // Objekte haben (Angebots-Revisionen, orderType "AN" vs. spätere Auftragsbestätigung, siehe
+    // project_sevdesk_pipedrive_sync). Sonst zählt z.B. 1 Kunde mit 3 Angebots-Versionen fälschlich
+    // als "3 Treffer" / mehrdeutig, obwohl es nur einen echten Kandidaten gibt.
+    const distinctContactIds = [...new Set(treffer.map(t => t.contactId))];
+
+    if (treffer.length === 0) {
+      logSyncResult('ERROR', dealId, null, `Kein sevdesk-Auftrag mit Kundenname "${sucheName}" gefunden`, '');
+      Logger.log(`✗ Deal ${dealId} (${sucheName}): kein Treffer per Name`);
+    } else if (distinctContactIds.length > 1) {
+      // Adresse aus dem schon geladenen personData mitloggen, damit bei >1 Treffer wenigstens eine
+      // Entscheidungsgrundlage dasteht (siehe CLAUDE.md "bei Mehrdeutigkeit nicht raten, sondern
+      // entscheidbar machen") -- kein zusätzlicher Call nötig, personData ist schon oben geladen.
+      const adresse = holeAdresseFuerLog(personData.data);
+      logSyncResult('WARNUNG', dealId, null,
+        `${distinctContactIds.length} verschiedene sevdesk-Kontakte mit demselben Namen "${sucheName}"`,
+        `Adresse lt. Pipedrive: ${adresse} -- Order-Nummern: ${treffer.map(t => t.orderNumber || t.orderId).join(', ')} -- nichts geschrieben, Angebotsnummer manuell eintragen`);
+      Logger.log(`⚠️ Deal ${dealId} (${sucheName}, ${adresse}): ${distinctContactIds.length} verschiedene Kontakte -- abgebrochen, keine Ratelogik`);
+    } else {
+      // Genau 1 echter Kontakt, evtl. mehrere Order-Revisionen -- die zuletzt aktualisierte nehmen.
+      const neuesterAuftrag = treffer.reduce((a, b) => (String(b.update) > String(a.update) ? b : a));
+      const hinweis = treffer.length > 1 ? ` (${treffer.length} Order-Revisionen desselben Kontakts, neueste genommen)` : '';
+      Logger.log(`✓ Deal ${dealId} (${sucheName}): 1 Kontakt${hinweis} -- Order ${neuesterAuftrag.orderId}, syncing...`);
+      syncDirektAufBekannterDeal(dealId, neuesterAuftrag.orderId);
+    }
+  });
+}
+
+/**
+ * Massentransfer für die 32 Fulfillment-Deals (Namensabgleich-Uebernahme, Stand 2026-08-20) ohne
+ * Angebotsnummer -- lädt die sevdesk-Aufträge EINMAL für alle 32, nicht pro Deal (kein N+1).
+ */
+function syncPerNameVormatchingMassentransfer() {
+  // Ausgelassen (Stand 2026-08-21):
+  // - 6591/7107 (Mario Messiha, identischer Name+Adresse) -- Namensmatching kann die 2 Deals nicht
+  //   unterscheiden, braucht die richtige Angebotsnummer manuell.
+  // - 6219/7059/5307 (Bobál/van Dyck/Kavlak), 6493/6771 (Kalman/Waldhaus) -- alle 5 laufen jetzt
+  //   über setzeBekannteAngebotsnummernUndSync() mit bekannter/gefundener Angebotsnummer, statt
+  //   "neueste Revision" zu raten bzw. weiter am addressName-Matching zu debuggen.
+  // - 6922 (Hidir Özdek) -- 3 aktive Verträge gleichzeitig, unklar welcher zu diesem Deal gehört.
+  // - 6406 (Karl Heindl), 6908 (Hans Greml) -- on Hold, Marco klärt noch.
+  // - 5663 (Christian Seitz) -- Override "Johanna Seitz" bleibt drin, noch keine Angebotsnummer bekannt.
+  // - 7065 (Metehan Hilal Arac) -- 0 Aufträge in sevdesk, kein Match möglich.
+  const dealIds = [
+    7065, 6970, 5587, 6694, 5779, 5984, 6659, 6084, 5837, 6686,
+    6804, 5867, 6971, 6843, 7096, 7129, 5728, 6179, 6738,
+    7177, 6018, 5663
+  ];
+  syncPerNameVormatching(dealIds);
+}
+
+/**
+ * Bestätigte Angebotsnummern für 3 der Revisions-Fälle (Valentin, 2026-08-21, nach Rücksprache/
+ * sevdesk-Check) -- schreibt die Angebotsnummer ins Pipedrive-Deal-Feld und synct danach über die
+ * zuverlässige Angebotsnummer-Route (syncEinzelDealOhneStatusFilter), statt sich auf "neueste
+ * Revision" zu verlassen wie beim Vormatching per Name.
+ */
+function setzeBekannteAngebotsnummernUndSync() {
+  const eintraege = {
+    6219: '2026-470-A', // Zoltán Bobál
+    7059: '2026-536-A', // Christian van Dyck
+    5307: '2026-535-A', // Kenan Kavlak
+    6493: '2026-554-A', // Canan Kalman -- Auftrag läuft auf "Brot & Gebäck KALMAN KG"
+    6771: '2026-425-A'  // Rudy Waldhaus -- Auftrag läuft auf "Waldhaus GmbH"
+  };
+  Object.entries(eintraege).forEach(([dealId, angebotsnummer]) => {
+    const result = pipedriveFetch(`/deals/${dealId}`, {
+      method: 'patch',
+      contentType: 'application/json',
+      payload: JSON.stringify({ custom_fields: { [FIELD_KEYS.sevdesk_angebotsnummer]: angebotsnummer } })
+    });
+    if (!result.success) {
+      Logger.log(`✗ Deal ${dealId}: Angebotsnummer-Patch fehlgeschlagen -- ${JSON.stringify(result).substring(0, 200)}`);
+      return;
+    }
+    Logger.log(`✓ Deal ${dealId}: Angebotsnummer "${angebotsnummer}" gesetzt, synce jetzt...`);
+    syncEinzelDealOhneStatusFilter(dealId);
+  });
+}
+
+/** Für Einzeltests im Editor: Deal-IDs unten eintragen (▷-Button ruft ohne Argumente auf). */
+function testSyncPerNameVormatching() {
+  // Nachzug für die 3 JASOLAR-Deals -- Modul_Marke war beim ersten Lauf leer, weil die Pipedrive-
+  // Dropdown-Option damals noch nicht existierte (jetzt in ENUM_OPTION_IDS.Module_Marke ergänzt).
+  const dealIds = [5728, 5867, 6738];
+  syncPerNameVormatching(dealIds);
 }
 
 // ============================================================================
@@ -349,13 +764,18 @@ function syncPendingOrders() {
     const o = batch[i];
     const erfolg = syncOrderToPipedrive(o.id);
 
-    // Nur bei Erfolg als erledigt merken — Fehlerfälle werden automatisch erneut versucht
-    if (erfolg) {
+    // Nur bei Erfolg als erledigt merken — Fehlerfälle werden automatisch erneut versucht.
+    // Bei DRY_RUN NIE als erledigt markieren, sonst hält der Duplikat-Schutz einen Auftrag für
+    // "schon gesynct", obwohl nie wirklich geschrieben wurde -- der nächste LIVE-Lauf würde ihn
+    // dann fälschlich überspringen.
+    if (erfolg && !DRY_RUN) {
       state[o.id] = o.update || '';
       verarbeitet++;
       // Alle 5 Aufträge zwischenspeichern, damit bei einem unerwarteten Abbruch
       // nicht die Arbeit des ganzen Laufs verloren geht
       if (verarbeitet % 5 === 0) saveSyncState(state);
+    } else if (erfolg && DRY_RUN) {
+      verarbeitet++; // nur für die Log-Zeile unten, kein State-Save
     }
   }
 
@@ -402,7 +822,7 @@ function testFetchSevdeskOnly() {
   }
 }
 
-/** Führt den kompletten Sync für EINEN Auftrag aus. ⚠️ Schreibt echt nach Pipedrive. */
+/** Führt den kompletten Sync für EINEN Auftrag aus. Schreibt nach Pipedrive, AUSSER DRY_RUN=true. */
 function testFullSync() {
   const TEST_ORDER_ID = '';  // ← Order-ID eintragen
 
@@ -424,4 +844,77 @@ function debugSevdeskResponse() {
   });
   Logger.log('HTTP ' + response.getResponseCode());
   Logger.log(response.getContentText().substring(0, 500));
+}
+
+/**
+ * DIAGNOSE-Funktion, die den 25/30-"kein Treffer"-Bug beim Vormatching per Name aufgeklärt hat
+ * (2026-08-20): Root Cause war, dass über den verknüpften Contact-Datensatz gematcht wurde, dessen
+ * Namensfelder unabhängig vom `addressName`-Feld auf dem Auftrag selbst sein können (siehe
+ * project_sevdesk_pipedrive_sync.md). Fix: holeAlleAuftraegeMitKundenname() matched jetzt direkt
+ * über `addressName`, kein Contact-Umweg mehr. Funktion hier belassen für künftige Sevdesk-API-
+ * Diagnosen (z.B. neue Feldstruktur-Fragen), nicht mehr aktiv für dieses Problem gebraucht.
+ */
+function debugKontaktUndAuftragStruktur() {
+  Logger.log('=== Erste 3 rohe Kontakte (/Contact) ===');
+  const kontakte = sevdeskFetch('/Contact?limit=3');
+  Logger.log(JSON.stringify(kontakte, null, 2));
+
+  Logger.log('\n=== Erste 3 rohe Aufträge (/Order) ===');
+  const auftraege = sevdeskFetch('/Order?limit=3');
+  Logger.log(JSON.stringify(auftraege, null, 2));
+
+  // Falls einer der 3 Beispiel-Aufträge einen contact hat: den echten Kontakt dazu zeigen,
+  // damit man Order.contact.id direkt gegen das Contact-Objekt vergleichen kann.
+  const ersterKontaktId = auftraege.objects && auftraege.objects[0] && auftraege.objects[0].contact
+    ? auftraege.objects[0].contact.id : null;
+  if (ersterKontaktId) {
+    Logger.log(`\n=== Kontakt zu erstem Auftrag (Contact/${ersterKontaktId}) ===`);
+    Logger.log(JSON.stringify(sevdeskFetch(`/Contact/${ersterKontaktId}`), null, 2));
+  }
+
+  // Bekannter Deal aus dem Vormatching-Lauf mit "3 Treffer" (Kenan Kavlak, Deal 5307) -- zeigt,
+  // welche 3 Aufträge/Kontakte für denselben Namen zusammenlaufen (echte Duplikate? Angebot+Auftrag
+  // derselben Bestellung? unterschiedliche Kontakte mit Zufallstreffer im Namen?).
+  Logger.log('\n=== Alle sevdesk-Kontakte, deren Name "kavlak" enthält ===');
+  let offset = 0;
+  const treffer = [];
+  while (true) {
+    const data = sevdeskFetch(`/Contact?limit=100&offset=${offset}`);
+    if (!data.objects || data.objects.length === 0) break;
+    data.objects.forEach(c => {
+      const roh = JSON.stringify(c).toLowerCase();
+      if (roh.includes('kavlak')) treffer.push(c);
+    });
+    if (data.objects.length < 100) break;
+    offset += 100;
+    if (offset > 5000) break;
+  }
+  Logger.log(JSON.stringify(treffer, null, 2));
+}
+
+/**
+ * DIAGNOSE: Kalman/Waldhaus matchen trotz NAME_UEBERSCHREIBUNGEN immer noch nicht -- zeigt die
+ * rohen addressName-Werte aller Aufträge, deren JSON "kalman" bzw. "waldhaus" enthält, damit man
+ * sieht, was tatsächlich in addressName steht (Firmenname mit Zusatz? c/o-Ansprechpartner?
+ * andere Schreibweise?), statt weiter zu raten.
+ */
+function debugKalmanUndWaldhaus() {
+  ['kalman', 'waldhaus'].forEach(suchbegriff => {
+    Logger.log(`\n=== Aufträge, deren Rohdaten "${suchbegriff}" enthalten ===`);
+    let offset = 0;
+    const treffer = [];
+    while (true) {
+      const data = sevdeskFetch(`/Order?limit=100&offset=${offset}`);
+      if (!data.objects || data.objects.length === 0) break;
+      data.objects.forEach(o => {
+        if (JSON.stringify(o).toLowerCase().includes(suchbegriff)) {
+          treffer.push({ id: o.id, orderNumber: o.orderNumber, addressName: o.addressName, contactId: o.contact && o.contact.id });
+        }
+      });
+      if (data.objects.length < 100) break;
+      offset += 100;
+      if (offset > 20000) break;
+    }
+    Logger.log(JSON.stringify(treffer, null, 2));
+  });
 }
