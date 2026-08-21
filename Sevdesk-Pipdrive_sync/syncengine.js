@@ -200,8 +200,11 @@ function getDealCustomFieldValue(dealId, fieldKey) {
 function writeArticleFieldsToDeal(dealId, aggregated) {
   const customFields = {};
 
-  // Immer aktiv setzen (auch null) — sonst bleiben Werte vom letzten Sync stehen
-  customFields[FIELD_KEYS.Module_Anzahl] = aggregated.fields.Module_Anzahl;
+  // Immer aktiv setzen (auch null) — sonst bleiben Werte vom letzten Sync stehen.
+  // FIX V4 (2026-08-13-Review): ohne "|| null" wirft JSON.stringify den Schlüssel bei
+  // undefined komplett raus -- der PATCH geht dann mit leerem custom_fields raus, Pipedrive
+  // antwortet 200, und das Log meldet faelschlich SUCCESS, obwohl nichts geschrieben wurde.
+  customFields[FIELD_KEYS.Module_Anzahl] = aggregated.fields.Module_Anzahl || null;
   customFields[FIELD_KEYS.WR_Leistung_kW] = aggregated.fields.WR_Leistung_kW || null;
   customFields[FIELD_KEYS.Speicher_Kapazitaet_kWh] = aggregated.fields.Speicher_Kapazitaet_kWh || null;
 
@@ -666,20 +669,21 @@ function syncPerNameVormatching(dealIds) {
  * Angebotsnummer -- lädt die sevdesk-Aufträge EINMAL für alle 32, nicht pro Deal (kein N+1).
  */
 function syncPerNameVormatchingMassentransfer() {
-  // Ausgelassen (Stand 2026-08-21):
-  // - 6591/7107 (Mario Messiha, identischer Name+Adresse) -- Namensmatching kann die 2 Deals nicht
-  //   unterscheiden, braucht die richtige Angebotsnummer manuell.
-  // - 6219/7059/5307 (Bobál/van Dyck/Kavlak), 6493/6771 (Kalman/Waldhaus) -- alle 5 laufen jetzt
-  //   über setzeBekannteAngebotsnummernUndSync() mit bekannter/gefundener Angebotsnummer, statt
-  //   "neueste Revision" zu raten bzw. weiter am addressName-Matching zu debuggen.
+  // Zweite Runde (21.08.): 27 Deals aus dem Projektdoku-Generator-Batch, die noch nie durch den
+  // sevdesk-Sync gelaufen sind (nicht Teil der ursprünglichen 30er-Liste vom 20.08.) -- bei 9 davon
+  // (Neureiter, Hemetinger, Hubmann, Raza, Kremser, Lamprecht, Moser, Maier, Kabelik) liegt laut
+  // Drive-Check schon ein altes, manuell erstelltes Doc mit echten Modul-Daten im Kundenordner --
+  // starkes Indiz, dass auch bei den restlichen 18 ein sevdesk-Auftrag existiert.
+  //
+  // Bewusst NICHT dabei (Valentins Entscheidung 2026-08-21):
+  // - 6591/7107 (Mario Messiha) -- braucht die richtige Angebotsnummer manuell.
   // - 6922 (Hidir Özdek) -- 3 aktive Verträge gleichzeitig, unklar welcher zu diesem Deal gehört.
   // - 6406 (Karl Heindl), 6908 (Hans Greml) -- on Hold, Marco klärt noch.
-  // - 5663 (Christian Seitz) -- Override "Johanna Seitz" bleibt drin, noch keine Angebotsnummer bekannt.
-  // - 7065 (Metehan Hilal Arac) -- 0 Aufträge in sevdesk, kein Match möglich.
+  // - 7065 (Metehan Hilal Arac) -- schon versucht, 0 Aufträge in sevdesk, kein Match möglich.
   const dealIds = [
-    7065, 6970, 5587, 6694, 5779, 5984, 6659, 6084, 5837, 6686,
-    6804, 5867, 6971, 6843, 7096, 7129, 5728, 6179, 6738,
-    7177, 6018, 5663
+    6207, 7071, 7072, 7186, 7282, 7334, 4945, 5142, 5237, 5373, 5530,
+    5749, 5758, 5829, 5972, 6006, 6013, 6027, 6037, 6198, 6326, 6454,
+    6592, 6593, 6952, 4876, 6439
   ];
   syncPerNameVormatching(dealIds);
 }
