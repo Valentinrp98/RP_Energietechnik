@@ -44,17 +44,10 @@ function sevdeskFetch(path) {
   const token = PropertiesService.getScriptProperties().getProperty('SEVDESK_API_TOKEN');
   if (!token) throw new Error('SEVDESK_API_TOKEN fehlt in den Script Properties!');
 
-  const response = UrlFetchApp.fetch(`${SEVDESK_BASE_URL}${path}`, {
+  return fetchMitRetry(() => UrlFetchApp.fetch(`${SEVDESK_BASE_URL}${path}`, {
     headers: { 'Authorization': token },
     muteHttpExceptions: true
-  });
-  const text = response.getContentText();
-
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    throw new Error(`sevdesk lieferte kein JSON (HTTP ${response.getResponseCode()}): ${text.substring(0, 150)}`);
-  }
+  }), `sevdesk ${path}`);
 }
 
 function pipedriveFetch(path, options) {
@@ -64,13 +57,35 @@ function pipedriveFetch(path, options) {
   const opts = Object.assign({ muteHttpExceptions: true }, options || {});
   opts.headers = Object.assign({ 'x-api-token': token }, opts.headers || {});
 
-  const response = UrlFetchApp.fetch(`${PIPEDRIVE_BASE_URL}${path}`, opts);
-  const text = response.getContentText();
+  return fetchMitRetry(() => UrlFetchApp.fetch(`${PIPEDRIVE_BASE_URL}${path}`, opts), `Pipedrive ${path}`);
+}
 
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    throw new Error(`Pipedrive lieferte kein JSON (HTTP ${response.getResponseCode()}): ${text.substring(0, 150)}`);
+/**
+ * FIX V3 (2026-08-13-Review): Retry bei 429/5xx, bis zu 3 Versuche mit steigender Wartezeit
+ * (2s, dann 4s), bei 4xx sofort durchreichen -- ein 4xx wird durchs Warten nicht besser. Dieses
+ * Script laeuft als einziges der RP-Scripts alle 15 Min per Trigger und war damit als einziges
+ * OHNE Retry-Wrapper, obwohl es am ehesten mal in ein Rate Limit laeuft. Gibt wie vorher das
+ * geparste JSON zurueck (auch bei 4xx, damit die bestehenden `.success`-Checks der Aufrufer
+ * unveraendert funktionieren) -- nur 429/5xx werden hier abgefangen und wiederholt.
+ */
+function fetchMitRetry(doFetch, bezeichnung) {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = doFetch();
+    const code = response.getResponseCode();
+    const text = response.getContentText();
+    if (code === 429 || code >= 500) {
+      if (attempt === maxAttempts) {
+        throw new Error(`${bezeichnung}: HTTP ${code} nach ${maxAttempts} Versuchen: ${text.substring(0, 200)}`);
+      }
+      Utilities.sleep(1000 * Math.pow(2, attempt)); // 2s, dann 4s
+      continue;
+    }
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error(`${bezeichnung}: kein JSON (HTTP ${code}): ${text.substring(0, 150)}`);
+    }
   }
 }
 
@@ -263,17 +278,59 @@ function logSyncResult(status, dealId, orderId, fehler, details) {
 // DUPLIKAT-SCHUTZ: merkt sich pro Auftrag den letzten Sync-Stand
 // ============================================================================
 
+// FIX V1 (2026-08-13-Review): der State wuchs bisher monoton -- jeder je gesyncte Auftrag blieb
+// fuer immer drin. Ein einzelner Script-Property-Wert ist auf 9 KB begrenzt, bei ~32 Zeichen pro
+// Eintrag also bei ca. 285 Auftraegen erreicht. setProperty() wirft dann am ENDE von
+// syncPendingOrders(), also NACHDEM schon nach Pipedrive geschrieben wurde -- die Auftraege sind
+// gesynct, gelten aber weiter als "nicht gesynct" und werden beim naechsten Lauf erneut
+// verarbeitet: Endlosschleife im 15-Minuten-Takt mit echten Pipedrive-Writes. Abgeschlossene
+// Auftraege aendern sich nicht mehr, deshalb reicht Aufraeumen nach Alter.
+const SYNC_STATE_MAX_AGE_TAGE = 90;
+// FIX V2 (2026-08-13-Review): ein Auftrag ohne passenden Pipedrive-Deal schlug bisher JEDES Mal
+// fehl, wurde nie gemerkt und stand deshalb immer wieder ganz vorne in der Batch-Warteschlange --
+// bei genug dauerhaft unzuordenbaren Auftraegen kam dadurch KEIN neuer Auftrag mehr durch. Nach
+// so vielen Fehlversuchen wird ein Auftrag "geparkt" (aus der Warteschlange raus, aber im Log als
+// wartend sichtbar) statt fuer immer einen Platz zu blockieren.
+const MAX_VERSUCHE_VOR_PARKEN = 5;
+
+function heuteAlsIso() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
 function getSyncState() {
   const raw = PropertiesService.getScriptProperties().getProperty(SYNC_STATE_KEY);
+  let state;
   try {
-    return raw ? JSON.parse(raw) : {};
+    state = raw ? JSON.parse(raw) : {};
   } catch (e) {
     return {};
   }
+  // Migration alter Eintraege: vor dem V1-Fix war der Wert ein reiner String (updateTimestamp).
+  // "gespeichert" ist fuer diese Alteintraege nicht mehr bekannt -- HEUTE annehmen, dann fallen
+  // sie beim naechsten turnusmaeßigen Aufraeumen nach SYNC_STATE_MAX_AGE_TAGE raus, nicht sofort.
+  Object.keys(state).forEach(id => {
+    if (typeof state[id] === 'string') {
+      state[id] = { ts: state[id], gespeichert: heuteAlsIso(), versuche: 0 };
+    }
+  });
+  return state;
+}
+
+/** FIX V1: Eintraege aelter als SYNC_STATE_MAX_AGE_TAGE verwerfen, bevor gespeichert wird. */
+function bereinigeSyncState(state) {
+  const grenze = new Date();
+  grenze.setDate(grenze.getDate() - SYNC_STATE_MAX_AGE_TAGE);
+  const grenzeIso = Utilities.formatDate(grenze, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  let entfernt = 0;
+  Object.keys(state).forEach(id => {
+    if (state[id].gespeichert < grenzeIso) { delete state[id]; entfernt++; }
+  });
+  if (entfernt > 0) Logger.log(`Sync-Status aufgeräumt: ${entfernt} Einträge älter als ${SYNC_STATE_MAX_AGE_TAGE} Tage entfernt.`);
+  return state;
 }
 
 function saveSyncState(state) {
-  PropertiesService.getScriptProperties().setProperty(SYNC_STATE_KEY, JSON.stringify(state));
+  PropertiesService.getScriptProperties().setProperty(SYNC_STATE_KEY, JSON.stringify(bereinigeSyncState(state)));
 }
 
 /** Setzt den Duplikat-Schutz zurück — danach werden beim nächsten Lauf alle Aufträge erneut gesynct. */
@@ -726,8 +783,80 @@ function testSyncPerNameVormatching() {
 }
 
 // ============================================================================
+// KONFIGURATIONS-PRÜFUNG (FIX V7, 2026-08-13-Review)
+// ============================================================================
+// Die beiden Bundesland-Scripts haben eine pruefeKonfiguration(), die hartcodierte Option-IDs
+// gegen die echte Pipedrive-API abgleicht -- hier gab es das nicht, obwohl ENUM_OPTION_IDS genauso
+// hartcodiert ist. addEnumFieldIfSet() faengt eine fehlende Options-ID zwar ab und loggt eine
+// Warnung, setzt das Feld dann aber auf null -- ueberschreibt also einen moeglicherweise
+// korrekten Wert mit leer. Einmal vor dem Go-Live ausfuehren, danach bei jeder Pipedrive-
+// Feldaenderung.
+
+/** Gleicht FIELD_KEYS (Existenz) und ENUM_OPTION_IDS (Options-IDs + field_type) mit der echten
+ *  Pipedrive-API ab. */
+function pruefeKonfiguration() {
+  const response = pipedriveFetch('/dealFields?limit=500', { method: 'get' });
+  if (!response.success) {
+    Logger.log(`FEHLER: dealFields nicht abrufbar -- ${JSON.stringify(response).substring(0, 200)}`);
+    return;
+  }
+  const felder = response.data || [];
+  if (response.additional_data && response.additional_data.next_cursor) {
+    Logger.log('WARNUNG: dealFields ist auf 500 Einträge abgeschnitten -- die Prüfung unten ist unvollständig, Pagination nachrüsten.');
+  }
+  const byCode = Object.fromEntries(felder.map(f => [f.field_code, f]));
+  let fehler = 0;
+
+  Object.entries(FIELD_KEYS).forEach(([name, code]) => {
+    if (!byCode[code]) {
+      Logger.log(`FEHLER: Feld "${name}" (${code}) existiert nicht (mehr) in dealFields.`);
+      fehler++;
+    }
+  });
+
+  Object.entries(ENUM_OPTION_IDS).forEach(([name, sollMap]) => {
+    const feld = byCode[FIELD_KEYS[name]];
+    if (!feld) return; // schon oben gemeldet
+    if (feld.field_type !== 'enum') {
+      Logger.log(`WARNUNG: "${name}" ist field_type "${feld.field_type}", erwartet enum -- addEnumFieldIfSet() schreibt eine einzelne Options-ID.`);
+      fehler++;
+    }
+    const live = {};
+    (feld.options || []).forEach(o => { live[o.label] = o.id; });
+    Object.entries(sollMap).forEach(([label, id]) => {
+      if (live[label] === undefined) { Logger.log(`FEHLER [${name}]: Option "${label}" existiert in Pipedrive nicht.`); fehler++; }
+      else if (live[label] !== id) { Logger.log(`FEHLER [${name}]: "${label}" -- Script sagt ${id}, Pipedrive sagt ${live[label]}.`); fehler++; }
+    });
+    Object.keys(live).forEach(label => {
+      if (sollMap[label] === undefined) Logger.log(`Hinweis [${name}]: Pipedrive kennt zusätzlich "${label}" (id ${live[label]}), im Script nicht hinterlegt.`);
+    });
+  });
+
+  Logger.log(fehler === 0 ? 'Konfiguration OK.' : `${fehler} Abweichung(en) -- oben korrigieren, BEVOR der 15-Minuten-Trigger scharf gestellt wird.`);
+}
+
+// ============================================================================
 // POLLING — diese Funktion läuft im Live-Betrieb per Zeittrigger (alle 15 Min)
 // ============================================================================
+
+/**
+ * Einmalig ausführen, um den 15-Min-Trigger für syncPendingOrders() anzulegen -- es gab dafür
+ * bisher keine Setup-Funktion in diesem Projekt. Löscht zuerst eigene bestehende Trigger auf
+ * denselben Handler (idempotent, siehe CLAUDE.md-Learning "Trigger-Installation idempotent
+ * bauen"), sonst läuft nach einem zweiten Klick alles doppelt.
+ * ERST ausführen, wenn pruefeKonfiguration() "Konfiguration OK" meldet.
+ */
+function SETUP_EINMALIG_createTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'syncPendingOrders')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+
+  ScriptApp.newTrigger('syncPendingOrders')
+    .timeBased()
+    .everyMinutes(15)
+    .create();
+  Logger.log('15-Minuten-Trigger für syncPendingOrders() angelegt.');
+}
 
 function syncPendingOrders() {
   const state = getSyncState();
@@ -745,10 +874,18 @@ function syncPendingOrders() {
     if (offset > 1000) break; // Sicherheitsnetz gegen Endlosschleife
   }
 
-  // Nur Aufträge, die neu sind oder sich seit dem letzten Sync geändert haben
-  const zuSyncen = alleAuftraege.filter(o => state[o.id] !== (o.update || ''));
+  // Nur Aufträge, die neu sind, sich seit dem letzten Sync geändert haben, oder beim letzten
+  // Versuch fehlgeschlagen sind (ts dann null, siehe unten) -- ausser sie sind schon geparkt (V2).
+  const zuSyncen = alleAuftraege.filter(o => {
+    const s = state[o.id];
+    if (!s) return true;
+    if (s.geparkt) return false;
+    return s.ts !== (o.update || '');
+  });
 
-  Logger.log(`Polling: ${alleAuftraege.length} angenommene Aufträge, davon ${zuSyncen.length} neu/geändert`);
+  const geparkt = Object.values(state).filter(s => s.geparkt).length;
+  Logger.log(`Polling: ${alleAuftraege.length} angenommene Aufträge, davon ${zuSyncen.length} neu/geändert/erneut zu versuchen` +
+             (geparkt > 0 ? `, ${geparkt} dauerhaft geparkt (siehe unten)` : ''));
 
   if (zuSyncen.length === 0) return;
 
@@ -773,13 +910,26 @@ function syncPendingOrders() {
     // "schon gesynct", obwohl nie wirklich geschrieben wurde -- der nächste LIVE-Lauf würde ihn
     // dann fälschlich überspringen.
     if (erfolg && !DRY_RUN) {
-      state[o.id] = o.update || '';
+      state[o.id] = { ts: o.update || '', gespeichert: heuteAlsIso(), versuche: 0 };
       verarbeitet++;
       // Alle 5 Aufträge zwischenspeichern, damit bei einem unerwarteten Abbruch
       // nicht die Arbeit des ganzen Laufs verloren geht
       if (verarbeitet % 5 === 0) saveSyncState(state);
     } else if (erfolg && DRY_RUN) {
       verarbeitet++; // nur für die Log-Zeile unten, kein State-Save
+    } else {
+      // FIX V2: Fehlversuch zaehlen statt zu ignorieren, sonst blockiert ein dauerhaft
+      // unzuordenbarer Auftrag fuer immer einen der MAX_ORDERS_PER_RUN-Plaetze.
+      const bisherigeVersuche = (state[o.id] && state[o.id].versuche) || 0;
+      const versuche = bisherigeVersuche + 1;
+      if (versuche >= MAX_VERSUCHE_VOR_PARKEN) {
+        state[o.id] = { ts: o.update || '', gespeichert: heuteAlsIso(), versuche, geparkt: true };
+        Logger.log(`⏸️ Order ${o.id} nach ${versuche} Fehlversuchen geparkt -- wartet auf manuelle Zuordnung (Angebotsnummer/Kundennummer pruefen), wird nicht mehr automatisch erneut versucht.`);
+      } else {
+        // ts bewusst NICHT auf o.update setzen -- der Auftrag soll beim naechsten Lauf ueber den
+        // Filter oben weiterhin als "zu syncen" gelten, bis er entweder klappt oder geparkt wird.
+        state[o.id] = { ts: null, gespeichert: heuteAlsIso(), versuche };
+      }
     }
   }
 
