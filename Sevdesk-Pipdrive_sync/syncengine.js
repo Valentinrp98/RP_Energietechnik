@@ -515,6 +515,37 @@ function syncDirektAufBekannterDeal(dealId, orderId) {
   }
 }
 
+/**
+ * Korrektur nach händischer PDF-Prüfung (21.08.2026): bei 3 der 9 Deals mit mehreren sevdesk-
+ * Order-Revisionen hat "neueste zuerst" (syncPerNameVormatching) die FALSCHE Order gewählt --
+ * Valentin hat die richtige anhand der an Pipedrive angehängten Angebots-PDFs identifiziert (siehe
+ * project_sevdesk_pipedrive_sync). Sucht die Order über die Angebotsnummer im nachNummer-Index aus
+ * auditLadeAlleAuftraege() (Zuordnungspruefung.gs, schon für pruefeZuordnungAlle() gebaut/geprüft --
+ * kein neuer, unverifizierter sevdesk-Filter-Parameter). Schreibt dann wie gehabt über
+ * syncDirektAufBekannterDeal(): das überschreibt Angebotsnummer + ALLE Artikel-Felder vollständig
+ * (writeArticleFieldsToDeal setzt jedes Feld inkl. null neu, FIX V4) -- korrigiert also automatisch,
+ * was der falsche Erstlauf reingeschrieben hatte.
+ */
+function korrigiereFalscheOrderRevisionen() {
+  const korrekturen = [
+    { dealId: 6207, orderNumber: '2026-295-A', hinweis: 'Martin Gangl, 54 Module -- statt automatisch gewähltem 2026-357-A' },
+    { dealId: 5972, orderNumber: '2026-87-A',  hinweis: 'Hamzic Edin -- statt automatisch gewähltem 2026-480-A' },
+    { dealId: 6037, orderNumber: '2026-230-A', hinweis: 'Harald Lamprecht -- statt automatisch gewähltem 2026-429-A' }
+  ];
+
+  const idx = auditLadeAlleAuftraege();
+
+  korrekturen.forEach(k => {
+    const treffer = idx.nachNummer[k.orderNumber] || [];
+    if (treffer.length !== 1) {
+      Logger.log(`✗ Deal ${k.dealId}: Order "${k.orderNumber}" nicht eindeutig gefunden (${treffer.length} Treffer) -- abgebrochen, nichts geschrieben`);
+      return;
+    }
+    Logger.log(`→ Deal ${k.dealId} (${k.hinweis}): korrigiere auf Order ${treffer[0].id} (${k.orderNumber})`);
+    syncDirektAufBekannterDeal(k.dealId, treffer[0].id);
+  });
+}
+
 // ============================================================================
 // VORMATCHING PER NAME: für Deals OHNE Angebotsnummer
 // ============================================================================
