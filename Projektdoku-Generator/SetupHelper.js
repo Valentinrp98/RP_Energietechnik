@@ -17,6 +17,32 @@ function SETUP_EINMALIG_createDailyTrigger() {
 }
 
 /**
+ * Diagnose (21.08.): warum liegen bei Deal 7072 (Hemetinger) offenbar 2 Docs im Ordner? Listet alle
+ * Dateien im "2_Projektdokumentation"-Unterordner mit Erstelldatum + Datei-ID, plus den aktuell in
+ * Pipedrive gespeicherten Link und den aktuellen Anlagendetails-Wert. Rein lesend.
+ */
+function zeigeHemetingerDiagnose() {
+  const dealId = 7072;
+  const deal = fetchPipedrive(`deals/${dealId}`);
+  const cf = deal.custom_fields || {};
+  Logger.log(`Deal ${dealId}: KUNDENORDNER_LINK_FIELD_KEY = ${cf[KUNDENORDNER_LINK_FIELD_KEY] || '(leer)'}`);
+  Logger.log(`Deal ${dealId}: DOKU_LINK_FIELD_KEY = ${cf[DOKU_LINK_FIELD_KEY] || '(leer)'}`);
+  Logger.log(`Deal ${dealId}: Anlagendetails = ${cf[ANLAGENDETAILS_FIELD_KEY] || '(leer)'}`);
+  Logger.log(`Deal ${dealId}: Status = ${cf[DOKU_STATUS_FIELD_KEY]}`);
+
+  const projektdokuFolder = findProjektdokuUnterordner(cf[KUNDENORDNER_LINK_FIELD_KEY]);
+  if (!projektdokuFolder) {
+    Logger.log('Unterordner nicht gefunden.');
+    return;
+  }
+  const it = projektdokuFolder.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    Logger.log(`Datei: "${f.getName()}" -- ID ${f.getId()} -- erstellt ${f.getDateCreated()} -- Papierkorb: ${f.isTrashed()}`);
+  }
+}
+
+/**
  * Einmalige Diagnose: Montagepartner für eine feste Liste von Deal-IDs abfragen -- für die
  * Partner-Info "viele offene Netzanmeldungen" nach dem ersten Live-Batch (21.08.). Rein lesend,
  * kein Log-Sheet-Eintrag, nur Logger.log (Tab-getrennt zum einfachen Weiterverarbeiten).
