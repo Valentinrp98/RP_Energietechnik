@@ -27,7 +27,7 @@
 // ============================================================================
 
 // --- Schalter ---------------------------------------------------------------
-const DRY_RUN = true;              // true = nichts ins Sheet schreiben, nur loggen
+const DRY_RUN = false;              // true = nichts ins Sheet schreiben, nur loggen
 const MAX_ORDERS_PER_RUN = 25;     // Sicherheitsdeckel pro Lauf
 const MAX_RUNTIME_MS = 4.5 * 60 * 1000;
 
@@ -166,6 +166,12 @@ function fetchContactDisplayName(contactId) {
 // LOGGING
 // ============================================================================
 
+const LOG_HEADER = [
+  'Zeitstempel', 'Modus', 'Status', 'Angebotsnummer', 'Kundenname', 'Zielzeile', 'Monat',
+  'VK netto', 'Module', 'Dachart', 'Wechselrichter', 'Speicher', 'Notstrom', 'Smartmeter',
+  'Zubehör', 'Unsicher (Anzahl)', 'Sonstige-Kosten-Hinweis', 'Ausgelagerte Positionen', 'Fehler'
+];
+
 let _logSheetCache = null;
 
 function getLogSheet() {
@@ -174,20 +180,81 @@ function getLogSheet() {
   let sheet = ss.getSheetByName(DEEPCORE_LOG_TAB);
   if (!sheet) {
     sheet = ss.insertSheet(DEEPCORE_LOG_TAB);
-    sheet.appendRow(['Zeitstempel', 'Modus', 'Status', 'Auftrag', 'Zeile', 'Fehler', 'Details']);
+    sheet.appendRow(LOG_HEADER);
     sheet.setFrozenRows(1);
+  } else if (sheet.getRange(1, 1).getValue() !== LOG_HEADER[0] || sheet.getLastColumn() < LOG_HEADER.length) {
+    // Migration von der alten schmalen Log-Struktur (7 Spalten) auf die neue, detaillierte
+    // (19 Spalten) -- alte Zeilen bleiben stehen (nur der Header wird nicht einfach
+    // überschrieben, falls dort noch Werte drunter stehen, die zu den ALTEN Spalten
+    // gehören); die neue Struktur beginnt einfach ab der nächsten Zeile weiter unten,
+    // damit nichts Bestehendes durcheinanderrutscht.
+    const naechsteZeile = sheet.getLastRow() + 2;
+    sheet.getRange(naechsteZeile, 1, 1, LOG_HEADER.length).setValues([LOG_HEADER]);
+    sheet.getRange(naechsteZeile - 1, 1).setValue('--- ab hier: neues, detailliertes Log-Format (2026-08-21) ---');
   }
   _logSheetCache = sheet;
   return sheet;
+}
+
+/**
+ * Formatiert eine Kategorie-Zelle (inkl. optionalem "2"-Slot) zu einem einzelnen
+ * lesbaren Log-Text, z.B. "ZIEGEL (20x)" oder "⚠️ UNSICHER: SIGENERGY Battery
+ * Controller BC... (1x)". Leere Slots werden ausgelassen, zwei belegte Slots mit
+ * " + " verbunden -- damit steht im Log genau das, was (oder eben NICHT) in die
+ * jeweiligen Spalten im Sheet gewandert ist.
+ */
+function formatiereKategorieFuerLog(cells, key) {
+  const teile = [key, `${key}2`].map(k => cells[k]).filter(Boolean).map(cell => {
+    const basis = `${cell.name} (${cell.stk}x, ${cell.summe}€)`;
+    return cell.notiz ? `⚠️ UNSICHER [war: ${cell.notiz.split('"')[1] || '?'}]` : basis;
+  });
+  return teile.join(' + ');
 }
 
 // Log-Zeilen werden im Lauf gesammelt und am Ende in EINEM setValues geschrieben
 // (appendRow pro Zeile ist der klassische Apps-Script-Bremsklotz).
 let _logPuffer = [];
 
-function logDeepCoreSyncResult(status, orderLabel, row, fehler, details) {
-  _logPuffer.push([new Date(), DRY_RUN ? 'DRY_RUN' : 'LIVE', status, orderLabel || '-', row || '-', fehler || '-', details || '-']);
-  Logger.log(`[${status}] ${orderLabel || '-'} ${details || ''} ${fehler ? '| ' + fehler : ''}`);
+/**
+ * @param {Object} eintrag
+ * @param {string} eintrag.status SUCCESS | WARNUNG | ERROR | ABBRUCH | LAUF-ENDE
+ * @param {string} [eintrag.orderLabel] Angebotsnummer oder Order-ID
+ * @param {string} [eintrag.kundenname]
+ * @param {number} [eintrag.row] Zielzeile im Sheet
+ * @param {string} [eintrag.monat]
+ * @param {number} [eintrag.vkNetto]
+ * @param {Object} [eintrag.cells] aggregated.cells aus katalogundmapping.js
+ * @param {number} [eintrag.sonstigeKosten]
+ * @param {string[]} [eintrag.notizenZusatz]
+ * @param {number} [eintrag.unsicherAnzahl]
+ * @param {string} [eintrag.fehler]
+ * @param {string} [eintrag.details] Freitext für Fälle ohne cells (Warnungen, Lauf-Ende, ...)
+ */
+function logDeepCoreSyncResult(eintrag) {
+  const cells = eintrag.cells || {};
+  const zeile = [
+    new Date(),
+    DRY_RUN ? 'DRY_RUN' : 'LIVE',
+    eintrag.status,
+    eintrag.orderLabel || '-',
+    eintrag.kundenname || '-',
+    eintrag.row || '-',
+    eintrag.monat || '-',
+    eintrag.vkNetto !== undefined ? eintrag.vkNetto : '-',
+    formatiereKategorieFuerLog(cells, 'module') || (eintrag.details ? '' : '-'),
+    formatiereKategorieFuerLog(cells, 'dachart') || '',
+    formatiereKategorieFuerLog(cells, 'wechselrichter') || '',
+    formatiereKategorieFuerLog(cells, 'speicher') || '',
+    formatiereKategorieFuerLog(cells, 'notstrom') || '',
+    formatiereKategorieFuerLog(cells, 'smartmeter') || '',
+    formatiereKategorieFuerLog(cells, 'zubehoer') || '',
+    eintrag.unsicherAnzahl !== undefined ? eintrag.unsicherAnzahl : '-',
+    eintrag.sonstigeKosten ? `${eintrag.sonstigeKosten}€ erkannt, nicht automatisch eingetragen` : '',
+    (eintrag.notizenZusatz && eintrag.notizenZusatz.length) ? eintrag.notizenZusatz.join(' | ') : '',
+    eintrag.fehler || (eintrag.details || '-')
+  ];
+  _logPuffer.push(zeile);
+  Logger.log(`[${eintrag.status}] ${eintrag.orderLabel || '-'} ${eintrag.details || ''} ${eintrag.fehler ? '| ' + eintrag.fehler : ''}`);
 }
 
 function flushLog() {
@@ -285,8 +352,11 @@ function syncOrderToDeepCore(orderId) {
     // dieses Scripts wirkt): steht die Angebotsnummer schon IRGENDWO im Sheet,
     // nicht nochmal schreiben (z.B. falls schon manuell angelegt).
     if (angebotsnummerBereitsVorhanden(order.orderNumber)) {
-      logDeepCoreSyncResult('WARNUNG', label, null, 'Angebotsnummer bereits im Sheet vorhanden',
-        'Nichts geschrieben -- vermutlich schon manuell oder in einem früheren Lauf angelegt. Bitte prüfen.');
+      logDeepCoreSyncResult({
+        status: 'WARNUNG', orderLabel: label, kundenname: order.kundenname,
+        fehler: 'Angebotsnummer bereits im Sheet vorhanden',
+        details: 'Nichts geschrieben -- vermutlich schon manuell oder in einem früheren Lauf angelegt. Bitte prüfen.'
+      });
       return false;
     }
 
@@ -301,14 +371,20 @@ function syncOrderToDeepCore(orderId) {
     let row = findFreeRowForMonth(monatName);
     if (!row) {
       if (DRY_RUN) {
-        logDeepCoreSyncResult('WARNUNG', label, null, `Keine freie Zeile für Monat "${monatName}"`,
-          'DRY RUN: würde jetzt automatisch neue Pufferzeilen anlegen (im Live-Betrieb aktiv, hier bewusst ausgelassen).');
+        logDeepCoreSyncResult({
+          status: 'WARNUNG', orderLabel: label, kundenname: order.kundenname, monat: monatName,
+          fehler: `Keine freie Zeile für Monat "${monatName}"`,
+          details: 'DRY RUN: würde jetzt automatisch neue Pufferzeilen anlegen (im Live-Betrieb aktiv, hier bewusst ausgelassen).'
+        });
         return false;
       }
       row = sorgeFuerFreieZeile(monatName);
       if (!row) {
-        logDeepCoreSyncResult('ERROR', label, null, `Keine freie Zeile für Monat "${monatName}" und automatisches Anlegen fehlgeschlagen`,
-          `Monatsblock "Gesamt ${monatName}" nicht im Sheet gefunden -- manuell anlegen.`);
+        logDeepCoreSyncResult({
+          status: 'ERROR', orderLabel: label, kundenname: order.kundenname, monat: monatName,
+          fehler: `Keine freie Zeile für Monat "${monatName}" und automatisches Anlegen fehlgeschlagen`,
+          details: `Monatsblock "Gesamt ${monatName}" nicht im Sheet gefunden -- manuell anlegen.`
+        });
         return false;
       }
     }
@@ -324,23 +400,23 @@ function syncOrderToDeepCore(orderId) {
       notizenZusatz: aggregated.notizenZusatz
     }, DRY_RUN);
 
-    const details = [
-      `Zeile ${row}, Monat ${monatName}`,
-      `VK netto ${order.vkNetto} (${order.vkNettoQuelle})`,
-      `${order.positions.length} Positionen`
-    ];
-    if (aggregated.unsicherAnzahl > 0) {
-      details.push(`⚠️ ${aggregated.unsicherAnzahl} unsichere Artikel-Zuordnung(en) — Notizen-Spalte prüfen`);
-    }
-    if (aggregated.notizenZusatz.length > 0) {
-      details.push(`${aggregated.notizenZusatz.length} Position(en) in Notizen ausgelagert`);
-    }
-
-    logDeepCoreSyncResult('SUCCESS', label, row, '-', details.join(' | '));
+    logDeepCoreSyncResult({
+      status: 'SUCCESS',
+      orderLabel: label,
+      kundenname: order.kundenname,
+      row: row,
+      monat: monatName,
+      vkNetto: order.vkNetto,
+      cells: aggregated.cells,
+      sonstigeKosten: aggregated.sonstigeKosten,
+      notizenZusatz: aggregated.notizenZusatz,
+      unsicherAnzahl: aggregated.unsicherAnzahl,
+      details: `${order.positions.length} sevdesk-Positionen, VK-Quelle: ${order.vkNettoQuelle}`
+    });
     return true;
 
   } catch (e) {
-    logDeepCoreSyncResult('ERROR', orderId, null, e.message, '');
+    logDeepCoreSyncResult({ status: 'ERROR', orderLabel: orderId, fehler: e.message });
     return false;
   }
 }
@@ -413,9 +489,11 @@ function syncPendingOrdersToDeepCore() {
     // Ein ungeseedeter Erstlauf würde hier den kompletten Altbestand ins Sheet
     // kippen. Lieber hart stoppen und den Menschen entscheiden lassen.
     if (state.ids.length === 0 && zuSyncen.length > MAX_ORDERS_PER_RUN) {
-      logDeepCoreSyncResult('ABBRUCH', '-', null,
-        `${zuSyncen.length} unverarbeitete Aufträge bei leerem Sync-State`,
-        'Sieht nach Erstinbetriebnahme aus. Bitte zuerst seedSyncStateOhneSchreiben() ausführen.');
+      logDeepCoreSyncResult({
+        status: 'ABBRUCH',
+        fehler: `${zuSyncen.length} unverarbeitete Aufträge bei leerem Sync-State`,
+        details: 'Sieht nach Erstinbetriebnahme aus. Bitte zuerst seedSyncStateOhneSchreiben() ausführen.'
+      });
       return;
     }
 
@@ -442,8 +520,10 @@ function syncPendingOrdersToDeepCore() {
     if (!DRY_RUN) saveDeepCoreSyncState(state);
 
     const offen = zuSyncen.length - verarbeitet;
-    logDeepCoreSyncResult('LAUF-ENDE', '-', null, '-',
-      `${verarbeitet} verarbeitet, ${offen} offen, ${Math.round((Date.now() - startZeit) / 1000)}s`);
+    logDeepCoreSyncResult({
+      status: 'LAUF-ENDE',
+      details: `${verarbeitet} verarbeitet, ${offen} offen, ${Math.round((Date.now() - startZeit) / 1000)}s`
+    });
 
   } finally {
     flushLog();
