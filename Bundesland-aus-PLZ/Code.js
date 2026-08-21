@@ -94,7 +94,7 @@ const PROP_LOG_SHEET_ID = 'BUNDESLAND_LOG_SHEET_ID_V3';
 
 // Wenn true: Deals, die vor CUTOFF_DATE angelegt wurden (deal.add_time), werden uebersprungen
 // und nicht angefasst -- z.B. um einen Altbestand bewusst unveraendert zu lassen.
-const CUTOFF_ENABLED = true;
+const CUTOFF_ENABLED = false; // TEMPORÄR für die 32 Fulfillment-Deals (fillBundeslandForAusgewaehlteDeals) -- danach wieder auf true!
 const CUTOFF_DATE = new Date('2026-06-01');
 
 
@@ -186,7 +186,12 @@ function testEinzelDeal() {
  * Praktisch fuer die 9 Grenzfall-Deals aus dem DRY-Lauf.
  */
 function fillBundeslandForAusgewaehlteDeals() {
-  const dealIds = [277, 367, 504, 639, 823, 1008, 1055, 1342, 1402]; // die 9 Grenzfall-Deals
+  // Aus dem ersten Projektdoku-Generator-Live-Batch (21.08.) als "kein Kundenordner-Link" aufgefallen,
+  // dann bei Montagepartner-aus-Bundesland als "kein Montagepartner" haengengeblieben -- vermutlich
+  // fehlt bei denen schon das Bundesland. 6952 (Hajrulla Krasniqi) war schon fertig, deshalb hier raus.
+  const dealIds = [
+    4945, 5142, 5237, 5373, 5530, 5749, 5758, 5829, 5972, 6013, 6027, 6198, 6326, 6592
+  ];
   try {
     dealIds.forEach(dealId => Logger.log(`Deal ${dealId}: ${fillBundeslandForDeal(dealId)}`));
   } finally {
