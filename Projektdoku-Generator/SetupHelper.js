@@ -102,8 +102,23 @@ function zeigeAdressUndPlzFeldName() {
     if (!personId) { Logger.log(`Deal ${dealId}: keine Person verknüpft`); return; }
     const person = fetchPipedrive(`persons/${personId}`);
     Logger.log(`Deal ${dealId} -- Person ${personId} (${person.name}): https://rp-energietechnik.pipedrive.com/person/${personId}`);
-    Logger.log(`  Adresse=${JSON.stringify(person.custom_fields[ADRESSE_FIELD_KEY])}`);
-    Logger.log(`  PLZ=${JSON.stringify(person.custom_fields[PLZ_FIELD_KEY])}`);
+    Logger.log(`  [v2] Adresse=${JSON.stringify(person.custom_fields[ADRESSE_FIELD_KEY])}`);
+    Logger.log(`  [v2] PLZ=${JSON.stringify(person.custom_fields[PLZ_FIELD_KEY])}`);
+
+    // Gegenprobe über v1: falls v2 hier gecachte/veraltete Werte für Adress-Custom-Fields liefert
+    // (unverifiziert, aber die Werte nach dem manuellen Neuspeichern in der UI blieben unverändert),
+    // zeigt der Vergleich, ob das ein v2-spezifisches Problem ist oder die Bearbeitung nicht
+    // gespeichert wurde.
+    const token = PropertiesService.getScriptProperties().getProperty('PIPEDRIVE_API_TOKEN');
+    const v1Url = `https://rp-energietechnik.pipedrive.com/api/v1/persons/${personId}?api_token=${encodeURIComponent(token)}`;
+    const v1Response = UrlFetchApp.fetch(v1Url, { muteHttpExceptions: true });
+    const v1Data = JSON.parse(v1Response.getContentText());
+    if (v1Data.success && v1Data.data) {
+      Logger.log(`  [v1] Adresse=${JSON.stringify(v1Data.data[ADRESSE_FIELD_KEY])}`);
+      Logger.log(`  [v1] PLZ=${JSON.stringify(v1Data.data[PLZ_FIELD_KEY])}`);
+    } else {
+      Logger.log(`  [v1] Abruf fehlgeschlagen: ${v1Response.getContentText().substring(0, 150)}`);
+    }
   });
 }
 
