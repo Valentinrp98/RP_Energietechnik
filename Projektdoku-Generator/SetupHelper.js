@@ -85,6 +85,28 @@ function zeigeNetzstatusDiagnose() {
   });
 }
 
+/** Debug: zeigt den Pipedrive-Feldnamen (Label) von Adresse-/PLZ-Feld am Kontakt (personFields),
+ *  plus deren aktuellen Rohwert + Person-Link bei den 2 Deals mit korrigierter Adresse -- zum
+ *  Wiederfinden in der Pipedrive-UI, wenn der Feldname am Kontakt nicht auf Anhieb auffindbar ist. */
+function zeigeAdressUndPlzFeldName() {
+  const fields = fetchPipedrive('personFields?limit=500');
+  const byCode = Object.fromEntries(fields.map(f => [f.field_code, f]));
+  const adresseFeld = byCode[ADRESSE_FIELD_KEY];
+  const plzFeld = byCode[PLZ_FIELD_KEY];
+  Logger.log(`Adresse-Feld heißt in Pipedrive (am Kontakt): "${adresseFeld ? adresseFeld.field_name : '??? nicht gefunden'}"`);
+  Logger.log(`PLZ-Feld heißt in Pipedrive (am Kontakt): "${plzFeld ? plzFeld.field_name : '??? nicht gefunden'}"`);
+
+  [5142, 6037].forEach(dealId => {
+    const deal = fetchPipedrive(`deals/${dealId}`);
+    const personId = deal.person_id && (deal.person_id.value || deal.person_id);
+    if (!personId) { Logger.log(`Deal ${dealId}: keine Person verknüpft`); return; }
+    const person = fetchPipedrive(`persons/${personId}`);
+    Logger.log(`Deal ${dealId} -- Person ${personId} (${person.name}): https://rp-energietechnik.pipedrive.com/person/${personId}`);
+    Logger.log(`  Adresse=${JSON.stringify(person.custom_fields[ADRESSE_FIELD_KEY])}`);
+    Logger.log(`  PLZ=${JSON.stringify(person.custom_fields[PLZ_FIELD_KEY])}`);
+  });
+}
+
 /** Debug: listet alle Deal-Custom-Fields (field_name + field_code + Options-IDs bei Enum/Set). */
 function listDealFieldsHelper() {
   const fields = fetchPipedrive('dealFields?limit=500');
