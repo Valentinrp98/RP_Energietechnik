@@ -308,12 +308,14 @@ function checkConfiguration() {
  *  verworfen und mit dem aktuellen Feldstand komplett neu gebaut). */
 function testEinzelDeal() {
   starteLauf('testEinzelDeal');
-  // Doc-Neubau (21.08.) für Ünsal (5142) + Lamprecht (6037), NACHDEM korrigierePlzInAdressfeldV2()
-  // die per v2-Bug hängengebliebene falsche PLZ im Adresse-Feld direkt korrigiert hat -- ihr Doc vom
-  // vorigen Lauf zeigt noch die alte falsche Adresse. forceRegenerate:true wirft das alte Doc weg
-  // und baut mit dem jetzigen (korrigierten) Feldstand neu.
+  // Doc-Neubau (21.08.) für Hemetinger (7072): der Unterordner "2_Projektdokumentation" wurde beim
+  // Runde-2-Batch (15:27) nicht gefunden (SOFT_ERROR, vermutlich einmaliger Drive-API-Aussetzer --
+  // zeigeHemetingerDiagnose() findet den Ordner um 16:47 wieder problemlos). Das aktuell verlinkte
+  // Doc wurde aber schon um 11:12 gebaut, also VOR dem sevdesk-Sync (14:48-14:50), der die echten
+  // Modul-Daten erst gebracht hat -- das Doc zeigt also noch den alten Stand. forceRegenerate:true
+  // wirft es weg und baut mit den jetzigen (korrekten) Anlagendetails neu.
   const testDeals = [
-    5142, 6037
+    7072
   ].map(dealId => ({ dealId, forceRegenerate: true }));
   try {
     testDeals.forEach(({ dealId, forceRegenerate }) => {
