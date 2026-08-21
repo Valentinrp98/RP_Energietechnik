@@ -479,7 +479,7 @@ function triggerEntfernen() {
 // ============================================================================
 
 /** Order-ID für die Test-Funktionen. Hier eintragen, nicht als Parameter übergeben. */
-const TEST_ORDER_ID = '';
+const TEST_ORDER_ID = '29871057'; // Order 2026-609-A, Milazim Dervishaj -- ⚠️ echter Live-Kunde, nur lesende Testfunktionen nutzen
 
 /** Prüft nur die Artikel-Erkennung, ohne API-Zugriff und ohne zu schreiben. */
 function testMappingOnly() {

@@ -79,8 +79,10 @@ const KNOWN_DROPDOWN_VALUES = {
   // Die Kombi "Power Sensor & Communication Modul" ist laut echtem Sheet ein
   // SMARTMETER-Eintrag, nicht Zubehör (ursprüngliche Annahme war falsch, siehe
   // classifyPositionForDeepCore: zubehoer_combo -> Kategorie 'smartmeter').
+  // "Sigenergy Power Sensor TPX - CH" per pruefeDropdownListen() (2026-08-21) als
+  // Annahme verworfen -- existiert im echten Sheet nicht, nur diese 3 real bestätigt.
   smartmeter: [
-    'Sigenergy Power Sensor TPX - CH', 'SIGENERGY Power Sensor DH dreiphasig',
+    'SIGENERGY Power Sensor DH dreiphasig',
     'FRONIUS SMART METER', 'SIGENERGY Power Sensor DH dreiphasig & Communication Modul'
   ],
   zubehoer: [
