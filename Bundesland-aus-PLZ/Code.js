@@ -188,6 +188,27 @@ function resetVollauf() {
   Logger.log('Resume-Cursor geloescht. Naechster fillBundeslandForAllDeals()-Lauf startet bei Deal 1.');
 }
 
+/**
+ * Einmalig ausfuehren: legt den taeglichen Zeit-Trigger fuer fillBundeslandForAllDeals() an.
+ * Gab es bisher nicht -- der Vollauf lief nur manuell per Dropdown/Play-Button. Ein taeglicher
+ * Rescan ist unkritisch: bereits gesetzte Deals werden sofort uebersprungen (FORCE_OVERWRITE),
+ * die Personen-Vorabladung kostet ~20-30s, kein N+1-Problem. Idempotent (loescht vorher eigene
+ * Trigger auf denselben Handler), sonst laeuft nach einem zweiten Klick alles doppelt.
+ * Laeuft bewusst um 2:00 Uhr, VOR dem Montagepartner-Trigger (3:00) -- siehe dort.
+ */
+function SETUP_EINMALIG_createDailyTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'fillBundeslandForAllDeals')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+
+  ScriptApp.newTrigger('fillBundeslandForAllDeals')
+    .timeBased()
+    .atHour(2)
+    .everyDays(1)
+    .create();
+  Logger.log('Taeglicher Trigger fuer fillBundeslandForAllDeals() um 2:00 Uhr angelegt.');
+}
+
 /** Wrapper ohne Parameter, damit man im Apps-Script-Dropdown direkt einen Einzeldeal testen kann. */
 function testEinzelDeal() {
   try {

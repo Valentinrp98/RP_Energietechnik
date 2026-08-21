@@ -172,6 +172,27 @@ function resetVollauf() {
   Logger.log('Resume-Cursor geloescht. Naechster fillMontagepartnerForAllDeals()-Lauf startet bei Deal 1.');
 }
 
+/**
+ * Einmalig ausfuehren: legt den taeglichen Zeit-Trigger fuer fillMontagepartnerForAllDeals() an.
+ * Bewusst um 3:00 Uhr, EINE STUNDE NACH dem Bundesland-Trigger (2:00, siehe Bundesland-aus-PLZ/
+ * Code.js) -- dieses Script liest das von dort gesetzte Bundesland-Feld. Laeuft es zuerst oder
+ * gleichzeitig, sieht ein Nulllauf ("kein Bundesland gesetzt") wie ein gesunder Lauf aus, ist
+ * aber nur eine Reihenfolge-Falle (siehe Kopf-Kommentar dieser Datei). Idempotent, wie beim
+ * Bundesland-Trigger.
+ */
+function SETUP_EINMALIG_createDailyTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'fillMontagepartnerForAllDeals')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+
+  ScriptApp.newTrigger('fillMontagepartnerForAllDeals')
+    .timeBased()
+    .atHour(3)
+    .everyDays(1)
+    .create();
+  Logger.log('Taeglicher Trigger fuer fillMontagepartnerForAllDeals() um 3:00 Uhr angelegt.');
+}
+
 /** Wrapper ohne Parameter, fuer einen fixen Test-Deal. */
 function testEinzelDeal() {
   try {
