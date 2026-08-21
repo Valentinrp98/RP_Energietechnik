@@ -76,14 +76,65 @@ function debugAdressFeld() {
   Logger.log(JSON.stringify(person.custom_fields?.[ADRESSE_FIELD_KEY], null, 2));
 }
 
+/**
+ * EINMALIG: Trägt Kundenordner-Link für Deals nach, die schon vor dieser Automatisierung
+ * manuell einen befüllten Ordner bekommen haben (Namensabgleich-Uebernahme, Stand 2026-08-20).
+ * Verhindert, dass processGewonnenDeal() dort einen zweiten, doppelten Ordner anlegt --
+ * das Skript prüft nur das Pipedrive-Feld, nicht ob in Drive schon ein Ordner existiert.
+ */
+function setzeBekannteKundenordnerLinks() {
+  const links = {
+    6037: 'https://drive.google.com/drive/folders/1xMmxVJs_k4yZB2u6gMMtoRvuWhC-u6w8', // Harald Lamprecht
+    4876: 'https://drive.google.com/drive/folders/1rXdfnAXq1B7S3UP1_nInEM-KwqkizfqB', // Christoph Maier
+    6439: 'https://drive.google.com/drive/folders/1E-geiNepgeZJXZEUFbGbLvUe8KjiYndt', // Manfred Kabelik
+    6454: 'https://drive.google.com/drive/folders/1AB6VtlRlcds3cjGK8yZfk2o7ngURYLkV', // Johannes Moser
+    7072: 'https://drive.google.com/drive/folders/1A_j1w1p8M9iyKTnkF3Af9KJ8vjGu1HyU', // Ralph Hemetinger
+    6006: 'https://drive.google.com/drive/folders/19VebTT_r25H56yPwnFCjJDFyEjAnCumJ'  // Werner Kremser
+  };
+  Object.entries(links).forEach(([dealId, link]) => {
+    patchPipedrive(`deals/${dealId}`, { custom_fields: { [KUNDENORDNER_LINK_FIELD_KEY]: link } });
+    Logger.log(`Deal ${dealId}: Kundenordner-Link gesetzt -> ${link}`);
+  });
+}
+
 /** Für Einzeltests: einen bekannten Deal durchlaufen lassen (Deal-ID unten anpassen). */
 function testEinzelDeal() {
   starteLauf('testEinzelDeal');
+  // Ronald Pargfrieder (4971) und Martin Gangl -- Montagepartner wurde manuell eingetragen
+  const dealIds = [6692, 6207];
   try {
-    const result = processGewonnenDeal(7334); // Test-Deal-ID aus dem sevdesk-Sync-Projekt, ggf. anpassen
-    Logger.log(result);
+    dealIds.forEach(dealId => {
+      const result = processGewonnenDeal(dealId);
+      Logger.log(`Deal ${dealId}: ${result}`);
+    });
   } finally {
     flushLog();
+  }
+}
+
+/**
+ * Kurzer Check: hat jeder der 32 Fulfillment-Deals einen Kundenordner-Link in Pipedrive?
+ * Liest nur, schreibt nichts -- gefahrlos jederzeit ausführbar.
+ */
+function checkKundenordnerLinks() {
+  const dealIds = [
+    7065, 6970, 5587, 6694, 5779, 6922, 5984, 6659, 6084, 5837, 6591, 6686,
+    6804, 5867, 6971, 6843, 7096, 6406, 7129, 5728, 6179, 6738, 6219, 6771,
+    7059, 7107, 5307, 7177, 6908, 6018, 5663, 6493
+  ];
+  const fehlend = [];
+  dealIds.forEach(dealId => {
+    const deal = fetchPipedrive(`deals/${dealId}`);
+    const link = deal.custom_fields?.[KUNDENORDNER_LINK_FIELD_KEY];
+    if (!link) {
+      fehlend.push(`${dealId} (${deal.title})`);
+    }
+  });
+  if (fehlend.length === 0) {
+    Logger.log(`Alle ${dealIds.length} Deals haben einen Kundenordner-Link. ✓`);
+  } else {
+    Logger.log(`${fehlend.length} von ${dealIds.length} OHNE Link:`);
+    fehlend.forEach(f => Logger.log(`  - ${f}`));
   }
 }
 
@@ -93,7 +144,14 @@ function testEinzelDeal() {
  */
 function processAusgewaehlteDeals() {
   starteLauf('processAusgewaehlteDeals');
-  const dealIds = [7253]; // hier eigene Deal-IDs eintragen, z.B. [7253, 7301, 7455]
+  // Aus dem ersten Live-Batch von Projektdoku-Generator (21.08.) als "Kein Kundenordner-Link am
+  // Deal" aufgefallen -- die alte 32er-Namensabgleich-Liste vom 20.08. ist inzwischen komplett
+  // durch (alle 32 stehen im heutigen Log als OK), deshalb hier ersetzt statt ergänzt.
+  // 6952 (Hajrulla Krasniqi) ist schon raus (21.08. angelegt) -- die übrigen 14 hängen noch bei
+  // Montagepartner-aus-Bundesland fest ("kein Montagepartner gesetzt"), erst DANACH hier nochmal laufen lassen.
+  const dealIds = [
+    4945, 5142, 5237, 5373, 5530, 5749, 5758, 5829, 5972, 6013, 6027, 6198, 6326, 6592
+  ];
   const summary = { angelegt: 0, uebersprungen: 0, dryRun: 0, fehler: 0 };
 
   try {

@@ -24,7 +24,9 @@ const MONTAGEPARTNER_OPTION_IDS = {
   'Berger Elektrotechnik (KTN)': 158,
   'Greensky (OÖ, SBG)': 159,
   'KOLLSTAR (OÖ)': 160,
-  'Kreuzeder (OÖ, SBG)': 161
+  'Kreuzeder (OÖ, SBG)': 161,
+  'Tiroler Partner (T)': 243,
+  'Vorarlberg Partner (V)': 244
 };
 const MONTAGEPARTNER_ID_TO_NAME = Object.fromEntries(
   Object.entries(MONTAGEPARTNER_OPTION_IDS).map(([name, id]) => [id, name])
@@ -43,7 +45,9 @@ const PARTNER_TO_DRIVE_FOLDER_ID = {
   'Berger Elektrotechnik (KTN)': '13oW_ltohWezbjiuFWUdZZXgM6NtndcD_',
   'Greensky (OÖ, SBG)': '14j-TzXjnCNVgx9SqCcTilX3gsGB0DnF5',
   'KOLLSTAR (OÖ)': '1ZeOW8gm0jhVDNG9920Yori7pde1G6bpw', // Produktivordner
-  'Kreuzeder (OÖ, SBG)': '1zAdnKf5VPEuUqQsdDWSb9D5btaf_7t1K'
+  'Kreuzeder (OÖ, SBG)': '1zAdnKf5VPEuUqQsdDWSb9D5btaf_7t1K',
+  'Tiroler Partner (T)': '1AAB7JjI5L5Zq3R-S7f_JpvbN-4g9y061', // NEU 2026-08-20 -- "Montage offen"-Unterordner noch anlegen!
+  'Vorarlberg Partner (V)': '1ICcSFoZ0EGnib1I3oi60eTjotx30Fqkl' // NEU 2026-08-20 -- "Montage offen"-Unterordner noch anlegen!
 };
 
 // Name des Unterordners im Partner-Root, in den neue Kundenordner rein sollen.
