@@ -134,6 +134,13 @@ function fetchOrderFromSevdesk(orderId) {
     orderId: order.id,
     orderNumber: order.orderNumber,        // z.B. "2026-154-A" -> direkt Angebots-Nr.
     orderDate: order.orderDate || order.create || null,
+    // "update" statt Erstellungsdatum für die Monats-Zuordnung: ein im Juli
+    // GESCHRIEBENES Angebot, das erst jetzt (August) ANGENOMMEN wird, gehört
+    // wirtschaftlich in den August-Block (Verkaufsmonat), nicht in den Juli-Block
+    // (Angebots-Erstellung). sevdesk hat keinen dedizierten "Status seit"-Zeitstempel;
+    // "update" ändert sich zwar auch bei anderen Bearbeitungen, ist aber die beste
+    // verfügbare Näherung, da eine Status-Änderung "update" mit hochzieht.
+    angenommenAm: order.update || order.orderDate || order.create || null,
     kundenname: order.contact && order.contact.id ? fetchContactDisplayName(order.contact.id) : null,
     vkNetto: sumNetBrauchbar ? sumNet : positionsSumme,
     vkNettoQuelle: sumNetBrauchbar ? 'order.sumNet' : 'Summe der Positionen',
@@ -274,16 +281,36 @@ function syncOrderToDeepCore(orderId) {
     const order = fetchOrderFromSevdesk(orderId);
     const label = order.orderNumber || orderId;
 
-    // Monat aus dem AUFTRAGSDATUM, nicht aus dem Laufdatum: ein am 31.08. abends
-    // angenommener Auftrag landete in v1 im September, wenn der Trigger um 00:05 lief.
-    const datum = order.orderDate ? new Date(order.orderDate) : new Date();
+    // Zweites Sicherheitsnetz neben dem Script-Property-State (der nur innerhalb
+    // dieses Scripts wirkt): steht die Angebotsnummer schon IRGENDWO im Sheet,
+    // nicht nochmal schreiben (z.B. falls schon manuell angelegt).
+    if (angebotsnummerBereitsVorhanden(order.orderNumber)) {
+      logDeepCoreSyncResult('WARNUNG', label, null, 'Angebotsnummer bereits im Sheet vorhanden',
+        'Nichts geschrieben -- vermutlich schon manuell oder in einem früheren Lauf angelegt. Bitte prüfen.');
+      return false;
+    }
+
+    // Monat aus dem Zeitpunkt der ANNAHME (order.update), nicht aus dem Laufdatum
+    // (v1-Bug: ein am 31.08. abends angenommener Auftrag landete im September, wenn
+    // der Trigger um 00:05 lief) UND nicht aus dem Angebots-ERSTELLUNGSdatum (ein im
+    // Juli geschriebenes, aber erst im August angenommenes Angebot gehört wirtschaftlich
+    // in den August-Block, nicht in den längst vollen Juli-Block).
+    const datum = order.angenommenAm ? new Date(order.angenommenAm) : new Date();
     const monatName = GERMAN_MONTHS[(isNaN(datum.getTime()) ? new Date() : datum).getMonth()];
 
-    const row = findFreeRowForMonth(monatName);
+    let row = findFreeRowForMonth(monatName);
     if (!row) {
-      logDeepCoreSyncResult('WARNUNG', label, null, `Keine freie Zeile für Monat "${monatName}"`,
-        'Pufferzeilen im Sheet ergänzen (Format/Dropdowns aus bestehender Zeile kopieren).');
-      return false;
+      if (DRY_RUN) {
+        logDeepCoreSyncResult('WARNUNG', label, null, `Keine freie Zeile für Monat "${monatName}"`,
+          'DRY RUN: würde jetzt automatisch neue Pufferzeilen anlegen (im Live-Betrieb aktiv, hier bewusst ausgelassen).');
+        return false;
+      }
+      row = sorgeFuerFreieZeile(monatName);
+      if (!row) {
+        logDeepCoreSyncResult('ERROR', label, null, `Keine freie Zeile für Monat "${monatName}" und automatisches Anlegen fehlgeschlagen`,
+          `Monatsblock "Gesamt ${monatName}" nicht im Sheet gefunden -- manuell anlegen.`);
+        return false;
+      }
     }
 
     const aggregated = aggregatePositionsForDeepCore(order.positions);
@@ -493,9 +520,10 @@ function testFetchSevdeskOnly() {
     Logger.log(JSON.stringify(order, null, 2));
     Logger.log('=== Artikel-Mapping ===');
     Logger.log(JSON.stringify(aggregatePositionsForDeepCore(order.positions), null, 2));
-    const datum = order.orderDate ? new Date(order.orderDate) : new Date();
-    const monatName = GERMAN_MONTHS[datum.getMonth()];
-    Logger.log(`=== Zielzeile für Monat "${monatName}": ${findFreeRowForMonth(monatName)}`);
+    const datum = order.angenommenAm ? new Date(order.angenommenAm) : new Date();
+    const monatName = GERMAN_MONTHS[(isNaN(datum.getTime()) ? new Date() : datum).getMonth()];
+    Logger.log(`=== Zielzeile für Monat "${monatName}" (Annahme-Datum ${order.angenommenAm}): ${findFreeRowForMonth(monatName)}`);
+    Logger.log(`=== Bereits im Sheet? ${angebotsnummerBereitsVorhanden(order.orderNumber)}`);
   } catch (e) {
     Logger.log('✗ Fehler: ' + e.message);
   }

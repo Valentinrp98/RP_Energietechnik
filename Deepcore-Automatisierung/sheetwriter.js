@@ -131,6 +131,108 @@ function findFreeRowForMonth(monatName) {
 }
 
 /**
+ * Prüft, ob eine Angebotsnummer schon irgendwo in der Angebots-Nr.-Spalte steht --
+ * unabhängig vom Monat. Zusätzliches Sicherheitsnetz neben dem Script-Property-
+ * Duplikatschutz (der nur INNERHALB dieses Scripts wirkt): falls jemand die Zeile
+ * schon manuell angelegt hat, oder ein früherer Lauf trotz Fehler doch geschrieben
+ * hat, wird hier trotzdem nichts doppelt reingeschrieben.
+ */
+function angebotsnummerBereitsVorhanden(angebotsNr) {
+  if (!angebotsNr) return false;
+  const sheet = getAuftraegeSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= AUFTRAEGE_HEADER_ROWS) return false;
+
+  const gesucht = String(angebotsNr).trim();
+  const spalte = sheet.getRange(AUFTRAEGE_HEADER_ROWS + 1, COL.ANGEBOTS_NR, lastRow - AUFTRAEGE_HEADER_ROWS, 1).getValues();
+  return spalte.some(r => String(r[0]).trim() === gesucht);
+}
+
+// Wie viele neue Pufferzeilen auf einmal angelegt werden, wenn ein Monat leer ist.
+const NEUE_PUFFERZEILEN_BEI_BEDARF = 10;
+
+/**
+ * Sucht die Zeile "Gesamt {monat}" -- durchsucht Spalten A-F, weil die genaue
+ * Spaltenposition durch Zellverbund variieren kann.
+ */
+function findeGesamtZeile(monatName) {
+  const sheet = getAuftraegeSheet();
+  const lastRow = sheet.getLastRow();
+  const bereich = sheet.getRange(1, 1, lastRow, 6).getValues();
+  const gesucht = normalizeMonat(monatName);
+  const pattern = new RegExp(`^Gesamt\\s+${gesucht}$`, 'i');
+  for (let i = 0; i < bereich.length; i++) {
+    for (let j = 0; j < bereich[i].length; j++) {
+      if (pattern.test(String(bereich[i][j]).trim())) return i + 1;
+    }
+  }
+  return null;
+}
+
+/**
+ * Legt neue, formelsichere Pufferzeilen an, wenn für einen Monat keine mehr frei
+ * sind. Sucht die "Gesamt {monat}"-Zeile, fügt direkt darüber neue Zeilen ein und
+ * übernimmt Format + Datenvalidierung + FORMELN (nicht Werte!) von der Zeile
+ * unmittelbar darüber -- die hat unabhängig davon, ob sie schon einen echten
+ * Auftrag trägt oder noch leer ist, dieselbe Formelstruktur.
+ *
+ * NUR im Live-Betrieb (nie im DRY_RUN) -- Zeileneinfügen ist eine echte
+ * Sheet-Mutation, DRY_RUN soll garantiert nichts verändern.
+ *
+ * @returns {number|null} 1-basierter Index der ersten neuen freien Zeile, oder
+ *          null falls die "Gesamt {monat}"-Zeile nicht gefunden wurde (der
+ *          Monatsblock fehlt dann komplett im Sheet -- das kann diese Funktion
+ *          nicht selbst anlegen, das braucht einen Menschen).
+ */
+function sorgeFuerFreieZeile(monatName, anzahlNeu) {
+  anzahlNeu = anzahlNeu || NEUE_PUFFERZEILEN_BEI_BEDARF;
+  const sheet = getAuftraegeSheet();
+
+  const gesamtZeile = findeGesamtZeile(monatName);
+  if (!gesamtZeile) {
+    Logger.log(`✗ "Gesamt ${monatName}"-Zeile nicht gefunden -- Monatsblock fehlt komplett im Sheet, kann nicht automatisch angelegt werden.`);
+    return null;
+  }
+
+  const templateRow = gesamtZeile - 1;
+  if (templateRow <= AUFTRAEGE_HEADER_ROWS) {
+    Logger.log(`✗ Keine Vorlage-Zeile oberhalb von "Gesamt ${monatName}" (Zeile ${gesamtZeile}) verfügbar.`);
+    return null;
+  }
+
+  sheet.insertRowsBefore(gesamtZeile, anzahlNeu);
+
+  const lastCol = COL.ANGEBOTS_NR;
+  const quelle = sheet.getRange(templateRow, 1, 1, lastCol);
+  const ziel = sheet.getRange(gesamtZeile, 1, anzahlNeu, lastCol);
+
+  // Format (inkl. Zahlenformat/Chip-Darstellung) übernehmen -- KEINE Werte.
+  quelle.copyTo(ziel, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+
+  // Datenvalidierung (Dropdowns) zeilenweise übernehmen -- setDataValidations
+  // erwartet ein 2D-Array in Zielgröße, deshalb pro neuer Zeile einzeln.
+  const validierungen = quelle.getDataValidations()[0];
+  for (let i = 0; i < anzahlNeu; i++) {
+    sheet.getRange(gesamtZeile + i, 1, 1, lastCol).setDataValidations([validierungen]);
+  }
+
+  // Nur FORMEL-Spalten übernehmen (EK_NETTO, Handelsspanne, *_SUMME) -- Werte wie
+  // Kundenname/VK netto/Stk. bewusst NICHT, sonst würde ein echter Auftrag aus der
+  // Vorlage-Zeile mitkopiert.
+  const formeln = quelle.getFormulas()[0];
+  for (let i = 0; i < anzahlNeu; i++) {
+    const zielZeile = gesamtZeile + i;
+    formeln.forEach((f, colIdx) => {
+      if (f !== '') sheet.getRange(zielZeile, colIdx + 1).setFormula(f);
+    });
+    sheet.getRange(zielZeile, COL.MONAT).setValue(monatName);
+  }
+
+  Logger.log(`✓ ${anzahlNeu} neue Pufferzeilen für "${monatName}" angelegt (Zeile ${gesamtZeile}–${gesamtZeile + anzahlNeu - 1}), Vorlage aus Zeile ${templateRow}. BITTE IM SHEET GEGENPRÜFEN.`);
+  return gesamtZeile;
+}
+
+/**
  * Liest einen Zellblock und gibt ein Array zurück, in dem Formeln als Formel-String
  * und alles andere als Wert stehen. Wird dieses Array per setValues() zurück-
  * geschrieben, bleiben bestehende Formeln erhalten.
@@ -166,6 +268,11 @@ function writeRowToDeepCore(row, data, dryRun) {
   const artikel = leseBlockFormelsicher(sheet, row, START, breite);
   const setze = (col, wert) => { artikel.inhalt[col - START] = wert; };
 
+  // WICHTIG: *_SUMME NICHT anfassen. pruefeKonfiguration() (2026-08-21) hat gezeigt,
+  // dass diese Zellen SUMIF-Formeln sind (Name+Stk. -> Preis aus dem "Einkauf"-Tab),
+  // die wiederum EK_NETTO/Handelsspanne speisen. leseBlockFormelsicher() liest die
+  // Formel zwar formelsicher ein, aber ein setze() auf dieselbe Spalte hätte sie
+  // trotzdem überschrieben -- deshalb Summe-Spalten hier konsequent auslassen.
   Object.keys(CATEGORY_COLS).forEach(slotKey => {
     const cell = data.cells[slotKey];
     if (!cell) return;
@@ -173,17 +280,23 @@ function writeRowToDeepCore(row, data, dryRun) {
     const nameWert = (cell.name === UNSICHER_LABEL && !SCHREIBE_UNSICHER_LABEL) ? '' : cell.name;
     setze(cols.name, nameWert);
     setze(cols.stk, cell.stk);
-    setze(cols.summe, cell.summe);
   });
 
-  if (data.sonstigeKosten) setze(COL.SONSTIGE_KOSTEN, data.sonstigeKosten);
   setze(COL.ANGEBOTS_NR, data.angebotsNr);
 
+  // SONSTIGE_KOSTEN wird NICHT automatisch befüllt -- die Spalte trägt historisch
+  // manuell kuratierte Sonderfälle mit Erklärtext (z.B. "500 E-Material"), keine
+  // SUMIF-Formel, aber auch kein Ziel für pauschale sevdesk-Dienstleistungspositionen.
+  // Erkannte Positionen (Transportkosten, Planung, Fernwartung, ...) landen deshalb
+  // nur als Hinweis in den Notizen -- der Mensch entscheidet, ob/wo das reingehört.
   const notizen = Object.keys(CATEGORY_COLS)
     .map(k => data.cells[k])
     .filter(c => c && c.notiz)
     .map(c => c.notiz)
     .concat(data.notizenZusatz || []);
+  if (data.sonstigeKosten) {
+    notizen.push(`Sonstige Dienstleistungspositionen in sevdesk erkannt (Summe ${data.sonstigeKosten} €, nicht automatisch eingetragen)`);
+  }
   if (notizen.length > 0) setze(COL.NOTIZEN, notizen.join(' | '));
 
   if (dryRun) {

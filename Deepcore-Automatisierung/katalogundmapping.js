@@ -33,13 +33,13 @@ const KNOWN_DROPDOWN_VALUES = {
     'AIKO-GLAS-GLAS HOCHLEISTUNGS-SOLARMODUL DARK BLACK 475 WP',
     'AIKO-GLAS-GLAS HOCHLEISTUNGS-SOLARMODUL FULL BLACK 490 WP'
   ],
+  // Reale Dropdown-Werte sind NUR das Dachart-Stichwort, ohne "MONTAGESET PV..."-
+  // Präfix (per pruefeDropdownListen() am 2026-08-21 gegen das echte Sheet verifiziert
+  // — die ursprüngliche Annahme mit dem vollen Katalog-Namen war falsch).
   dachart: [
-    'MONTAGESET PV SCHRÄGDACH ZIEGEL', 'MONTAGESET PV SCHRÄGDACH PREFA',
-    'MONTAGESET PV FLACHDACH OST/WEST', 'MONTAGESET PV FLACHDACH SÜD',
-    'MONTAGESET PV BLECHDACH-TRAPEZ', 'MONTAGESET PV BLECHDACH-FALZ',
-    'MONTAGESET PV WELLETERNIT', 'MONTAGESET PV ETERNIT RHOMBUS',
-    'MONTAGESET PV GELÄNDER', 'MONTAGESET PV BIEBERSCHWANZ',
-    'MONTAGESET PV TOSCANA', 'MONTAGESET PV ZAUN', 'BLECHERSATZZIEGEL'
+    'ZIEGEL', 'PREFA', 'FLACHDACH OST/WEST', 'FLACHDACH SÜD',
+    'BLECHDACH-TRAPEZ', 'BLECHDACH-FALZ', 'WELLETERNIT', 'ETERNIT RHOMBUS',
+    'GELÄNDER', 'BIEBERSCHWANZ', 'TOSCANA', 'PV-ZAUN', 'BLECHERSATZZIEGEL'
   ],
   wechselrichter: [
     'SIGENERGY Energy Controller 5kW', 'SIGENERGY Energy Controller 6kW',
@@ -50,28 +50,42 @@ const KNOWN_DROPDOWN_VALUES = {
     'FRONIUS Symo GEN24 3.0 Plus', 'FRONIUS Symo GEN24 4.0 Plus',
     'FRONIUS Symo GEN24 5.0 Plus', 'FRONIUS Symo GEN24 6.0 Plus',
     'FRONIUS Symo GEN24 8.0 Plus', 'FRONIUS Symo GEN24 10.0 Plus',
-    'FRONIUS Symo GEN24 12.0 Plus'
+    'FRONIUS Symo GEN24 12.0 Plus',
+    // Kombi-Angebote WR+Speicher als EIN Dropdown-Eintrag — real im Sheet vorhanden
+    // (pruefeDropdownListen() 2026-08-21), ursprünglich fälschlich für "keinen echten
+    // sevdesk-Artikel" gehalten. Werden über mergeSetHybridCombo() unten zusammengeführt,
+    // wenn ein einzelner Sigenergy-WR + eine einzelne Sigenergy-Batterie im selben
+    // Auftrag vorkommen.
+    'Sigen Hybrid Wechselrichter 12.0 kW TP2 dreiphasig',
+    'Sigenergy Set Hybrid TP2 5 kW / 6 kWh', 'Sigenergy Set Hybrid TP2 5 kW / 9 kWh',
+    'Sigenergy Set Hybrid TP2 6 kW / 9 kWh', 'Sigenergy Set Hybrid TP2 8 kW / 9 kWh',
+    'Sigenergy Set Hybrid TP2 8 kW / 18 kWh', 'Sigenergy Set Hybrid TP2 10 kW / 9 kWh',
+    'Sigenergy Set Hybrid TP2 10 kW / 18 kWh', 'Sigenergy Set Hybrid TP2 12 kW / 9 kWh',
+    'Sigenergy Set Hybrid TP2 12 kW / 18 kWh'
   ],
   speicher: [
     'SIGENERGY Batteriemodul 6 kWh', 'SIGENERGY Batteriemodul 9 kWh',
+    'BYD Battery-Box Premium HVM 8.3',
     'BYD Battery-Box Premium HVM 11.0', 'BYD Battery-Box Premium HVM 13.8',
     'BYD Battery-Box Premium HVM 16.6', 'BYD Battery-Box Premium HVM 19.3',
     'BYD Battery-Box Premium HVM 22.1',
     'FRONIUS Reserva 6,3 kWh Speicher', 'FRONIUS Reserva 9,5 kWh Speicher',
     'FRONIUS Reserva 12,6 kWh Speicher', 'FRONIUS Reserva 15,8 kWh Speicher'
   ],
+  // "SIGENERGY Gateway" (kurz!) ist der reale Wert — nicht "...Umschaltbox Dreiphasig".
   notstrom: [
-    'SIGENERGY Gateway Umschaltbox Dreiphasig', 'SIGENERGY Handumschalter',
-    'Fronius Backup Controller'
+    'SIGENERGY Gateway', 'SIGENERGY Handumschalter', 'Fronius Backup Controller'
   ],
+  // Die Kombi "Power Sensor & Communication Modul" ist laut echtem Sheet ein
+  // SMARTMETER-Eintrag, nicht Zubehör (ursprüngliche Annahme war falsch, siehe
+  // classifyPositionForDeepCore: zubehoer_combo -> Kategorie 'smartmeter').
   smartmeter: [
     'Sigenergy Power Sensor TPX - CH', 'SIGENERGY Power Sensor DH dreiphasig',
-    'Fronius Smart Meter'
+    'FRONIUS SMART METER', 'SIGENERGY Power Sensor DH dreiphasig & Communication Modul'
   ],
   zubehoer: [
     'SIGENERGY WALLBOX EVAC 11 4G T2SH-WH', 'SIGENERGY WALLBOX EVAC 22 4G T2-WH',
     'SIGENERGY WALLBOX EVAC 7 kW T2-WH', 'SIGENERGY WALLBOX EVDC 12 5S2',
-    'SIGENERGY Power Sensor DH dreiphasig & Communication Modul',
     'ATON Heizstab', 'OPTIMIERER', 'SMARTFOX PRO + LEISTUNGSSTELLER',
     'GARANTIEVERLÄNGERUNG'
   ]
@@ -84,9 +98,10 @@ const KNOWN_DROPDOWN_VALUES = {
 // hier IST die Prüfreihenfolge. Nicht umsortieren.
 // ----------------------------------------------------------------------------
 const CATEGORY_PATTERNS = {
-  // Kombi "Power Sensor ... & Communication Modul" ist im Deep-Core-Katalog ein
-  // ZUBEHÖR-Artikel (nicht Smartmeter!) — muss vor der reinen smartmeter-Regel stehen.
-  zubehoer_combo: {
+  // Kombi "Power Sensor ... & Communication Modul" ist laut echtem Sheet-Dropdown
+  // (pruefeDropdownListen(), 2026-08-21) ein SMARTMETER-Eintrag. Eigener Regex-Eintrag
+  // nur, damit die Reihenfolge in Object.entries() klar bleibt — Kategorie ist smartmeter.
+  smartmeter_combo: {
     match: /Power Sensor.*Communication Modul|Communication Modul.*Power Sensor/i
   },
   smartmeter: {
@@ -111,7 +126,10 @@ const CATEGORY_PATTERNS = {
     match: /WALLBOX|EV.?CHARGER|EVAC|EVDC|Wattpilot|EVC-|Heizstab|Ohmpilot|OPTIMIERER|SparSmart|GARANTIE|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Battery Controller|Bodenmontageset|Wandmontageset|Modulhalterung/i
   },
   sonstige_kosten: {
-    match: /Fernwartung|Planung der PV|Anmeldung EVU|EVU Abnahme|Elektroinstallation|Montagearbeiten|Projektbetreuung|Messpauschale|Landesförderung|Transportkosten|Gerätetechnik/i
+    // "Projektierung" ergänzt: reale sevdesk-Position heißt "TECHNISCHE PROJEKTIERUNG",
+    // nicht "Projektbetreuung" — beim Live-Test (Order 2026-609-A) sonst in "unknown"
+    // gelandet, obwohl es klar eine Dienstleistungs-Position ist.
+    match: /Fernwartung|Planung der PV|Anmeldung EVU|EVU Abnahme|Elektroinstallation|Montagearbeiten|Projektbetreuung|Projektierung|Messpauschale|Landesförderung|Transportkosten|Gerätetechnik/i
   },
   wechselrichter: {
     match: /Hybrid Wechselrichter|Energy Controller|Wechselrichter|WR-SUN|WR-HYD|SUN2000|Symo|Primo|Tauro|MOD\s*\d+KTL|X3-ULTRA|X3-HYBRID|KTLX/i,
@@ -191,8 +209,8 @@ function classifyPositionForDeepCore(position) {
 
   for (const [key, config] of Object.entries(CATEGORY_PATTERNS)) {
     if (config.match.test(name)) {
-      // zubehoer_combo ist nur eine Vorprüfung — landet real in der Kategorie "zubehoer"
-      const category = key === 'zubehoer_combo' ? 'zubehoer' : key;
+      // smartmeter_combo ist nur eine Vorprüfung — landet real in der Kategorie "smartmeter"
+      const category = key === 'smartmeter_combo' ? 'smartmeter' : key;
       const value = config.extractValue ? config.extractValue(name) : null;
       return { category, value, quantity, priceNet, rawName: position.name };
     }
@@ -204,9 +222,22 @@ function classifyPositionForDeepCore(position) {
 /**
  * Sucht den best-passenden Dropdown-Text für eine Kategorie anhand des sevdesk-Namens.
  * 1. Exakte Übereinstimmung (Groß-/Kleinschreibung + Kommazahlen egal)
- * 2. Genau EIN Kandidat mit gleichem Kennwert (kW/kWh/WP)
- * 3. Mehrere Kandidaten mit gleichem Kennwert -> nur wenn GENAU EINE Marke passt
+ * 2. Kennwert (kW/kWh/WP) grenzt den Kandidaten-Pool ein, falls vorhanden — bei
+ *    Kategorien ohne Kennwert (z.B. Dachart) bleibt der gesamte Pool bestehen.
+ * 3. Wort-Überlappung (≥3-Zeichen-Wörter, reine Zahlen ausgenommen) entscheidet
+ *    innerhalb des Pools — eindeutig NUR wenn genau ein Kandidat die meisten
+ *    Treffer hat UND das mindestens 1 Treffer ist.
  * 4. Sonst null -> Aufrufer schreibt UNSICHER (Grundsatz: bei Mehrdeutigkeit nicht raten)
+ *
+ * Der Wort-Score ersetzt zwei frühere Einzellösungen (Farbvarianten wie "AIKO ...
+ * FULL BLACK" vs. "... DARK BLACK", UND das Dachart-Kurzwort-Problem "ZIEGEL" statt
+ * "MONTAGESET PV ... ZIEGEL") mit einem einzigen Mechanismus. Er verhindert außerdem
+ * einen realen Fehlgriff vom Live-Test (Order 2026-609-A, 2026-08-21): "SIGENERGY
+ * Hybrid Wechselrichter 10.0 kW..." hätte per reinem Kennwert-Abgleich (beide = 10)
+ * fälschlich auf "SIGENERGY Energy Controller 10kW" gematcht — zwei verschiedene
+ * Sigenergy-Produktfamilien, die nur zufällig dieselbe kW-Zahl tragen. Mit dem
+ * Wort-Score bleiben beide Kandidaten bei 1 Treffer (nicht eindeutig) -> UNSICHER,
+ * statt eine falsche, aber selbstbewusste Antwort zu liefern.
  */
 function findDropdownMatch(category, rawName, value) {
   const candidates = KNOWN_DROPDOWN_VALUES[category] || [];
@@ -215,30 +246,23 @@ function findDropdownMatch(category, rawName, value) {
   const exact = candidates.find(c => normalizeName(c).toLowerCase() === nameNorm);
   if (exact) return exact;
 
-  if (value === null || value === undefined) return null;
-
-  const valueMatches = candidates.filter(c => extractCandidateValue(c) === value);
-  if (valueMatches.length === 1) return valueMatches[0];
-
-  // Mehrere Kandidaten mit gleichem Kennwert (z.B. mehrere Marken ODER — wichtiger
-  // Praxisfall — dieselbe Marke/Leistung in mehreren Farbvarianten wie "AIKO ...
-  // FULL BLACK 475 WP" vs. "AIKO ... DARK BLACK 475 WP"). Ein reiner Erstes-Wort-
-  // Markenvergleich (v1) unterscheidet die beiden NICHT, weil beide mit "AIKO"
-  // beginnen. Deshalb: alle Wörter (≥3 Zeichen) des Kandidaten gegen den sevdesk-
-  // Namen zählen ("FULL"+"BLACK" matchen bei FULL BLACK, nur "BLACK" bei DARK
-  // BLACK) — eindeutig NUR wenn genau ein Kandidat die meisten Treffer hat.
-  if (valueMatches.length > 1) {
-    const scored = valueMatches.map(c => {
-      const worte = normalizeName(c).toLowerCase().split(/[\s,-]+/).filter(w => w.length >= 3);
-      const treffer = worte.filter(w => nameNorm.includes(w)).length;
-      return { c, treffer };
-    });
-    const maxTreffer = Math.max(...scored.map(s => s.treffer));
-    const beste = scored.filter(s => s.treffer === maxTreffer);
-    if (maxTreffer > 0 && beste.length === 1) return beste[0].c;
+  let pool = candidates;
+  if (value !== null && value !== undefined) {
+    const valueMatches = candidates.filter(c => extractCandidateValue(c) === value);
+    if (valueMatches.length > 0) pool = valueMatches;
   }
+  if (pool.length === 0) return null;
 
-  return null;
+  const scored = pool.map(c => {
+    const worte = normalizeName(c).toLowerCase().split(/[\s,/-]+/)
+      .filter(w => w.length >= 3 && !/^\d+$/.test(w));
+    const treffer = worte.filter(w => nameNorm.includes(w)).length;
+    return { c, treffer };
+  });
+  const maxTreffer = Math.max(...scored.map(s => s.treffer));
+  const beste = scored.filter(s => s.treffer === maxTreffer);
+
+  return (maxTreffer > 0 && beste.length === 1) ? beste[0].c : null;
 }
 
 /**
