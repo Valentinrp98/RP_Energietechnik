@@ -322,6 +322,54 @@ function debugOrderFelder() {
 }
 
 /**
+ * Listet die an einem Deal in Pipedrive angehängten Dateien (Angebots-PDFs, Auftragsbestätigungen
+ * etc.). Files sind nur über die v1-API abrufbar (v2 kennt diesen Endpunkt nicht) -- deshalb hier
+ * ein eigener v1-Fetch statt pipedriveFetch() (das läuft fest gegen PIPEDRIVE_BASE_URL = v2). Auth
+ * über ?api_token= als Query-Param, NICHT den x-api-token-Header -- das ist die v1-spezifische
+ * Methode (siehe CLAUDE.md Pipedrive-Abschnitt zu v1/v2-Auth-Unterschied).
+ *
+ * ZWECK: bei den 9 Deals mit mehreren sevdesk-Order-Revisionen desselben Kontakts (siehe
+ * AUDIT_PAARE_GESCHRIEBEN_RUNDE2) hat syncPerNameVormatching() nur nach dem neuesten update-
+ * Zeitstempel entschieden -- eine Vermutung. Oft liegt am Deal selbst schon ein PDF (Angebot oder
+ * Auftragsbestätigung), dessen Dateiname/Datum verrät, welche Order wirklich angenommen wurde --
+ * eine von sevdesk komplett unabhängige Quelle. Schreibt nichts, nur Logger.log.
+ */
+function zeigePipedriveDateienFuerRevisionsDeals() {
+  const token = PropertiesService.getScriptProperties().getProperty('PIPEDRIVE_API_TOKEN');
+  if (!token) throw new Error('PIPEDRIVE_API_TOKEN fehlt in den Script Properties!');
+
+  // Die 9 Deals aus dem Runde-2-Sync (21.08. 14:48) mit >1 Order-Revision desselben Kontakts.
+  const dealIds = [6207, 4945, 5237, 5530, 5972, 6037, 6198, 6593, 4876];
+
+  dealIds.forEach(dealId => {
+    const url = `https://rp-energietechnik.pipedrive.com/api/v1/deals/${dealId}/files?api_token=${encodeURIComponent(token)}&limit=100`;
+    const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    const code = response.getResponseCode();
+    const text = response.getContentText();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      Logger.log(`Deal ${dealId}: kein JSON (HTTP ${code}): ${text.substring(0, 150)}`);
+      return;
+    }
+    if (!data.success) {
+      Logger.log(`Deal ${dealId}: Files-Abruf fehlgeschlagen (HTTP ${code}): ${text.substring(0, 200)}`);
+      return;
+    }
+    const dateien = data.data || [];
+    if (dateien.length === 0) {
+      Logger.log(`Deal ${dealId}: keine Dateien angehängt.`);
+      return;
+    }
+    Logger.log(`Deal ${dealId}: ${dateien.length} Datei(en):`);
+    dateien.forEach(d => {
+      Logger.log(`  - "${d.name}" (hinzugefügt ${String(d.add_time || '').substring(0, 16)}, ${d.file_size || '?'} Bytes)`);
+    });
+  });
+}
+
+/**
  * Bestandsaufnahme über ALLE Deals der Fulfillment-Pipeline: wer hat schon Angebotsnummer und
  * Artikel-Daten, wer nicht. Antwortet auf "sind wirklich alle durch, oder fehlen noch welche" --
  * die 21 geschriebenen kommen aus einer handgepflegten Liste, nicht aus der Pipeline selbst.
