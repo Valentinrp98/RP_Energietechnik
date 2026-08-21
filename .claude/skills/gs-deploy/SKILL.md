@@ -26,8 +26,9 @@ zerstören, von der Claude nichts weiß (siehe "Der zentrale Risiko-Punkt" unten
    ist das nicht nötig.
 4. Im jeweiligen Projektordner: `clasp push --force` (siehe "Warum --force" unten).
 5. **Push schlägt fehl:** stoppen, Fehler an Valentin melden, NICHT committen.
-6. **Push erfolgreich:** `git add <projektordner>`, dann `git commit -m "<Projektname>: <kurze
-   Beschreibung>"`. Ein Commit pro inhaltlicher Änderung — viele kleine Commits sind gewünscht.
+6. **Push erfolgreich:** `git add <projektordner>` — **NIE `git add -A` oder `git add .` über das ganze
+   Repo**, siehe "Parallele Sessions" unten. Dann `git commit -m "<Projektname>: <kurze Beschreibung>"`.
+   Ein Commit pro inhaltlicher Änderung — viele kleine Commits sind gewünscht.
 7. **Nie automatisch `git push` zum GitHub-Remote.** Nur auf explizite Ansage ("push jetzt",
    "Feierabend-Push", o.ä.) — und davor den Secrets-Check unten einmal durchgehen.
 
@@ -121,6 +122,24 @@ Stand 2026-08-21 geprüft: alle Projekte lesen Tokens ausschließlich über
 nicht: vor jedem tatsächlichen `git push` zum Remote kurz draufschauen, ob ein neu committeter Diff
 einen literalen Token/Secret enthält (nicht nur den Property-Key-Namen) — besonders nach Copy-Paste aus
 einem Test/Debug-Lauf.
+
+## Parallele Sessions
+
+Valentin lässt öfter mehrere Claude-Code-Sessions gleichzeitig auf diesem Repo laufen, jede an einem
+anderen Projekt (Vorfall 2026-08-21: eine andere Session arbeitete live an `Projektdoku-Generator`,
+während diese Session am Deploy-Workflow arbeitete — nur durch einen frischen Datei-Zeitstempel bei
+einem `git add -A` aufgefallen). Zwei Regeln, die das entschärfen:
+- **Nie `git add -A`/`git add .` über das ganze Repo.** Immer nur den konkreten Projektordner stagen,
+  den man gerade selbst bearbeitet hat. Damit kann eine Session unmöglich fremde, unfertige Arbeit einer
+  anderen Session mit committen.
+- **Vor einem `git add <projektordner>` kurz auf ungewöhnlich frische Datei-Zeitstempel achten**, falls
+  in dieser Session an diesem Projekt bisher nichts gemacht wurde. Wirkt verdächtig frisch und passt
+  nicht zum eigenen Bearbeitungsstand → nachfragen statt einfach mitzunehmen. Siehe
+  [[feedback_parallel_claude_sessions]].
+- Verschiedene Projekte parallel in verschiedenen Sessions ist unproblematisch. Riskant wird's nur, wenn
+  zwei Sessions GLEICHZEITIG am selben Projektordner arbeiten UND eine davon pusht, während die andere
+  noch mittendrin ist — dann überschreibt der Push (voller Dateibestand-Ersatz) die unfertige Arbeit der
+  anderen Session.
 
 ## Bekannte Fallen (Setup/Umgebung)
 
