@@ -308,17 +308,12 @@ function checkConfiguration() {
  *  verworfen und mit dem aktuellen Feldstand komplett neu gebaut). */
 function testEinzelDeal() {
   starteLauf('testEinzelDeal');
-  // Doc-Neubau (21.08., nach sevdesk-Namensabgleich Runde 2) für die 27 Deals, die heute per
-  // syncPerNameVormatchingMassentransfer() ihre echten Module-Daten bekommen haben -- ihr Doc
-  // existiert zwar schon (früherer Lauf, Anlagendetails damals leer), zeigt aber noch die alten,
-  // leeren Werte. forceRegenerate:true wirft das alte Doc weg und baut mit dem jetzigen Feldstand
-  // neu (siehe processDeal()-Kommentar oben). WICHTIG: bei 6207/5972/6037 (Gangl/Edin/Lamprecht)
-  // erst korrigiereFalscheOrderRevisionen() in Sevdesk-Pipdrive_sync laufen lassen, sonst baut
-  // dieser Lauf die Docs mit den per PDF-Check als falsch identifizierten Modul-Daten.
+  // Doc-Neubau (21.08.) für Ünsal (5142) + Lamprecht (6037), NACHDEM korrigierePlzInAdressfeldV2()
+  // die per v2-Bug hängengebliebene falsche PLZ im Adresse-Feld direkt korrigiert hat -- ihr Doc vom
+  // vorigen Lauf zeigt noch die alte falsche Adresse. forceRegenerate:true wirft das alte Doc weg
+  // und baut mit dem jetzigen (korrigierten) Feldstand neu.
   const testDeals = [
-    6207, 7071, 7072, 7186, 7282, 7334, 4945, 5142, 5237, 5373, 5530,
-    5749, 5758, 5829, 5972, 6006, 6013, 6027, 6037, 6198, 6326, 6454,
-    6592, 6593, 6952, 4876, 6439
+    5142, 6037
   ].map(dealId => ({ dealId, forceRegenerate: true }));
   try {
     testDeals.forEach(({ dealId, forceRegenerate }) => {
