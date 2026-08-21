@@ -28,7 +28,9 @@ const MONTAGEPARTNER_OPTION_IDS = {
   'Berger Elektrotechnik (KTN)': 158,
   'Greensky (OÖ, SBG)': 159,
   'KOLLSTAR (OÖ)': 160,
-  'Kreuzeder (OÖ, SBG)': 161
+  'Kreuzeder (OÖ, SBG)': 161,
+  'Tiroler Partner (T)': 243,
+  'Vorarlberg Partner (V)': 244
 };
 const MONTAGEPARTNER_ID_TO_NAME = invertOptionMap(MONTAGEPARTNER_OPTION_IDS);
 
@@ -48,8 +50,26 @@ const DOKU_STATUS_FIELD_KEY = 'd33a358f840e5e1ccade4e1f88cd9109ae3e63f4'; // Fel
 const DOKU_STATUS_OPTION_TRIGGER = 235; // "Projektdoku rdy for creation" -- Pipedrive will hier eine Zahl, kein String, bei single-option-Feldern
 const DOKU_STATUS_OPTION_DONE = 234; // "Projektdoku erstellt und abgelegt"
 
+// TODO: neue Option "Projektdoku neu erstellen" am Feld "Projektdokumentation-Partner" in
+// Pipedrive anlegen (gleiches Enum wie DOKU_STATUS_OPTION_TRIGGER/_DONE), dann die ID hier eintragen.
+// Eigener Options-Wert statt Wiederverwendung von DOKU_STATUS_OPTION_TRIGGER, damit ein Deal, der
+// aus Versehen wieder auf "rdy for creation" steht (z.B. Tippfehler), NICHT das bestehende Doc
+// löscht -- Regenerieren ist ein bewusster Akt, kein Nebeneffekt des normalen Trigger-Werts.
+const DOKU_STATUS_OPTION_NEU_ERSTELLEN = 245; // "Projekdoku NEU -> Korrektur und überschreiben"
+
 // Text-Feld am Deal für den Doc-Link -- analog KUNDENORDNER_LINK_FIELD_KEY.
 const DOKU_LINK_FIELD_KEY = 'e08d635f1391e5735802dc066e61fac836c5a0d0'; // Feld "Projektdokumentation Link"
+
+// ===== Netzstatus (geteiltes Feld mit Fortschritt-Script/Sheet-Sync) =====
+// Fortschritts-Enum dort: offen(182) -> übergeben(183) -> eingereicht(184) -> Zählpunkt da(185) ->
+// Fertigmeldung raus(186). Dieses Script schreibt NUR die eine Flanke offen/leer -> übergeben,
+// sobald die Projektdoku mit Modul-Daten (Anlagendetails) UND Adresse fertig ist -- das ist der
+// reale Übergabe-Zeitpunkt an den Montagepartner, den Sheet-Sync/NetzanmeldungEskalation.gs als
+// Fristbeginn erwartet. Nie rückwärts: ein Deal, der schon weiter ist, darf durch ein späteres
+// forceRegenerate nicht auf "übergeben" zurückfallen, siehe hebeNetzstatusAufUebergebenFallsNoetig().
+const NETZSTATUS_FIELD_KEY = 'df60049565c7aecc52febb2ef5ecb911a761c2c6';
+const NETZSTATUS_OFFEN = 182;
+const NETZSTATUS_UEBERGEBEN = 183;
 
 // Freitextfeld für interne Fulfillment-Notizen (z.B. "Heizstab mit Kunde abklären") -- bewusst
 // GETRENNT von "Sonstige Mitteilung Kunde" (das ist, was der Kunde gesagt hat, nicht interne Hinweise).
@@ -218,7 +238,7 @@ function callPipedriveWithRetry(doFetch, path, rohAntwort) {
       if (attempt === maxAttempts) {
         throw new Error(`Pipedrive API-Fehler ${code} bei "${path}" nach ${maxAttempts} Versuchen: ${response.getContentText()}`);
       }
-      Utilities.sleep(1000 * Math.pow(2, attempt)); // 2s, 4s, 8s
+      Utilities.sleep(1000 * Math.pow(2, attempt)); // 2s, dann 4s -- nach dem 3. Versuch wird geworfen
       continue;
     }
     throw new Error(`Pipedrive API-Fehler ${code} bei "${path}": ${response.getContentText()}`);
@@ -246,16 +266,28 @@ function starteLauf(funktionsName) {
   return _laufId;
 }
 
-/** Self-bootstrapping Log-Sheet, analog zu den anderen RP-Scripts. */
+/**
+ * Self-bootstrapping Log-Sheet, analog zu den anderen RP-Scripts.
+ * Wichtig: ein gespeicherter, aber gerade nicht öffenbarer Sheet-Link führt NICHT dazu, dass ein
+ * zweites Sheet angelegt wird. Vorher fiel ein transienter Drive-/Quota-Fehler in denselben
+ * Zweig wie "noch kein Sheet vorhanden" -- das überschrieb die Property mit einer neuen ID und die
+ * gesamte bisherige Log-Historie war verwaist, ohne dass es irgendwo aufgefallen wäre.
+ */
 function getLogSheet() {
   if (_logSheetCache) return _logSheetCache;
   const props = PropertiesService.getScriptProperties();
   const sheetId = props.getProperty(PROP_LOG_SHEET_ID);
-  let ss = null;
+  let ss;
   if (sheetId) {
-    try { ss = SpreadsheetApp.openById(sheetId); } catch (e) { ss = null; }
-  }
-  if (!ss) {
+    try {
+      ss = SpreadsheetApp.openById(sheetId);
+    } catch (e) {
+      throw new Error(
+        `Log-Sheet ${sheetId} nicht öffenbar (${e.message}). Wenn es wirklich gelöscht wurde: ` +
+        `Script-Property "${PROP_LOG_SHEET_ID}" löschen, dann legt der nächste Lauf ein neues an.`
+      );
+    }
+  } else {
     ss = SpreadsheetApp.create('LOG_Projektdoku-Generator');
     props.setProperty(PROP_LOG_SHEET_ID, ss.getId());
     ss.getActiveSheet().appendRow(LOG_HEADER);
@@ -278,10 +310,22 @@ function logRow(dealId, dealTitle, kunde, status, docLink, completeness, detail)
   ]);
 }
 
+/**
+ * Ein Puffer-Write am Ende statt appendRow pro Zeile.
+ * Der try/catch ist kein Verstecken: flushLog() läuft im finally des Laufs, also auch auf dem
+ * Fehlerpfad. Würde es dort selbst werfen (Sheet weg, Quota), ersetzte dieser Fehler die
+ * eigentliche Ursache im Stacktrace -- man sähe "Log-Sheet nicht öffenbar" statt des echten
+ * Problems. Deshalb: Zeilen in den Stackdriver-Log retten und den Originalfehler durchlassen.
+ */
 function flushLog() {
   if (_logBuffer.length === 0) return;
-  const sheet = getLogSheet();
-  sheet.getRange(sheet.getLastRow() + 1, 1, _logBuffer.length, LOG_HEADER.length).setValues(_logBuffer);
+  try {
+    const sheet = getLogSheet();
+    sheet.getRange(sheet.getLastRow() + 1, 1, _logBuffer.length, LOG_HEADER.length).setValues(_logBuffer);
+  } catch (e) {
+    Logger.log(`flushLog fehlgeschlagen (${e.message}). Ungeschriebene Zeilen:\n` +
+               _logBuffer.map(r => r.join(' | ')).join('\n'));
+  }
   _logBuffer = [];
 }
 
@@ -309,13 +353,19 @@ function resolveSetLabels(value, idToName) {
   return arr.map(id => idToName[String(id)] || String(id)).join('/');
 }
 
-/** Pipedrive-Datumsfelder liefern "YYYY-MM-DD" (teils mit Zeitanteil) als String, kein Date-Objekt. */
+/**
+ * Pipedrive-Datumsfelder liefern "YYYY-MM-DD" (teils mit Zeitanteil) als String, kein Date-Objekt.
+ * Wird bewusst per String umsortiert statt über new Date(): "2026-08-21" parst V8 als UTC-Mitternacht,
+ * formatiert wird danach in der Script-Zeitzone. Für Europe/Vienna (UTC+1/+2) geht das gut aus, bei
+ * einer Zone westlich von UTC stünde jeder Montagetermin einen Tag zu früh im Doc -- ein falsches
+ * Montagedatum in der Partner-Doku ist teuer, und der Fehler wäre am Code nicht zu sehen.
+ */
 function formatPipedriveDate(value) {
   if (!value) return '(leer)';
-  const datePart = String(value).split(' ')[0];
-  const parsed = new Date(datePart);
-  if (isNaN(parsed.getTime())) return zeigeWert(value);
-  return Utilities.formatDate(parsed, Session.getScriptTimeZone(), 'dd.MM.yyyy');
+  const datePart = String(value).trim().split(/[ T]/)[0];
+  const m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return zeigeWert(value); // unerwartetes Format -- Rohwert zeigen, nicht raten
+  return `${m[3]}.${m[2]}.${m[1]}`;
 }
 
 /** double-Felder (Kabelweg in Metern) mit Einheit anzeigen, z.B. "7m" wie im Mockup. */
