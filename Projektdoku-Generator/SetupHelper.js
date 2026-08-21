@@ -231,17 +231,18 @@ function checkConfiguration() {
  *  verworfen und mit dem aktuellen Feldstand komplett neu gebaut). */
 function testEinzelDeal() {
   starteLauf('testEinzelDeal');
-  // Netzstatus-Nachzug (21.08.) für die 59 echten Deals aus dem ersten Live-Batch -- ruft
-  // processDeal() direkt auf (kein Status-Filter wie im Tageslauf), damit der "Doc existiert schon"-
-  // Zweig durchläuft und versucheNetzstatusUebergeben() für jeden greifen kann. forceRegenerate:false
-  // überall, es soll NICHTS neu gebaut werden, nur der Netzstatus-Bump nachgezogen werden.
+  // Doc-Neubau (21.08., nach sevdesk-Namensabgleich Runde 2) für die 27 Deals, die heute per
+  // syncPerNameVormatchingMassentransfer() ihre echten Module-Daten bekommen haben -- ihr Doc
+  // existiert zwar schon (früherer Lauf, Anlagendetails damals leer), zeigt aber noch die alten,
+  // leeren Werte. forceRegenerate:true wirft das alte Doc weg und baut mit dem jetzigen Feldstand
+  // neu (siehe processDeal()-Kommentar oben). WICHTIG: bei 6207/5972/6037 (Gangl/Edin/Lamprecht)
+  // erst korrigiereFalscheOrderRevisionen() in Sevdesk-Pipdrive_sync laufen lassen, sonst baut
+  // dieser Lauf die Docs mit den per PDF-Check als falsch identifizierten Modul-Daten.
   const testDeals = [
-    5307, 5587, 5663, 5728, 5779, 5837, 5867, 5984, 6018, 6084, 6179, 6207, 6219,
-    6406, 6493, 6591, 6659, 6686, 6694, 6738, 6771, 6804, 6843, 6908, 6922, 6970,
-    6971, 7059, 7065, 7071, 7072, 7096, 7107, 7129, 7177, 7186, 7282, 7334,
-    4945, 5142, 5237, 5373, 5530, 5749, 5758, 5829, 5972, 6006, 6013, 6027, 6037,
-    6198, 6326, 6454, 6592, 6593, 6952, 4876, 6439
-  ].map(dealId => ({ dealId, forceRegenerate: false }));
+    6207, 7071, 7072, 7186, 7282, 7334, 4945, 5142, 5237, 5373, 5530,
+    5749, 5758, 5829, 5972, 6006, 6013, 6027, 6037, 6198, 6326, 6454,
+    6592, 6593, 6952, 4876, 6439
+  ].map(dealId => ({ dealId, forceRegenerate: true }));
   try {
     testDeals.forEach(({ dealId, forceRegenerate }) => {
       if (!dealId) return; // noch nicht ausgefüllte Zeile -- "deals/0" wäre nur ein 4xx
