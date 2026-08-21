@@ -96,7 +96,7 @@ function zeigeAdressUndPlzFeldName() {
   Logger.log(`Adresse-Feld heißt in Pipedrive (am Kontakt): "${adresseFeld ? adresseFeld.field_name : '??? nicht gefunden'}"`);
   Logger.log(`PLZ-Feld heißt in Pipedrive (am Kontakt): "${plzFeld ? plzFeld.field_name : '??? nicht gefunden'}"`);
 
-  [5142, 6037].forEach(dealId => {
+  [5749, 6006, 6952].forEach(dealId => {
     const deal = fetchPipedrive(`deals/${dealId}`);
     const personId = deal.person_id && (deal.person_id.value || deal.person_id);
     if (!personId) { Logger.log(`Deal ${dealId}: keine Person verknüpft`); return; }
