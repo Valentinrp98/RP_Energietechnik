@@ -94,7 +94,7 @@ const PROP_LOG_SHEET_ID = 'BUNDESLAND_LOG_SHEET_ID_V3';
 
 // Wenn true: Deals, die vor CUTOFF_DATE angelegt wurden (deal.add_time), werden uebersprungen
 // und nicht angefasst -- z.B. um einen Altbestand bewusst unveraendert zu lassen.
-const CUTOFF_ENABLED = false; // TEMPORÄR für die 32 Fulfillment-Deals (fillBundeslandForAusgewaehlteDeals) -- danach wieder auf true!
+const CUTOFF_ENABLED = true; // war TEMPORÄR auf false für die 32 Fulfillment-Deals (fillBundeslandForAusgewaehlteDeals) -- laut eigenem Kommentar danach zurückgesetzt (2026-08-21)
 const CUTOFF_DATE = new Date('2026-06-01');
 
 
@@ -112,7 +112,7 @@ function fillBundeslandForAllDeals() {
   let cursor = props.getProperty(PROP_RESUME_CURSOR) || null;
   let processed = 0;
   let abgebrochen = false;
-  const summary = { gesetzt: 0, uebersprungen: 0, dryRun: 0, grenzfaelle: 0, ausAdresse: 0 };
+  const summary = { gesetzt: 0, uebersprungen: 0, dryRun: 0, fehler: 0, grenzfaelle: 0, ausAdresse: 0 };
 
   if (cursor) Logger.log(`Setze abgebrochenen Lauf fort (Cursor ${cursor}). Fuer Neustart von vorne: resetVollauf()`);
 
@@ -135,6 +135,10 @@ function fillBundeslandForAllDeals() {
         processed++;
         if (result.startsWith('gesetzt')) summary.gesetzt++;
         else if (result.startsWith('DRY-RUN')) summary.dryRun++;
+        // FEHLER (Konfigurationsfehler, z.B. fehlende Option-ID) darf nicht im "uebersprungen"-Topf
+        // verschwinden -- das ist eine andere Fehlerklasse als "keine gueltige PLZ" und braucht
+        // eigene Sichtbarkeit (siehe pruefeKonfiguration()).
+        else if (result.startsWith('FEHLER')) summary.fehler++;
         else summary.uebersprungen++;
         if (result.indexOf('GRENZFALL') !== -1) summary.grenzfaelle++;
         if (result.indexOf('via Adresse') !== -1) summary.ausAdresse++;
@@ -157,6 +161,18 @@ function fillBundeslandForAllDeals() {
   }
   Logger.log(`${abgebrochen ? 'PAUSIERT (Zeitbudget) -- nochmal starten, macht automatisch weiter.' : 'DURCHGELAUFEN.'} ` +
              `${processed} Deals in diesem Lauf. ${JSON.stringify(summary)}`);
+  // Nulllauf-Erkennung: fehlerfrei durchgelaufen UND nichts gesetzt sieht im Log wie ein
+  // gesunder Lauf aus, ist aber meist ein Konfigurations-/Reihenfolgeproblem (z.B. falscher
+  // Feldschluessel, oder alles war schon gesetzt). Analoges Muster wie bei
+  // Montagepartner-aus-Bundesland (dort "kein Bundesland gesetzt" 6246x, siehe ARCHITEKTUR-Doc).
+  if (!abgebrochen && processed > 0 && summary.gesetzt === 0 && summary.dryRun === 0) {
+    Logger.log(`WARNUNG (Nulllauf): ${processed} Deals verarbeitet, aber 0 gesetzt/DRY-RUN. ` +
+               `Pruefen: BUNDESLAND_FIELD_KEY noch aktuell? War schon alles gesetzt (FORCE_OVERWRITE)? ` +
+               `${summary.fehler} Konfigurationsfehler, ${summary.uebersprungen} uebersprungen.`);
+  }
+  if (summary.fehler > 0) {
+    Logger.log(`${summary.fehler} Deal(s) mit KONFIG-FEHLER (fehlende Option-ID) -- pruefeKonfiguration() ausfuehren, BUNDESLAND_OPTION_IDS korrigieren.`);
+  }
   if (summary.ausAdresse > 0) {
     Logger.log(`${summary.ausAdresse} Deals haben die PLZ nur ueber das Adressfeld bekommen (PLZ-Feld war leer) -- dort lohnt sich Datenpflege.`);
   }
