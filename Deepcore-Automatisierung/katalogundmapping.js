@@ -255,10 +255,20 @@ function findDropdownMatch(category, rawName, value) {
   }
   if (pool.length === 0) return null;
 
+  // ECHTE Wort-Treffer, keine Teilstring-Suche: "energy" als Kandidaten-Wort darf
+  // NICHT auf "sigENERGY" im sevdesk-Namen matchen -- das ist derselbe Markenname,
+  // kein eigenständiges Wort "Energy". Ein reiner .includes()-Check (v1-Bug, live
+  // aufgefallen 2026-08-21 bei "SIGENERGY Hybrid Wechselrichter 10.0 kW" -> hätte
+  // "sigenergy"+"energy" als 2 Treffer gezählt und damit fälschlich "SIGENERGY
+  // Energy Controller 10kW" gewonnen, statt zurecht UNSICHER zu bleiben) zählt
+  // solche Zufalls-Teilstrings mit. Deshalb: sevdesk-Name in eigene Wörter zerlegen
+  // und nur exakte Wort-Gleichheit werten.
+  const nameWoerter = nameNorm.split(/[\s,/-]+/);
+
   const scored = pool.map(c => {
     const worte = normalizeName(c).toLowerCase().split(/[\s,/-]+/)
       .filter(w => w.length >= 3 && !/^\d+$/.test(w));
-    const treffer = worte.filter(w => nameNorm.includes(w)).length;
+    const treffer = worte.filter(w => nameWoerter.includes(w)).length;
     return { c, treffer };
   });
   const maxTreffer = Math.max(...scored.map(s => s.treffer));
