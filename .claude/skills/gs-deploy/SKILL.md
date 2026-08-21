@@ -101,27 +101,26 @@ vorhandenen lokalen Dateien). Stattdessen `.clasp.json` von Hand anlegen:
   Sheet/Script gehört, noch aus sein. Valentin bittet, im richtigen Konto einmalig zu aktivieren, danach
   erneut pushen.
 
-## Aktive Trigger — Referenzliste (unvollständig, bei Unsicherheit fragen)
+## Aktive Trigger — Referenzliste (von Valentin bestätigt, hier aktuell halten!)
 
 Das ist aus Code/Repo NICHT ableitbar (Trigger sind Projekteinstellung, nicht Teil der Dateien) — diese
 Liste muss von Valentin bestätigt/aktualisiert werden, sonst veraltet sie unbemerkt:
-- **Sevdesk-Pipdrive_sync:** läuft produktiv (Sync-Log mit echten Deal/Auftrag-Paaren vorhanden) —
-  vermutlich aktiver Zeit-Trigger. Vor Pushes, die die Kernsync-Funktion ändern, besonders aufpassen.
-- **Sheet-Sync, Ordnererstellung-bei-Gewonnen:** Stand 2026-08-17 laut Memory bewusst OHNE aktivierte
-  Trigger ("Hardware muss stehen"). Ob sich das seither geändert hat: unklar, nicht neu bestätigt.
-- **Bundesland-aus-PLZ, Montagepartner-aus-Bundesland, Projektdoku-Generator:** so gebaut, dass sie nur
-  manuell (per Funktionsaufruf im Editor) laufen, kein Zeit-Trigger vorgesehen — Push ist hier
-  risikoärmer, weil nichts automatisch mitläuft.
-- **Deepcore-Automatisierung:** noch nicht live, kein Trigger.
+- **Stand 2026-08-21: KEIN Projekt hat einen aktiven Trigger.** Valentin bestätigt explizit "noch keine,
+  aber will starten" — er plant demnächst den ersten scharf zu schalten. Solange das so ist, ist ein
+  Push nirgends zeitkritisch (nichts läuft automatisch mit).
+- **Sobald ein Trigger aktiviert wird:** hier eintragen, WELCHES Projekt, welche Funktion und welches
+  Intervall — danach greift Schritt 3 im Ablauf oben (Kernfunktions-Änderung vor Push benennen).
+  Bis dahin nicht vorschnell "vermutlich aktiv" annehmen (frühere Annahme zu Sevdesk-Pipdrive_sync war
+  falsch — das Sync-Log dort stammt aus manuellen Testläufen, nicht aus einem laufenden Trigger).
 
 ## Secrets-Check vor jedem `git push` zum GitHub-Remote
 
 Stand 2026-08-21 geprüft: alle Projekte lesen Tokens ausschließlich über
-`PropertiesService.getScriptProperties().getProperty(...)`, keine hardcodierten Werte gefunden. Vor
-jedem tatsächlichen `git push` zum Remote kurz draufschauen, ob ein neu committeter Diff einen
-literalen Token/Secret enthält (nicht nur den Property-Key-Namen) — besonders wenn ein Copy-Paste aus
-einem Test/Debug-Lauf im Spiel war. Repo-Sichtbarkeit (public/private) mit Valentin einmal klären, falls
-noch offen.
+`PropertiesService.getScriptProperties().getProperty(...)`, keine hardcodierten Werte gefunden.
+**Repo ist privat** (von Valentin bestätigt 2026-08-21) — senkt das Risiko, ersetzt den Check aber
+nicht: vor jedem tatsächlichen `git push` zum Remote kurz draufschauen, ob ein neu committeter Diff
+einen literalen Token/Secret enthält (nicht nur den Property-Key-Namen) — besonders nach Copy-Paste aus
+einem Test/Debug-Lauf.
 
 ## Bekannte Fallen (Setup/Umgebung)
 
