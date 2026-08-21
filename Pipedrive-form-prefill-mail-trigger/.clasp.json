@@ -2,8 +2,7 @@
   "scriptId": "1uYcCTBnXAJpb6Nj98ZV0FiBqNgE9EXnL0j5NnTcqmtsJKRjlL59ZhLK6",
   "rootDir": "",
   "scriptExtensions": [
-    ".js",
-    ".gs"
+    ".js"
   ],
   "htmlExtensions": [
     ".html"
