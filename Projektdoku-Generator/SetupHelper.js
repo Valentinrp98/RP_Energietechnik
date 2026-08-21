@@ -122,6 +122,46 @@ function zeigeAdressUndPlzFeldName() {
   });
 }
 
+/**
+ * Korrektur nach v2-Bug (21.08.2026): nach Neuspeichern der Adresse per Autocomplete in der
+ * Pipedrive-UI zeigen v1-API und UI selbst die korrekte Adresse -- v2 blieb aber >30 Min. auf dem
+ * alten postal_code/formatted_address hängen (siehe zeigeAdressUndPlzFeldName()-Gegenprobe). Da
+ * DocGeneration.js über v2 liest, schreibt ein Doc-Neubau sonst wieder die falsche PLZ rein.
+ * Umgeht den kaputten UI->v2-Sync, indem der korrigierte Adress-Objekt-Wert direkt per v2-PATCH
+ * gesetzt wird (nur postal_code + formatted_address geändert, Rest 1:1 aus dem zuletzt gelesenen
+ * v2-Stand übernommen). NICHT allgemein für andere Deals verwenden -- nur für diese 2, deren
+ * korrekter Zielwert durch Valentins Bestätigung (Linz 4020 / Feldbach 8330) bekannt ist.
+ */
+function korrigierePlzInAdressfeldV2() {
+  const korrekturen = [
+    {
+      personId: 4967, name: 'Mehmet Ünsal',
+      adresse: {
+        value: 'Türkenstraße 11, Linz-Land, Österreich', subpremise: '', street_number: '11',
+        route: 'Türkenstraße', sublocality: '', locality: '', admin_area_level_1: 'Oberösterreich',
+        admin_area_level_2: 'Linz-Land', country: 'Österreich',
+        postal_code: '4020', formatted_address: 'Türkenstraße 11, 4020, Österreich'
+      }
+    },
+    {
+      personId: 5797, name: 'Harald Lamprecht',
+      adresse: {
+        value: 'Pertlstein 82, 8330 Feldbach, Österreich', subpremise: '', street_number: '82',
+        route: 'Pertlstein', sublocality: '', locality: 'Feldbach', admin_area_level_1: 'Steiermark',
+        admin_area_level_2: 'Südoststeiermark', country: 'Österreich',
+        postal_code: '8330', formatted_address: 'Pertlstein 82, 8330 Feldbach, Österreich'
+      }
+    }
+  ];
+
+  korrekturen.forEach(k => {
+    const result = patchPipedrive(`persons/${k.personId}`, { custom_fields: { [ADRESSE_FIELD_KEY]: k.adresse } });
+    const zurueck = result && result.custom_fields && result.custom_fields[ADRESSE_FIELD_KEY];
+    const ok = zurueck && String(zurueck.postal_code) === k.adresse.postal_code;
+    Logger.log(`Person ${k.personId} (${k.name}): ${ok ? '✓ korrigiert, postal_code jetzt ' + zurueck.postal_code : '✗ NICHT angekommen: ' + JSON.stringify(zurueck)}`);
+  });
+}
+
 /** Debug: listet alle Deal-Custom-Fields (field_name + field_code + Options-IDs bei Enum/Set). */
 function listDealFieldsHelper() {
   const fields = fetchPipedrive('dealFields?limit=500');
