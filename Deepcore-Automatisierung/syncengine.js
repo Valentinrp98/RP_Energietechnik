@@ -504,12 +504,23 @@ function testFetchSevdeskOnly() {
 /**
  * Führt den Sync für EINEN Auftrag aus. Respektiert DRY_RUN.
  *
+ * Nutzt denselben Lock wie syncPendingOrdersToDeepCore() — sonst könnten ein
+ * manueller Testlauf und der zufällig gleichzeitig feuernde 15-Min-Trigger
+ * dieselbe freie Pufferzeile finden und sich gegenseitig überschreiben.
+ *
  * Wenn tatsächlich geschrieben wurde (DRY_RUN = false), wird der Auftrag auch im
  * Duplikat-State vermerkt. Sonst würde der 15-Min-Trigger denselben Auftrag kurz
  * darauf nochmal verarbeiten und eine ZWEITE Zeile anlegen.
  */
 function testFullSync() {
   if (!TEST_ORDER_ID) { Logger.log('✗ Bitte TEST_ORDER_ID oben eintragen.'); return; }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30 * 1000)) {
+    Logger.log('⏭️ Ein anderer Lauf (Trigger?) hält aktuell den Lock — bitte gleich nochmal versuchen.');
+    return;
+  }
+
   try {
     const erfolg = syncOrderToDeepCore(TEST_ORDER_ID);
     if (erfolg && !DRY_RUN) {
@@ -520,5 +531,6 @@ function testFullSync() {
     }
   } finally {
     flushLog();
+    lock.releaseLock();
   }
 }

@@ -95,11 +95,20 @@ const CATEGORY_PATTERNS = {
   notstrom: {
     match: /Handumschalter|Gateway Umschaltbox|Backup Controller|NOTSTROMSCHALTER|EPS.?Box|SYN Back-Up Box/i
   },
+  // Nur echte DACH-Montagesysteme ("MONTAGESET PV ...") — bewusst NICHT das bloße
+  // Wort "Montageset", sonst reißen Sigenergy-Boden-/Wandmontagesets für den
+  // Speicherschrank (kein Dach-Bezug!) und "MODULHALTERUNG BALKON" (Balkonkraftwerk-
+  // Zubehör) fälschlich die Dachart-Spalte an sich.
   dachart: {
-    match: /MONTAGESET|BLECHERSATZZIEGEL|Modulhalterung/i
+    match: /MONTAGESET PV|BLECHERSATZZIEGEL/i
   },
   zubehoer: {
-    match: /WALLBOX|EV.?CHARGER|EVAC|EVDC|Wattpilot|EVC-|Heizstab|Ohmpilot|OPTIMIERER|SparSmart|GARANTIE|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX/i
+    // "Battery Controller BC" MUSS hier stehen, sonst schnappt sich weiter unten die
+    // speicher-Regel (Batter(y|i)) den Artikel "SIGENERGY Battery Controller BC inkl.
+    // Bodenmontageset" fälschlich als Speicher-Position — es ist aber nur das
+    // Steuergerät/Montagekit fürs Speichersystem, kein Speicher selbst (Bug aus v1,
+    // dieselbe Falle stand schon im sevdesk-Pipedrive-Projekt als Kommentar).
+    match: /WALLBOX|EV.?CHARGER|EVAC|EVDC|Wattpilot|EVC-|Heizstab|Ohmpilot|OPTIMIERER|SparSmart|GARANTIE|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Battery Controller|Bodenmontageset|Wandmontageset|Modulhalterung/i
   },
   sonstige_kosten: {
     match: /Fernwartung|Planung der PV|Anmeldung EVU|EVU Abnahme|Elektroinstallation|Montagearbeiten|Projektbetreuung|Messpauschale|Landesförderung|Transportkosten|Gerätetechnik/i
@@ -211,15 +220,22 @@ function findDropdownMatch(category, rawName, value) {
   const valueMatches = candidates.filter(c => extractCandidateValue(c) === value);
   if (valueMatches.length === 1) return valueMatches[0];
 
-  // Mehrere Kandidaten mit gleichem Kennwert (z.B. mehrere Marken): nur eindeutig,
-  // wenn GENAU EINER davon mit seinem Markenwort im sevdesk-Namen vorkommt.
-  // v1 nahm hier per .find() stillschweigend den ersten Treffer.
+  // Mehrere Kandidaten mit gleichem Kennwert (z.B. mehrere Marken ODER — wichtiger
+  // Praxisfall — dieselbe Marke/Leistung in mehreren Farbvarianten wie "AIKO ...
+  // FULL BLACK 475 WP" vs. "AIKO ... DARK BLACK 475 WP"). Ein reiner Erstes-Wort-
+  // Markenvergleich (v1) unterscheidet die beiden NICHT, weil beide mit "AIKO"
+  // beginnen. Deshalb: alle Wörter (≥3 Zeichen) des Kandidaten gegen den sevdesk-
+  // Namen zählen ("FULL"+"BLACK" matchen bei FULL BLACK, nur "BLACK" bei DARK
+  // BLACK) — eindeutig NUR wenn genau ein Kandidat die meisten Treffer hat.
   if (valueMatches.length > 1) {
-    const brandMatches = valueMatches.filter(c => {
-      const brandWord = c.split(/[\s-]/)[0].toLowerCase();
-      return brandWord.length >= 3 && nameNorm.includes(brandWord);
+    const scored = valueMatches.map(c => {
+      const worte = normalizeName(c).toLowerCase().split(/[\s,-]+/).filter(w => w.length >= 3);
+      const treffer = worte.filter(w => nameNorm.includes(w)).length;
+      return { c, treffer };
     });
-    if (brandMatches.length === 1) return brandMatches[0];
+    const maxTreffer = Math.max(...scored.map(s => s.treffer));
+    const beste = scored.filter(s => s.treffer === maxTreffer);
+    if (maxTreffer > 0 && beste.length === 1) return beste[0].c;
   }
 
   return null;
