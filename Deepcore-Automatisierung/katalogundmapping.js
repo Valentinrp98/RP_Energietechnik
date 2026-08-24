@@ -107,7 +107,10 @@ const CATEGORY_PATTERNS = {
     match: /Power Sensor.*Communication Modul|Communication Modul.*Power Sensor/i
   },
   smartmeter: {
-    match: /Smart Meter|Power Sensor/i
+    // "Communication Modul" auch alleine (ohne Power Sensor in derselben Position)
+    // hierher, weil es zur selben Smartmeter-Produktfamilie gehört -- landete vorher
+    // unkategorisiert im "[?]"-Notizen-Sammeltopf statt als UNSICHER mit Hinweis.
+    match: /Smart Meter|Power Sensor|Communication Modul/i
   },
   notstrom: {
     match: /Handumschalter|Gateway Umschaltbox|Backup Controller|NOTSTROMSCHALTER|EPS.?Box|SYN Back-Up Box/i
@@ -125,7 +128,10 @@ const CATEGORY_PATTERNS = {
     // Bodenmontageset" fälschlich als Speicher-Position — es ist aber nur das
     // Steuergerät/Montagekit fürs Speichersystem, kein Speicher selbst (Bug aus v1,
     // dieselbe Falle stand schon im sevdesk-Pipedrive-Projekt als Kommentar).
-    match: /WALLBOX|EV.?CHARGER|EVAC|EVDC|Wattpilot|EVC-|Heizstab|Ohmpilot|OPTIMIERER|SparSmart|GARANTIE|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Battery Controller|Bodenmontageset|Wandmontageset|Modulhalterung/i
+    // OPTIMIER (statt OPTIMIERER) faengt auch "MODULOPTIMIERUNG bei Teilverschattung" --
+    // die exakte Endung "OPTIMIERER" matchte den realen sevdesk-Namen nicht, Position
+    // landete unkategorisiert im "[?]"-Notizen-Sammeltopf.
+    match: /WALLBOX|EV.?CHARGER|EVAC|EVDC|Wattpilot|EVC-|Heizstab|Ohmpilot|OPTIMIER|SparSmart|GARANTIE|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Battery Controller|Bodenmontageset|Wandmontageset|Modulhalterung/i
   },
   sonstige_kosten: {
     // "Projektierung" ergänzt: reale sevdesk-Position heißt "TECHNISCHE PROJEKTIERUNG",
