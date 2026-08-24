@@ -17,6 +17,58 @@ function SETUP_EINMALIG_createDailyTrigger() {
 }
 
 /**
+ * EINMALIG: fügt 4 neue Optionen zum "Eindeckung"-Feld (Pipedrive-intern EINDECKUNG_FIELD_KEY,
+ * im Alltag "Dachart" genannt) hinzu -- Valentins Feedback 24.08.: Zaun, Fassade, Rhombus Eternit,
+ * Prefa fehlen. Feld-Optionen lassen sich nur über die v1-API bearbeiten (v2 hat kein
+ * Field-Management-Endpoint, wie schon bei den Webhooks) -- deshalb hier ein direkter v1-Call statt
+ * fetchPipedrive/patchPipedrive (die sind fest auf v2 verdrahtet, siehe Config.js).
+ * Bestehende Optionen MÜSSEN mit ihrer id+label im PUT-Body mitgeschickt werden, sonst würde
+ * Pipedrive sie stillschweigend löschen (die API ersetzt die komplette Options-Liste, kein Append).
+ */
+function fuegeEindeckungOptionenHinzu() {
+  const NEUE_OPTIONEN = ['Zaun', 'Fassade', 'Rhombus Eternit', 'Prefa'];
+
+  const feldUrl = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v1/dealFields?api_token=${encodeURIComponent(getApiToken())}`;
+  const feldResponse = UrlFetchApp.fetch(feldUrl, { muteHttpExceptions: true });
+  const feldData = JSON.parse(feldResponse.getContentText());
+  if (!feldData.success) {
+    throw new Error(`dealFields-Abruf fehlgeschlagen: ${feldResponse.getContentText()}`);
+  }
+  const feld = feldData.data.find(f => f.key === EINDECKUNG_FIELD_KEY);
+  if (!feld) {
+    throw new Error(`Feld mit key ${EINDECKUNG_FIELD_KEY} nicht gefunden.`);
+  }
+
+  const bestehendeLabels = feld.options.map(o => o.label.toLowerCase());
+  const wirklichNeu = NEUE_OPTIONEN.filter(label => !bestehendeLabels.includes(label.toLowerCase()));
+  if (wirklichNeu.length === 0) {
+    Logger.log('Alle 4 Optionen sind schon vorhanden -- nichts zu tun.');
+    return;
+  }
+
+  const neueOptionsListe = [
+    ...feld.options.map(o => ({ id: o.id, label: o.label })),
+    ...wirklichNeu.map(label => ({ label }))
+  ];
+
+  const updateUrl = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v1/dealFields/${feld.id}?api_token=${encodeURIComponent(getApiToken())}`;
+  const updateResponse = UrlFetchApp.fetch(updateUrl, {
+    method: 'put',
+    contentType: 'application/json',
+    payload: JSON.stringify({ options: neueOptionsListe }),
+    muteHttpExceptions: true
+  });
+  const updateData = JSON.parse(updateResponse.getContentText());
+  if (!updateData.success) {
+    throw new Error(`dealFields-Update fehlgeschlagen: ${updateResponse.getContentText()}`);
+  }
+
+  Logger.log(`Hinzugefügt: ${wirklichNeu.join(', ')}`);
+  updateData.data.options.forEach(o => Logger.log(`  ${o.id}: ${o.label}`));
+  Logger.log('Neue IDs oben in EINDECKUNG_OPTION_IDS (Config.js) nachtragen, sonst kennt das Script die neuen Optionen nicht.');
+}
+
+/**
  * Diagnose (21.08.): warum liegen bei Deal 7072 (Hemetinger) offenbar 2 Docs im Ordner? Listet alle
  * Dateien im "2_Projektdokumentation"-Unterordner mit Erstelldatum + Datei-ID, plus den aktuell in
  * Pipedrive gespeicherten Link und den aktuellen Anlagendetails-Wert. Rein lesend.
