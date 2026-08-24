@@ -561,6 +561,63 @@ function triggerEntfernen() {
 /** Order-ID für die Test-Funktionen. Hier eintragen, nicht als Parameter übergeben. */
 const TEST_ORDER_ID = '29871057'; // Order 2026-609-A, Milazim Dervishaj -- ⚠️ echter Live-Kunde, nur lesende Testfunktionen nutzen
 
+/**
+ * Audit über den GESAMTEN sevdesk-Artikelbestand (alle Order-Status, nicht nur
+ * "Angenommen") -- rein lesend, schreibt nichts. Zeigt VORAB, welche Artikelnamen
+ * gar keinen Kategorie-Regex treffen ("[?]") und welche zwar erkannt werden, aber
+ * im Deep-Core-Dropdown fehlen (UNSICHER). So müssen Katalog-Lücken nicht erst
+ * einzeln über echte angenommene Aufträge auffallen.
+ *
+ * Fragt /OrderPos DIREKT paginiert ab (nicht pro Auftrag einzeln) -- sonst genau
+ * die N+1-Falle, die beim sevdesk-Pipedrive-Projekt schon mal 22 Minuten statt
+ * 68 Sekunden gekostet hat.
+ */
+function auditGesamtenProduktkatalog() {
+  const limit = 100;
+  let offset = 0;
+  const anzahlProName = {};
+
+  while (true) {
+    const data = sevdeskFetch(`/OrderPos?limit=${limit}&offset=${offset}`);
+    const objects = data.objects || [];
+    if (objects.length === 0) break;
+    objects.forEach(p => {
+      const name = p.name || (p.part && p.part.name) || 'Unbekannt';
+      anzahlProName[name] = (anzahlProName[name] || 0) + 1;
+    });
+    if (objects.length < limit) break;
+    offset += limit;
+    if (offset >= 5000) {
+      Logger.log(`⚠️ Deckel bei ${offset} Positionen erreicht -- es kann mehr geben.`);
+      break;
+    }
+  }
+
+  const distinctNamen = Object.keys(anzahlProName);
+  Logger.log(`${distinctNamen.length} unterschiedliche Artikelnamen über ${offset} durchsuchte Positionen (max).`);
+
+  const unbekannt = [];
+  const unsicher = [];
+
+  distinctNamen.forEach(name => {
+    const classified = classifyPositionForDeepCore({ name, quantity: 1, priceNet: 0 });
+    if (classified.category === 'unknown') {
+      unbekannt.push(`${name}  (${anzahlProName[name]}x im Bestand)`);
+    } else if (classified.category !== 'sonstige_kosten') {
+      const resolved = resolveDropdownValue(classified);
+      if (resolved.unsicher) {
+        unsicher.push(`[${classified.category}] ${name}  (${anzahlProName[name]}x im Bestand)`);
+      }
+    }
+  });
+
+  Logger.log(`\n=== UNKATEGORISIERT -- kein Regex-Treffer, landet nur als Notiz (${unbekannt.length}) ===`);
+  Logger.log(unbekannt.length ? unbekannt.join('\n') : '(keine)');
+
+  Logger.log(`\n=== ERKANNT, ABER NICHT IM DROPDOWN -- wird UNSICHER (${unsicher.length}) ===`);
+  Logger.log(unsicher.length ? unsicher.join('\n') : '(keine)');
+}
+
 /** Prüft nur die Artikel-Erkennung, ohne API-Zugriff und ohne zu schreiben. */
 function testMappingOnly() {
   const testPositions = [
