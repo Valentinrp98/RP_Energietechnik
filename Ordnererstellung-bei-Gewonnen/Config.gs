@@ -23,9 +23,9 @@ const PLZ_FIELD_KEY = '5fef394025c936df4b58763b2b58c340fbb0d251';
 // Mit listDealFieldsHelper() (SetupHelpers.gs) auslesen. Zweck: Name/Telefon/Adresse fix am Deal
 // speichern, damit Mail-Vorlagen NICHT von der (evtl. abweichenden) Person am Mail-Empfänger
 // abhängen, sondern von den Daten des tatsächlich gewonnenen Deals.
-const KUNDE_NAME_FIELD_KEY = 'TODO_KUNDE_NAME_FIELD_KEY';
-const KUNDE_TELEFON_FIELD_KEY = 'TODO_KUNDE_TELEFON_FIELD_KEY';
-const KUNDE_ADRESSE_FIELD_KEY = 'TODO_KUNDE_ADRESSE_FIELD_KEY';
+const KUNDE_NAME_FIELD_KEY = 'd1dcf344277f58ffdb7c2076f24c15fe2daf9b5f';
+const KUNDE_TELEFON_FIELD_KEY = '8e11ac25aeffa4a367006f5633374488e342b746';
+const KUNDE_ADRESSE_FIELD_KEY = '2323c82b4ef433c914a1c241576e6b238a471a45';
 
 // Gleiche Options-IDs wie im Montagepartner-aus-Bundesland-Script (dieselben Pipedrive-Optionen)
 const MONTAGEPARTNER_OPTION_IDS = {
