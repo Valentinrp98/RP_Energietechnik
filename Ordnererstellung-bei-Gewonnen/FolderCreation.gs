@@ -41,6 +41,16 @@ function processGewonnenDealUnlocked(dealId) {
   const deal = fetchPipedrive(`deals/${dealId}`);
   const cf = deal.custom_fields || {};
 
+  // Kundendaten-Snapshot (siehe KundendatenSnapshot.gs): läuft für JEDEN frisch gewonnenen Deal
+  // mit verknüpfter Person, deshalb bewusst hier VOR den Ordner-spezifischen Skip-Bedingungen
+  // unten (Montagepartner fehlt, Kundenordner-Link schon gesetzt usw.) -- der Snapshot ist eine
+  // eigene Automatisierung, keine Voraussetzung für die Ordnererstellung.
+  if (deal.person_id) {
+    schreibeKundendatenSnapshot(dealId, deal);
+  } else {
+    logRow(dealId, deal.title, null, 'WARNUNG', null, 'Kundendaten-Snapshot übersprungen: Deal hat keine verknüpfte Person');
+  }
+
   if (cf[KUNDENORDNER_LINK_FIELD_KEY]) {
     logRow(dealId, deal.title, null, 'übersprungen', cf[KUNDENORDNER_LINK_FIELD_KEY], 'Ordner-Link bereits gesetzt');
     return 'übersprungen (Ordner-Link bereits gesetzt)';

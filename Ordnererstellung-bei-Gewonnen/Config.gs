@@ -18,6 +18,15 @@ const ADRESSE_FIELD_KEY = '432e4e165de7e9f474643c3d3a5552e2ec976f55';
 // (gleicher Fund wie im Bundesland-aus-PLZ-Script). Wird für den Ordnernamen mit angehängt.
 const PLZ_FIELD_KEY = '5fef394025c936df4b58763b2b58c340fbb0d251';
 
+// ===== Kundendaten-Snapshot (siehe KundendatenSnapshot.gs) =====
+// TODO: 3 neue Deal-Custom-Fields in Pipedrive anlegen (Typ Text), dann field_code hier eintragen.
+// Mit listDealFieldsHelper() (SetupHelpers.gs) auslesen. Zweck: Name/Telefon/Adresse fix am Deal
+// speichern, damit Mail-Vorlagen NICHT von der (evtl. abweichenden) Person am Mail-Empfänger
+// abhängen, sondern von den Daten des tatsächlich gewonnenen Deals.
+const KUNDE_NAME_FIELD_KEY = 'TODO_KUNDE_NAME_FIELD_KEY';
+const KUNDE_TELEFON_FIELD_KEY = 'TODO_KUNDE_TELEFON_FIELD_KEY';
+const KUNDE_ADRESSE_FIELD_KEY = 'TODO_KUNDE_ADRESSE_FIELD_KEY';
+
 // Gleiche Options-IDs wie im Montagepartner-aus-Bundesland-Script (dieselben Pipedrive-Optionen)
 const MONTAGEPARTNER_OPTION_IDS = {
   'ALE-Engineering (NÖ, Wien, BGL)': 157,

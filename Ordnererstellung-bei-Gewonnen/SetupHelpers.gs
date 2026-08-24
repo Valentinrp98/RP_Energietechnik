@@ -77,6 +77,47 @@ function debugAdressFeld() {
 }
 
 /**
+ * Debug: zeigt die rohe custom_fields-Struktur eines Deals (zum Nachtragen der KUNDE_*_FIELD_KEY
+ * in Config.gs, nachdem die 3 neuen Deal-Custom-Fields in Pipedrive angelegt wurden).
+ */
+function listDealCustomFieldsHelper() {
+  const dealId = 7253; // hier eine bekannte Deal-ID eintragen
+  const deal = fetchPipedrive(`deals/${dealId}`);
+  Logger.log(JSON.stringify(deal.custom_fields, null, 2));
+}
+
+/**
+ * Debug: zeigt die rohe phones-Struktur einer Person (Kundendaten-Snapshot verlässt sich auf
+ * {value, primary} -- vor dem ersten scharfen Lauf einmal live gegenchecken, nicht annehmen.
+ */
+function debugPersonPhones() {
+  const dealId = 7253; // hier eine bekannte Deal-ID eintragen
+  const deal = fetchPipedrive(`deals/${dealId}`);
+  if (!deal.person_id) {
+    Logger.log(`Deal ${dealId} hat keine verknüpfte Person.`);
+    return;
+  }
+  const person = fetchPipedrive(`persons/${deal.person_id}`);
+  Logger.log(JSON.stringify(person.phones, null, 2));
+}
+
+/** Für Einzeltests: nur den Kundendaten-Snapshot für einen bekannten Deal auslösen. */
+function testKundendatenSnapshot() {
+  starteLauf('testKundendatenSnapshot');
+  const dealId = 7253; // hier eine bekannte Deal-ID eintragen
+  try {
+    const deal = fetchPipedrive(`deals/${dealId}`);
+    if (!deal.person_id) {
+      Logger.log(`Deal ${dealId} hat keine verknüpfte Person.`);
+      return;
+    }
+    schreibeKundendatenSnapshot(dealId, deal);
+  } finally {
+    flushLog();
+  }
+}
+
+/**
  * EINMALIG: Trägt Kundenordner-Link für Deals nach, die schon vor dieser Automatisierung
  * manuell einen befüllten Ordner bekommen haben (Namensabgleich-Uebernahme, Stand 2026-08-20).
  * Verhindert, dass processGewonnenDeal() dort einen zweiten, doppelten Ordner anlegt --
