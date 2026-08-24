@@ -100,8 +100,10 @@ function setzeBekannteKundenordnerLinks() {
 /** Für Einzeltests: einen bekannten Deal durchlaufen lassen (Deal-ID unten anpassen). */
 function testEinzelDeal() {
   starteLauf('testEinzelDeal');
-  // Ronald Pargfrieder (4971) und Martin Gangl -- Montagepartner wurde manuell eingetragen
-  const dealIds = [6692, 6207];
+  // Tobias Knittelfelder (7093): beim "Gewonnen"-Webhook war Montagepartner noch nicht gesetzt
+  // (übersprungen), wurde erst später von Montagepartner-aus-Bundesland nachgetragen -- der
+  // Webhook feuert aber nur EINMAL beim status-Wechsel, also hier manuell nachgeholt.
+  const dealIds = [7093];
   try {
     dealIds.forEach(dealId => {
       const result = processGewonnenDeal(dealId);
