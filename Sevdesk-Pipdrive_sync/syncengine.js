@@ -852,14 +852,22 @@ function pruefeKonfiguration() {
       Logger.log(`WARNUNG: "${name}" ist field_type "${feld.field_type}", erwartet enum -- addEnumFieldIfSet() schreibt eine einzelne Options-ID.`);
       fehler++;
     }
-    const live = {};
-    (feld.options || []).forEach(o => { live[o.label] = o.id; });
+    // Case-insensitiver Abgleich (2026-08-21, nach echtem Fehlalarm SUNOVA/LUXOR/TRINASOLAR):
+    // addEnumFieldIfSet() matched selbst schon case-insensitive (Object.keys(options).find(k =>
+    // k.toLowerCase() === textValue.toLowerCase())), und Pipedrive speichert Enums über die
+    // numerische ID, nicht über das Label -- eine abweichende Schreibweise ("SUNOVA" im Script vs.
+    // "Sunova" in Pipedrive) ist für den echten Schreibvorgang folgenlos. Dieser Check muss also
+    // dasselbe Kriterium prüfen wie der Schreibpfad, sonst meldet er Scheinfehler statt echter.
+    const liveByLower = {};
+    (feld.options || []).forEach(o => { liveByLower[o.label.toLowerCase()] = o; });
     Object.entries(sollMap).forEach(([label, id]) => {
-      if (live[label] === undefined) { Logger.log(`FEHLER [${name}]: Option "${label}" existiert in Pipedrive nicht.`); fehler++; }
-      else if (live[label] !== id) { Logger.log(`FEHLER [${name}]: "${label}" -- Script sagt ${id}, Pipedrive sagt ${live[label]}.`); fehler++; }
+      const treffer = liveByLower[label.toLowerCase()];
+      if (!treffer) { Logger.log(`FEHLER [${name}]: Option "${label}" existiert in Pipedrive nicht (auch nicht in anderer Schreibweise).`); fehler++; }
+      else if (treffer.id !== id) { Logger.log(`FEHLER [${name}]: "${label}" -- Script sagt ${id}, Pipedrive sagt ${treffer.id} (Label dort: "${treffer.label}").`); fehler++; }
     });
-    Object.keys(live).forEach(label => {
-      if (sollMap[label] === undefined) Logger.log(`Hinweis [${name}]: Pipedrive kennt zusätzlich "${label}" (id ${live[label]}), im Script nicht hinterlegt.`);
+    const bekannteLower = new Set(Object.keys(sollMap).map(l => l.toLowerCase()));
+    Object.values(liveByLower).forEach(o => {
+      if (!bekannteLower.has(o.label.toLowerCase())) Logger.log(`Hinweis [${name}]: Pipedrive kennt zusätzlich "${o.label}" (id ${o.id}), im Script nicht hinterlegt.`);
     });
   });
 
