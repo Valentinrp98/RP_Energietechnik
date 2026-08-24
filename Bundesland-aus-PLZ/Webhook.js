@@ -12,8 +12,11 @@
 // werden (Stage-Wechsel, Notiz), was seinerseits ein change.deal-Event ausloest.
 
 // ===== KONFIGURATION =====
-const WEBHOOK_SUBSCRIPTION_URL = 'TODO_WEB_APP_URL_MIT_SECRET';
-const WEBHOOK_SHARED_SECRET = 'TODO_SHARED_SECRET';
+// WICHTIG (24.08.2026): subscription_url zeigt jetzt auf den Cloudflare-Worker-Relay statt direkt
+// auf Apps Script -- siehe ausführliche Begründung in Montagepartner-aus-Bundesland/Webhook.js und
+// [[project_cloudflare_webhook_relay]] in der Claude-Memory (302-Redirect-Problem).
+const WEBHOOK_SUBSCRIPTION_URL = 'https://wispy-band-24d4.valentin-be0.workers.dev/?target=https%3A%2F%2Fscript.google.com%2Fmacros%2Fs%2FAKfycbz6qogKvDL1wpO5bkITp8W9h2f6wHoha_QK6JtsJD7Cil9rF-dpeJqa8WQR391HmIA60Q%2Fexec%3Fsecret%3D285cba4dc5c4d3d3d15bb45c5973fa57';
+const WEBHOOK_SHARED_SECRET = '285cba4dc5c4d3d3d15bb45c5973fa57';
 const WEBHOOK_ID_ZUM_LOESCHEN = 0;
 
 // ===== EMPFANG =====
@@ -193,7 +196,7 @@ function checkWebhookRegistration() {
     return;
   }
   eigene.forEach(w => {
-    Logger.log(`Webhook ${w.id}: version=${w.version}, event_action=${w.event_action}, event_object=${w.event_object}, aktiv=${w.active_flag}`);
+    Logger.log(`Webhook ${w.id}: version=${w.version}, event_action=${w.event_action}, event_object=${w.event_object}, aktiv=${w.is_active}`); // Feldname verifiziert 2026-08-21 gegen echte Antwort, nicht active_flag
   });
   ['deal', 'person'].forEach(obj => {
     if (!eigene.some(w => w.event_object === obj)) {

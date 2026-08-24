@@ -11,8 +11,16 @@
 // Schreibvorgang bricht also beim naechsten Durchlauf sofort ab.
 
 // ===== KONFIGURATION =====
-const WEBHOOK_SUBSCRIPTION_URL = 'TODO_WEB_APP_URL_MIT_SECRET';
-const WEBHOOK_SHARED_SECRET = 'TODO_SHARED_SECRET';
+// WICHTIG (24.08.2026): subscription_url zeigt jetzt auf den Cloudflare-Worker-Relay, NICHT mehr
+// direkt auf die Apps-Script-URL. Grund: Apps-Script-Web-Apps antworten auf jeden Aufruf zuerst mit
+// HTTP 302 (Weiterleitung an script.googleusercontent.com), was Pipedrive (SSRF-Best-Practice: keine
+// Redirects folgen) als Fehlschlag wertet -- der Webhook wird nach 3 Tagen Dauerausfall automatisch
+// geloescht (ist Projektdoku-Generator bereits passiert). Der Relay folgt der Weiterleitung selbst
+// (Hop 1 mit Original-Methode+Body, Hop 2+ per GET -- Apps Script fuehrt doPost() bereits bei Hop 1
+// aus, Hop 2 liefert nur die Antwort aus und akzeptiert nur GET) und gibt Pipedrive ein sauberes 200.
+// Siehe [[project_cloudflare_webhook_relay]] in der Claude-Memory fuer die volle Diagnose.
+const WEBHOOK_SUBSCRIPTION_URL = 'https://wispy-band-24d4.valentin-be0.workers.dev/?target=https%3A%2F%2Fscript.google.com%2Fmacros%2Fs%2FAKfycbwdb-CW4Rnj97F0_dWGPu5oBWCPX9WX5lsLxNY3pKM4Ay1uZL5qghixDaodvNy9oe1MqA%2Fexec%3Fsecret%3D0483db87c8fb8841e1c031fec5c3664f';
+const WEBHOOK_SHARED_SECRET = '0483db87c8fb8841e1c031fec5c3664f';
 const WEBHOOK_ID_ZUM_LOESCHEN = 0;
 
 // ===== EMPFANG =====
@@ -151,7 +159,7 @@ function checkWebhookRegistration() {
     return;
   }
   eigene.forEach(w => {
-    Logger.log(`Webhook ${w.id}: version=${w.version}, event_action=${w.event_action}, event_object=${w.event_object}, aktiv=${w.active_flag}`);
+    Logger.log(`Webhook ${w.id}: version=${w.version}, event_action=${w.event_action}, event_object=${w.event_object}, aktiv=${w.is_active}`); // Feldname verifiziert 2026-08-21 gegen echte Antwort, nicht active_flag
   });
   if (eigene.length > 1) {
     Logger.log(`ACHTUNG: ${eigene.length} Webhooks mit derselben subscription_url -- Duplikate. Ueberfluessige via loescheWebhookMitId() entfernen.`);

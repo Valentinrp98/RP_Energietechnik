@@ -8,13 +8,17 @@
 // Web-App-URL erst nach dem ersten Deploy bekannt (Deploy > New deployment > Web app,
 // "Execute as: Me", "Who has access: Anyone" -- MUSS ohne Google-Login erreichbar sein, sonst
 // kommt Pipedrive nie durch). Danach hier eintragen, MIT dem ?secret=...-Anhang.
-const WEBHOOK_SUBSCRIPTION_URL = 'TODO_WEB_APP_URL_MIT_SECRET';
+// WICHTIG (24.08.2026): zeigt jetzt auf den Cloudflare-Worker-Relay statt direkt auf Apps Script --
+// dieser Webhook wurde deshalb bereits von Pipedrive nach 3 Tagen Dauerausfall automatisch deaktiviert
+// (302-Redirect-Problem). Siehe Montagepartner-aus-Bundesland/Webhook.js und
+// [[project_cloudflare_webhook_relay]] in der Claude-Memory für die volle Diagnose.
+const WEBHOOK_SUBSCRIPTION_URL = 'https://wispy-band-24d4.valentin-be0.workers.dev/?target=https%3A%2F%2Fscript.google.com%2Fmacros%2Fs%2FAKfycbz0ugT-r9AkiKeiKqM1gpzQi1IZAoRje4uXjau92OXdYrfIgKQS6hn4VHcCVEvsEActFA%2Fexec%3Fsecret%3D058e7406339685643355feca7ba1cd79';
 
 // Zufälligen String eintragen (z.B. per `Utilities.getUuid()` einmal in der Konsole erzeugen) --
 // Pipedrive kann keine Custom-Header mitschicken, deshalb Auth über einen Query-Param an der URL.
 // Ohne das könnte jeder im Internet, der die Web-App-URL kennt/errät, processDeal() für beliebige
 // Deal-IDs auslösen.
-const WEBHOOK_SHARED_SECRET = 'TODO_SHARED_SECRET';
+const WEBHOOK_SHARED_SECRET = '058e7406339685643355feca7ba1cd79';
 
 // Für loescheWebhookMitId() -- Editor-Funktionen mit Parametern kann man nicht per ▷-Button
 // starten, deshalb Konstante statt Funktionsargument (gleiches Muster wie testEinzelDeal()).
@@ -179,9 +183,9 @@ function SETUP_EINMALIG_registerWebhook() {
  * das nicht"-Verdacht hier zuerst nachsehen, statt zu raten -- genau diese Prüfung hätte den
  * v1/v2-Bug bei Ordnererstellung-bei-Gewonnen sofort sichtbar gemacht.
  *
- * Feldnamen der Antwort (id/version/event_action/event_object/active_flag) sind nicht gegen eine
- * echte Antwort verifiziert -- beim ersten Lauf wird die komplette Rohantwort mitgeloggt, damit sich
- * das sofort korrigieren lässt, falls Pipedrive andere Feldnamen liefert.
+ * Feldnamen 2026-08-21 gegen eine echte Antwort verifiziert: Pipedrive liefert "is_active",
+ * nicht das zunächst angenommene "active_flag" -- deshalb hier weiterhin die Rohantwort mitloggen,
+ * falls sich das nochmal ändert.
  */
 function checkWebhookRegistration() {
   const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/v1/webhooks?api_token=${getApiToken()}`;
@@ -205,7 +209,7 @@ function checkWebhookRegistration() {
     const objectOk = w.event_object === 'deal';
     Logger.log(`Webhook ${w.id}: version=${w.version} (${versionOk ? 'ok' : 'FALSCH -- sollte 2.0 sein'}), ` +
                `event_action=${w.event_action} (${actionOk ? 'ok' : 'FALSCH'}), ` +
-               `event_object=${w.event_object} (${objectOk ? 'ok' : 'FALSCH'}), aktiv=${w.active_flag}`);
+               `event_object=${w.event_object} (${objectOk ? 'ok' : 'FALSCH'}), aktiv=${w.is_active}`);
   });
   if (eigene.length > 1) {
     Logger.log(`ACHTUNG: ${eigene.length} Webhooks mit derselben subscription_url -- Duplikate, jedes Event würde mehrfach ankommen. Überflüssige über loescheWebhookMitId() entfernen.`);
