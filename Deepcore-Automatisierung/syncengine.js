@@ -573,33 +573,88 @@ const TEST_ORDER_ID = '29871057'; // Order 2026-609-A, Milazim Dervishaj -- ⚠�
  * 68 Sekunden gekostet hat.
  */
 function auditGesamtenProduktkatalog() {
+  const anzahlProName = {};
+  let offset = 0;
+
+  paginiereOrderPos((p) => {
+    const name = p.name || (p.part && p.part.name) || 'Unbekannt';
+    anzahlProName[name] = (anzahlProName[name] || 0) + 1;
+  }, (o) => { offset = o; });
+
+  Logger.log(`${Object.keys(anzahlProName).length} unterschiedliche Artikelnamen über ${offset} durchsuchte Positionen (max), GESAMTER Bestand (alle Status/Zeiten).`);
+  berichteKatalogLuecken(anzahlProName);
+}
+
+/**
+ * Wie auditGesamtenProduktkatalog(), aber nur Positionen aus Aufträgen der letzten
+ * MONATE_ZURUECK Monate -- der Gesamt-Audit zeigt auch jahrealte, längst nicht mehr
+ * verkaufte Artikel (Canadian, LG, Ochsner, Trina, ...) und würde die Dropdowns mit
+ * totem Katalog zumüllen. Das hier ist die praktisch relevante Teilmenge.
+ *
+ * Erst /Order paginiert nach Datum filtern (IDs merken), dann /OrderPos paginiert
+ * abfragen und nur mitzählen, was zu einer der gemerkten IDs gehört -- vermeidet die
+ * N+1-Falle (kein Einzel-Abruf pro Auftrag).
+ */
+function auditAktuellenProduktkatalog() {
+  const MONATE_ZURUECK = 6;
+  const cutoffMs = new Date(new Date().setMonth(new Date().getMonth() - MONATE_ZURUECK)).getTime();
+
+  const recentIds = {};
+  let gesamtAuftraege = 0;
+  let offsetOrders = 0;
+  while (true) {
+    const data = sevdeskFetch(`/Order?limit=100&offset=${offsetOrders}`);
+    const objects = data.objects || [];
+    if (objects.length === 0) break;
+    gesamtAuftraege += objects.length;
+    objects.forEach(o => {
+      const d = new Date(o.orderDate || o.create || 0).getTime();
+      if (isFinite(d) && d >= cutoffMs) recentIds[String(o.id)] = true;
+    });
+    if (objects.length < 100) break;
+    offsetOrders += 100;
+    if (offsetOrders >= 5000) { Logger.log(`⚠️ Auftrags-Deckel bei ${offsetOrders} erreicht.`); break; }
+  }
+  Logger.log(`${Object.keys(recentIds).length} von ${gesamtAuftraege} Aufträgen liegen in den letzten ${MONATE_ZURUECK} Monaten.`);
+
+  const anzahlProName = {};
+  let offsetPos = 0;
+  paginiereOrderPos((p) => {
+    const orderId = p.order && p.order.id;
+    if (!orderId || !recentIds[String(orderId)]) return;
+    const name = p.name || (p.part && p.part.name) || 'Unbekannt';
+    anzahlProName[name] = (anzahlProName[name] || 0) + 1;
+  }, (o) => { offsetPos = o; });
+
+  Logger.log(`${Object.keys(anzahlProName).length} unterschiedliche Artikelnamen über ${offsetPos} durchsuchte Positionen (max), NUR letzte ${MONATE_ZURUECK} Monate.`);
+  berichteKatalogLuecken(anzahlProName);
+}
+
+/** Läuft /OrderPos komplett paginiert durch und ruft fuerJedePosition(p) für jede Position auf. */
+function paginiereOrderPos(fuerJedePosition, meldeOffset) {
   const limit = 100;
   let offset = 0;
-  const anzahlProName = {};
-
   while (true) {
     const data = sevdeskFetch(`/OrderPos?limit=${limit}&offset=${offset}`);
     const objects = data.objects || [];
     if (objects.length === 0) break;
-    objects.forEach(p => {
-      const name = p.name || (p.part && p.part.name) || 'Unbekannt';
-      anzahlProName[name] = (anzahlProName[name] || 0) + 1;
-    });
+    objects.forEach(fuerJedePosition);
     if (objects.length < limit) break;
     offset += limit;
     if (offset >= 5000) {
-      Logger.log(`⚠️ Deckel bei ${offset} Positionen erreicht -- es kann mehr geben.`);
+      Logger.log(`⚠️ Positions-Deckel bei ${offset} erreicht -- es kann mehr geben.`);
       break;
     }
   }
+  if (meldeOffset) meldeOffset(offset);
+}
 
-  const distinctNamen = Object.keys(anzahlProName);
-  Logger.log(`${distinctNamen.length} unterschiedliche Artikelnamen über ${offset} durchsuchte Positionen (max).`);
-
+/** Klassifiziert jeden distinkten Artikelnamen und loggt die zwei Lücken-Kategorien. */
+function berichteKatalogLuecken(anzahlProName) {
   const unbekannt = [];
   const unsicher = [];
 
-  distinctNamen.forEach(name => {
+  Object.keys(anzahlProName).forEach(name => {
     const classified = classifyPositionForDeepCore({ name, quantity: 1, priceNet: 0 });
     if (classified.category === 'unknown') {
       unbekannt.push(`${name}  (${anzahlProName[name]}x im Bestand)`);
