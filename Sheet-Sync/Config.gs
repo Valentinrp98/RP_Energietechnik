@@ -427,7 +427,13 @@ function findColumnIndexByHeader(sheet, headerText) {
 
 /** Findet die Zeilennummer (1-basiert) für eine gegebene Deal-ID. null wenn nicht gefunden. */
 function findRowByDealId(sheet, dealIdColIndex, dealId) {
-  const values = sheet.getRange(2, dealIdColIndex, Math.max(sheet.getLastRow() - 1, 0), 1).getValues();
+  // Bei einem komplett leeren Sheet (nur Kopfzeile, z.B. ein frisch angelegtes Partner-Sheet ohne
+  // Datenzeilen) waere die Range 0 Zeilen hoch -- getRange() akzeptiert das nicht ("The number of
+  // rows in the range must be at least 1"). Live entdeckt 25.08. bei den 5 neuen, noch leeren
+  // Montageplanung-RP-Sheets.
+  const anzahlDatenzeilen = sheet.getLastRow() - 1;
+  if (anzahlDatenzeilen <= 0) return null;
+  const values = sheet.getRange(2, dealIdColIndex, anzahlDatenzeilen, 1).getValues();
   const rowOffset = values.findIndex(r => String(r[0]) === String(dealId));
   return rowOffset === -1 ? null : rowOffset + 2;
 }
