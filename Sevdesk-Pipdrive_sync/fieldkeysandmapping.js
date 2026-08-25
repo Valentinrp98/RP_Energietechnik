@@ -16,7 +16,11 @@ const FIELD_KEYS = {
   Verkaufte_Artikel_Summary:   'a38455087829e67f22cb5217a44c3cf31f39bcbc',
   System_Marke:                '6e42bb6bd1d9314fc4be52fe58789924b9ba51da',
   Notstrom_Typ:                '936f581faded886d47e9a3d3c004e0dc37e51bab',
-  Wallbox_Typ:                 '9c9bf4b5bf02b8ba924bbad2b086bad830b2af12'
+  Wallbox_Typ:                 '9c9bf4b5bf02b8ba924bbad2b086bad830b2af12',
+
+  // --- Zahlungseingang-Feature (siehe ZahlungseingangSync.gs) ---
+  // Per checkExistingFields() ermittelt (26.08.2026), Typ enum.
+  zahlungseingang_erhalten:    'ddbfed2a1cdc25c2be460b9a825e056cca2d0284'
 };
 
 const ENUM_OPTION_IDS = {
@@ -24,7 +28,11 @@ const ENUM_OPTION_IDS = {
   Heizstab:        { 'Ja': 123, 'Nein': 124 },
   System_Marke:    { 'Sigenergy': 125, 'Fronius': 126, 'Huawei': 127, 'Growatt': 128, 'SolaX': 129, 'SofarSolar': 130, 'BYD': 131 },
   Notstrom_Typ:    { 'Automatisch': 132, 'Händisch': 133, 'Nein': 134 },
-  Wallbox_Typ:     { '11kW': 135, '22kW': 136, 'Nein': 137 }
+  Wallbox_Typ:     { '11kW': 135, '22kW': 136, 'Nein': 137 },
+  // Quelle: project_fortschritt_script-Fund vom 17.08. (live dealFields-Dump) -- NICHT selbst
+  // frisch verifiziert für dieses Feature. pruefeZahlungseingangKonfiguration() gleicht das
+  // gegen die echte API ab, bevor irgendwas live geschrieben wird.
+  Zahlungseingang_erhalten: { 'Ja': 207 }
 };
 
 // ============================================================================
