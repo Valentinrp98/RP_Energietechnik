@@ -368,10 +368,10 @@ function testEinzelDeal() {
   // Doc wurde aber schon um 11:12 gebaut, also VOR dem sevdesk-Sync (14:48-14:50), der die echten
   // Modul-Daten erst gebracht hat -- das Doc zeigt also noch den alten Stand. forceRegenerate:true
   // wirft es weg und baut mit den jetzigen (korrekten) Anlagendetails neu.
-  // Michael Siedler (7455): Feld stand schon vorher auf "rdy for creation" -- kein frisches
-  // change-Event, deshalb hier manuell angestoßen (Kundenordner-Link existiert jetzt, 25.08.).
+  // Tobias Knittelfelder (7093): Doku war schon erstellt, aber mit den falschen Hauptdach-Werten
+  // (Eindeckung/Neigung) statt der echten Zubau-Werte -- nach der Korrektur (25.08.) neu bauen.
   const testDeals = [
-    7455
+    7093
   ].map(dealId => ({ dealId, forceRegenerate: true }));
   try {
     testDeals.forEach(({ dealId, forceRegenerate }) => {
