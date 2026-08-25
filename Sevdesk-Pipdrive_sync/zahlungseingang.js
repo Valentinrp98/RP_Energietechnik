@@ -67,20 +67,52 @@ function fetchBezahlteAnzahlungsrechnungen_() {
 }
 
 /**
- * Extrahiert die Angebotsnummer (z.B. "2026-154-A") aus dem Rechnungs-Header.
- * UNVERIFIZIERT, welches Feld bei sevdesk-Invoices die Angebotsnummer trägt --
- * probiert header, dann headText. Gibt null zurück, wenn nichts passt (dann
- * NICHT raten, sondern im Sync-Log als WARNUNG auftauchen lassen).
+ * Fallback-Extraktion der Angebotsnummer aus dem Header-Text, NUR falls
+ * ermittleAngebotsnummerFuerRechnung_() nicht über invoice.origin fündig wird.
+ *
+ * WICHTIG (live verifiziert 26.08.2026, Rechnung 73888855): Der Header enthält
+ * ZWEI Nummern -- "Anzahlungssrechnung Nr. 2024-1001-A aus Angebot 2024-1266-A".
+ * 2024-1001-A ist die Rechnung SELBST (== invoice.invoiceNumber), 2024-1266-A
+ * ist die gesuchte Angebotsnummer. Ein naiver "erste Zahl im Text"-Match hätte
+ * die FALSCHE (eigene) Nummer getroffen. Deshalb gezielt nach "Angebot X"
+ * suchen, kein generischer Zahlenmuster-Fallback -- lieber null (→ WARNUNG im
+ * Log) als eine geratene, potenziell falsche Nummer.
  */
-function extractAngebotsnummerAusRechnung_(invoice) {
+function extractAngebotsnummerAusHeader_(invoice) {
   const kandidaten = [invoice.header, invoice.headText];
-  const pattern = /(20\d{2}-\d{2,4}-[A-Z])/;
+  const pattern = /Angebot\s+(20\d{2}-\d{2,4}-[A-Z])/i;
 
   for (const text of kandidaten) {
     if (!text) continue;
     const match = String(text).match(pattern);
     if (match) return match[1];
   }
+  return null;
+}
+
+/**
+ * Ermittelt die Angebotsnummer zu einer Anzahlungsrechnung.
+ * Primär über invoice.origin (direkte sevdesk-Objektreferenz auf den Auftrag,
+ * aus dem die Rechnung erzeugt wurde) -- liefert dasselbe order.orderNumber-Feld,
+ * das der bestehende Order-Sync schon nutzt, deutlich zuverlässiger als
+ * Textparsing. Fallback: Header-Text (siehe extractAngebotsnummerAusHeader_).
+ * @returns {{angebotsnummer: string, quelle: string}|null}
+ */
+function ermittleAngebotsnummerFuerRechnung_(invoice) {
+  if (invoice.origin && invoice.origin.objectName === 'Order' && invoice.origin.id) {
+    try {
+      const orderData = sevdeskFetch(`/Order/${invoice.origin.id}`);
+      if (orderData.objects && orderData.objects.length > 0 && orderData.objects[0].orderNumber) {
+        return { angebotsnummer: orderData.objects[0].orderNumber, quelle: 'origin-Order' };
+      }
+    } catch (e) {
+      // fällt durch zum Header-Fallback, kein harter Abbruch wegen eines einzelnen fehlgeschlagenen Order-Abrufs
+    }
+  }
+
+  const ausHeader = extractAngebotsnummerAusHeader_(invoice);
+  if (ausHeader) return { angebotsnummer: ausHeader, quelle: 'Header-Text' };
+
   return null;
 }
 
@@ -171,13 +203,14 @@ function resetZahlungseingangState() {
 
 function syncZahlungseingangFuerRechnung_(invoice) {
   const label = invoice.invoiceNumber || invoice.id;
-  const angebotsnummer = extractAngebotsnummerAusRechnung_(invoice);
+  const gefunden = ermittleAngebotsnummerFuerRechnung_(invoice);
 
-  if (!angebotsnummer) {
-    logSyncResult('WARNUNG', null, `AR ${label}`, 'Keine Angebotsnummer im Header gefunden',
-      `header="${invoice.header || ''}" headText="${invoice.headText || ''}"`);
+  if (!gefunden) {
+    logSyncResult('WARNUNG', null, `AR ${label}`, 'Keine Angebotsnummer ermittelbar (weder origin-Order noch Header)',
+      `origin=${JSON.stringify(invoice.origin || null)} header="${invoice.header || ''}"`);
     return false;
   }
+  const angebotsnummer = gefunden.angebotsnummer;
 
   const treffer = searchDealsByField(FIELD_KEYS.sevdesk_angebotsnummer, angebotsnummer);
   if (treffer.length === 0) {
@@ -200,14 +233,14 @@ function syncZahlungseingangFuerRechnung_(invoice) {
 
   if (ZAHLUNGSEINGANG_DRY_RUN) {
     Logger.log(`[dry] AR ${label} → Deal ${dealId} würde Zahlungseingang setzen + Aktivität anlegen`);
-    logSyncResult('DRY', dealId, `AR ${label}`, '-', `Angebotsnummer "${angebotsnummer}" -- würde geschrieben`);
+    logSyncResult('DRY', dealId, `AR ${label}`, '-', `[${gefunden.quelle}] Angebotsnummer "${angebotsnummer}" -- würde geschrieben`);
     return true;
   }
 
   schreibeZahlungseingangAufDeal_(dealId);
   legeZahlungseingangAktivitaetAn_(dealId);
 
-  logSyncResult('SUCCESS', dealId, `AR ${label}`, '-', `Angebotsnummer "${angebotsnummer}" -- Zahlungseingang gesetzt + Aktivität angelegt`);
+  logSyncResult('SUCCESS', dealId, `AR ${label}`, '-', `[${gefunden.quelle}] Angebotsnummer "${angebotsnummer}" -- Zahlungseingang gesetzt + Aktivität angelegt`);
   Logger.log(`✓ AR ${label} → Deal ${dealId}: Zahlungseingang gesetzt`);
   return true;
 }
@@ -302,10 +335,11 @@ function testFetchInvoiceOnly() {
   const invoice = data.objects[0];
   Logger.log('=== Komplettes Invoice-Objekt ===');
   Logger.log(JSON.stringify(invoice, null, 2));
-  Logger.log('\n=== Angebotsnummer-Extraktion ===');
+  Logger.log('\n=== Angebotsnummer-Ermittlung ===');
+  Logger.log('origin: ' + JSON.stringify(invoice.origin));
   Logger.log('header: ' + JSON.stringify(invoice.header));
   Logger.log('headText: ' + JSON.stringify(invoice.headText));
-  Logger.log('Extrahiert: ' + extractAngebotsnummerAusRechnung_(invoice));
+  Logger.log('Ergebnis: ' + JSON.stringify(ermittleAngebotsnummerFuerRechnung_(invoice)));
 }
 
 /** Trockenlauf über den kompletten Bestand, ohne zu schreiben (ZAHLUNGSEINGANG_DRY_RUN wird dabei ignoriert -- immer read-only). */
@@ -313,7 +347,7 @@ function testMappingAllerBezahltenAR() {
   const alle = fetchBezahlteAnzahlungsrechnungen_();
   Logger.log(`${alle.length} bezahlte Anzahlungsrechnungen gefunden.`);
   alle.forEach(function (r) {
-    const nr = extractAngebotsnummerAusRechnung_(r);
-    Logger.log(`  ${r.invoiceNumber || r.id}: Angebotsnummer=${nr || '⚠️ NICHT GEFUNDEN'}`);
+    const gefunden = ermittleAngebotsnummerFuerRechnung_(r);
+    Logger.log(`  ${r.invoiceNumber || r.id}: ${gefunden ? `${gefunden.angebotsnummer} [${gefunden.quelle}]` : '⚠️ NICHT GEFUNDEN'}`);
   });
 }
