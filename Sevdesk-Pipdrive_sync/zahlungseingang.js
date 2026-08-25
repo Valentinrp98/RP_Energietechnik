@@ -97,8 +97,8 @@ function istDealGewonnen_(dealId) {
 
 /** Setzt die Checkbox "Zahlungseingang erhalten" (Ein-Options-Enum) auf "Ja". */
 function schreibeZahlungseingangAufDeal_(dealId) {
-  const optionId = (ENUM_OPTION_IDS.Zahlungseingang_erhalten || {}).Ja;
-  if (!optionId) throw new Error('Keine Options-ID für Zahlungseingang_erhalten.Ja -- ENUM_OPTION_IDS prüfen.');
+  const optionId = (ENUM_OPTION_IDS.Zahlungseingang_erhalten || {}).Erhalten;
+  if (!optionId) throw new Error('Keine Options-ID für Zahlungseingang_erhalten.Erhalten -- ENUM_OPTION_IDS prüfen.');
 
   const customFields = {};
   customFields[FIELD_KEYS.zahlungseingang_erhalten] = optionId;
@@ -265,12 +265,14 @@ function pruefeZahlungseingangKonfiguration() {
     if (!feld) {
       probleme.push(`field_code "${FIELD_KEYS.zahlungseingang_erhalten}" existiert nicht (mehr) in Pipedrive.`);
     } else {
-      const jaOption = (feld.options || []).find(function (o) { return o.label === 'Ja'; });
-      const erwarteteId = (ENUM_OPTION_IDS.Zahlungseingang_erhalten || {}).Ja;
-      if (!jaOption) {
-        probleme.push('Feld hat keine Option "Ja" -- ist es wirklich ein Checkbox-Enum-Feld?');
-      } else if (jaOption.id !== erwarteteId) {
-        probleme.push(`Options-ID für "Ja" ist live ${jaOption.id}, hartcodiert aber ${erwarteteId} -- ENUM_OPTION_IDS.Zahlungseingang_erhalten korrigieren.`);
+      const erwartetesLabel = Object.keys(ENUM_OPTION_IDS.Zahlungseingang_erhalten || {})[0] || 'Erhalten';
+      const treffer = (feld.options || []).find(function (o) { return o.label === erwartetesLabel; });
+      const erwarteteId = (ENUM_OPTION_IDS.Zahlungseingang_erhalten || {})[erwartetesLabel];
+      if (!treffer) {
+        const echteOptionen = (feld.options || []).map(function (o) { return `'${o.label}': ${o.id}`; }).join(', ');
+        probleme.push(`Feld hat keine Option "${erwartetesLabel}" -- echte Optionen: [${echteOptionen || 'keine'}]. ENUM_OPTION_IDS.Zahlungseingang_erhalten mit dem echten Label korrigieren.`);
+      } else if (treffer.id !== erwarteteId) {
+        probleme.push(`Options-ID für "${erwartetesLabel}" ist live ${treffer.id}, hartcodiert aber ${erwarteteId} -- ENUM_OPTION_IDS.Zahlungseingang_erhalten korrigieren.`);
       }
     }
   }

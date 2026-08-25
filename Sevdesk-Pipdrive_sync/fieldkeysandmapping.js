@@ -29,10 +29,9 @@ const ENUM_OPTION_IDS = {
   System_Marke:    { 'Sigenergy': 125, 'Fronius': 126, 'Huawei': 127, 'Growatt': 128, 'SolaX': 129, 'SofarSolar': 130, 'BYD': 131 },
   Notstrom_Typ:    { 'Automatisch': 132, 'Händisch': 133, 'Nein': 134 },
   Wallbox_Typ:     { '11kW': 135, '22kW': 136, 'Nein': 137 },
-  // Quelle: project_fortschritt_script-Fund vom 17.08. (live dealFields-Dump) -- NICHT selbst
-  // frisch verifiziert für dieses Feature. pruefeZahlungseingangKonfiguration() gleicht das
-  // gegen die echte API ab, bevor irgendwas live geschrieben wird.
-  Zahlungseingang_erhalten: { 'Ja': 207 }
+  // Live gegen Pipedrive verifiziert (26.08.2026, pruefeZahlungseingangKonfiguration()):
+  // Label heißt "Erhalten", nicht "Ja" -- gleiches Namensmuster wie bei "AR versendet".
+  Zahlungseingang_erhalten: { 'Erhalten': 207 }
 };
 
 // ============================================================================
