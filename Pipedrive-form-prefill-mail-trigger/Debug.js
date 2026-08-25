@@ -18,6 +18,24 @@ function logFormItems() {
   });
 }
 
+/**
+ * LIEST NUR: Kopfzeile der verknüpften Antworten-Tabelle, in exakter Spalten-Reihenfolge --
+ * damit sich eine roh eingefügte Zeile (Copy-Paste aus dem Antworten-Sheet) sicher den Feldern
+ * zuordnen lässt, statt anhand der ITEM_ID-Reihenfolge in Code.js zu raten (die muss nicht mit
+ * der tatsächlichen Formular-/Sheet-Reihenfolge übereinstimmen).
+ */
+function zeigeFormAntwortSpalten() {
+  const form = FormApp.openById(FORM_ID);
+  const destId = form.getDestinationId();
+  if (!destId) {
+    Logger.log('Formular hat keine verknüpfte Antworten-Tabelle (getDestinationId ist leer).');
+    return;
+  }
+  const sheet = SpreadsheetApp.openById(destId).getSheets()[0];
+  const header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  header.forEach((h, i) => Logger.log(`Spalte ${i + 1}: ${h}`));
+}
+
 /** LIEST NUR: Auswahl-Optionen aller Multiple-Choice-Felder im Formular. */
 function logFormChoices() {
   const form = FormApp.openById(FORM_ID);
