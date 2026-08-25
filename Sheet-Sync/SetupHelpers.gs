@@ -286,7 +286,10 @@ function listDealFieldsHelper() {
 function testCreateSheetRow() {
   starteLauf('testCreateSheetRow');
   try {
-    const result = createSheetRowForDeal(7253); // Test-Deal-ID, ggf. anpassen
+    // Michael Siedler (7455): echter Deal, Kundenordner-Link existiert -- Test fuer eines der
+    // 5 neuen Montageplanung-RP-Sheets (Berger/Greensky/Kreuzeder/Tirol/Vorarlberg), je nachdem
+    // welcher Montagepartner am Deal gesetzt ist.
+    const result = createSheetRowForDeal(7455); // Test-Deal-ID, ggf. anpassen
     Logger.log(result);
   } finally {
     flushLog();
