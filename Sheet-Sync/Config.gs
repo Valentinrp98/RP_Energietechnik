@@ -130,7 +130,7 @@ const MONTAGEPARTNER_ID_TO_NAME = Object.fromEntries(
 // unten). Bis dahin zeigen ALE und KOLLSTAR bewusst auf die Dummy-Test-Sheets, NICHT auf
 // "Montageplanung Ale".
 const PARTNER_SHEET_CONFIG = {
-  'ALE-Engineering (NÖ, Wien, BGL)': { sheetId: '1wpv9OMBGHDMinbhiM1IROcyCoPkdNPOamdwUkvqw8OA', tabName: 'Tabellenblatt1' }, // Testumgebung
+  'ALE-Engineering (NÖ, Wien, BGL)': { sheetId: '1j2NIi4zeTQlEhWqYlb3IXSjE_69J6ZPNQ1vK4-YiFgM', tabName: 'Untitled' }, // Montageplanung RP ALE-Engineering, 25.08. angelegt (alte Dummy-Testumgebung abgelöst)
   'Berger Elektrotechnik (KTN)': { sheetId: '1agWue-J07hZpo-nRnyYzIxe1ow_QD9vaP61dyiT05G8', tabName: 'Untitled' }, // per API/CSV-Import erstellt -- anderer Default als bei manueller UI-Erstellung
   'Greensky (OÖ, SBG)': { sheetId: '1pRHk5ITCUhMywUuyAn738hAcJ3oK9ZSxwC4EJ92yXnc', tabName: 'Untitled' },
   'KOLLSTAR (OÖ)': { sheetId: '1KPYBeVzsj0izYI6ZzUza4Bl5JcUIzWI1m5oojTOJ47E', tabName: 'Tabellenblatt1' }, // Testumgebung
