@@ -99,7 +99,9 @@ function createSheetRowForDeal(deal) {
   const plz = personCf[PLZ_FIELD_KEY] || '';
   const telefon = person?.phones?.[0]?.value || '';
   const moduleAnzahl = cf[MODULE_ANZAHL_FIELD_KEY] || '';
-  const speicherKwh = cf[SPEICHER_KWH_FIELD_KEY] || '';
+  // Speicher (kWh) bleibt bewusst ungenutzt (Valentin, 25.08.) -- die Info steht schon im
+  // Anlagendetails-Summary-Text (COL.module, siehe SYNC_FIELD_CONFIG unten), keine doppelte
+  // Quelle für dieselbe Angabe.
   const erstellungsdatum = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy');
 
   // Komplette Liste aller Werte, die diese Zeile bekommen würde -- EINMAL aufgebaut, sowohl fürs
@@ -113,7 +115,6 @@ function createSheetRowForDeal(deal) {
     [COL.plz]: plz,
     [COL.telefon]: telefon,
     [COL.module]: moduleAnzahl,
-    [COL.speicher]: speicherKwh,
     [COL.erstellungsdatum]: erstellungsdatum
   };
   // Alle pipedrive_to_sheet- UND bidirektionalen Felder (DC-/AC-/IB-Termin, Materiallieferung, ...)
