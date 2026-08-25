@@ -56,6 +56,10 @@ const KNOWN_DROPDOWN_VALUES = {
     // sevdesk-Artikel" gehalten. Werden über mergeSetHybridCombo() unten zusammengeführt,
     // wenn ein einzelner Sigenergy-WR + eine einzelne Sigenergy-Batterie im selben
     // Auftrag vorkommen.
+    // Beide Solo-WR-Einträge (10.0 und 12.0) real im Sheet verifiziert (Einkauf-Tab-Fund
+    // 2026-08-25, EK 850€ bzw. 700€ -- deutlich zu billig für ein WR+Speicher-Paket, das
+    // widerlegt die Annahme "12.0 kW TP2 ist ein Paket", siehe Notiz im Projekt-Memory).
+    'Sigen Hybrid Wechselrichter 10.0 kW TP2 dreiphasig',
     'Sigen Hybrid Wechselrichter 12.0 kW TP2 dreiphasig',
     'Sigenergy Set Hybrid TP2 5 kW / 6 kWh', 'Sigenergy Set Hybrid TP2 5 kW / 9 kWh',
     'Sigenergy Set Hybrid TP2 6 kW / 9 kWh', 'Sigenergy Set Hybrid TP2 8 kW / 9 kWh',
@@ -137,7 +141,7 @@ const CATEGORY_PATTERNS = {
     // "Projektierung" ergänzt: reale sevdesk-Position heißt "TECHNISCHE PROJEKTIERUNG",
     // nicht "Projektbetreuung" — beim Live-Test (Order 2026-609-A) sonst in "unknown"
     // gelandet, obwohl es klar eine Dienstleistungs-Position ist.
-    match: /Fernwartung|Planung der PV|Anmeldung EVU|EVU Abnahme|Elektroinstallation|Montagearbeiten|Projektbetreuung|Projektierung|Messpauschale|Landesförderung|Transportkosten|Gerätetechnik/i
+    match: /Fernwartung|Planung der PV|Anmeldung EVU|EVU Abnahme|Elektroinstallation|Montagearbeiten|Verteilerumbau|Projektbetreuung|Projektierung|Messpauschale|Landesförderung|Transportkosten|Gerätetechnik/i
   },
   wechselrichter: {
     match: /Hybrid Wechselrichter|Energy Controller|Wechselrichter|WR-SUN|WR-HYD|SUN2000|Symo|Primo|Tauro|MOD\s*\d+KTL|X3-ULTRA|X3-HYBRID|KTLX/i,
