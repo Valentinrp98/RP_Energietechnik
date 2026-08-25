@@ -68,7 +68,7 @@ function fetchBezahlteAnzahlungsrechnungen_() {
 
 /**
  * Fallback-Extraktion der Angebotsnummer aus dem Header-Text, NUR falls
- * ermittleAngebotsnummerFuerRechnung_() nicht über invoice.origin fündig wird.
+ * ermittleDealFuerRechnung_() nicht über invoice.origin fündig wird.
  *
  * WICHTIG (live verifiziert 26.08.2026, Rechnung 73888855): Der Header enthält
  * ZWEI Nummern -- "Anzahlungssrechnung Nr. 2024-1001-A aus Angebot 2024-1266-A".
@@ -91,29 +91,38 @@ function extractAngebotsnummerAusHeader_(invoice) {
 }
 
 /**
- * Ermittelt die Angebotsnummer zu einer Anzahlungsrechnung.
- * Primär über invoice.origin (direkte sevdesk-Objektreferenz auf den Auftrag,
- * aus dem die Rechnung erzeugt wurde) -- liefert dasselbe order.orderNumber-Feld,
- * das der bestehende Order-Sync schon nutzt, deutlich zuverlässiger als
- * Textparsing. Fallback: Header-Text (siehe extractAngebotsnummerAusHeader_).
- * @returns {{angebotsnummer: string, quelle: string}|null}
+ * Findet den Ziel-Deal für eine Anzahlungsrechnung -- nutzt DIESELBE zweistufige
+ * Matching-Logik (Angebotsnummer primär, Kundennummer-Fallback, Gegenprobe) wie
+ * der bestehende Order-Sync, statt sie zu duplizieren. Primärweg: aus
+ * invoice.origin (direkte sevdesk-Referenz auf den Auftrag) den vollen Auftrag
+ * per fetchOrderFromSevdesk() laden (liefert orderNumber UND Kundennummer) und
+ * an findTargetDeal() übergeben -- beide Funktionen bereits aus SyncEngine.gs,
+ * unverändert wiederverwendet.
+ *
+ * Fallback (kein origin/Order, oder Order-Abruf schlägt fehl): nur Angebotsnummer
+ * aus dem Header-Text (extractAngebotsnummerAusHeader_), kein Kundennummer-
+ * Fallback möglich, weil dafür der Auftrag selbst gebraucht wird.
+ *
+ * @returns {{match: object, angebotsnummer: string, quelle: string}|null}
  */
-function ermittleAngebotsnummerFuerRechnung_(invoice) {
+function ermittleDealFuerRechnung_(invoice) {
   if (invoice.origin && invoice.origin.objectName === 'Order' && invoice.origin.id) {
     try {
-      const orderData = sevdeskFetch(`/Order/${invoice.origin.id}`);
-      if (orderData.objects && orderData.objects.length > 0 && orderData.objects[0].orderNumber) {
-        return { angebotsnummer: orderData.objects[0].orderNumber, quelle: 'origin-Order' };
-      }
+      const order = fetchOrderFromSevdesk(invoice.origin.id);
+      return { match: findTargetDeal(order), angebotsnummer: order.orderNumber, quelle: 'origin-Order' };
     } catch (e) {
       // fällt durch zum Header-Fallback, kein harter Abbruch wegen eines einzelnen fehlgeschlagenen Order-Abrufs
     }
   }
 
   const ausHeader = extractAngebotsnummerAusHeader_(invoice);
-  if (ausHeader) return { angebotsnummer: ausHeader, quelle: 'Header-Text' };
+  if (!ausHeader) return null;
 
-  return null;
+  const treffer = searchDealsByField(FIELD_KEYS.sevdesk_angebotsnummer, ausHeader);
+  const match = treffer.length === 1
+    ? { dealId: treffer[0], matchedBy: 'Angebotsnummer', ambiguous: false, candidates: treffer }
+    : { dealId: null, matchedBy: 'Angebotsnummer', ambiguous: treffer.length > 1, candidates: treffer };
+  return { match: match, angebotsnummer: ausHeader, quelle: 'Header-Text' };
 }
 
 // ============================================================================
@@ -203,27 +212,32 @@ function resetZahlungseingangState() {
 
 function syncZahlungseingangFuerRechnung_(invoice) {
   const label = invoice.invoiceNumber || invoice.id;
-  const gefunden = ermittleAngebotsnummerFuerRechnung_(invoice);
+  const gefunden = ermittleDealFuerRechnung_(invoice);
 
   if (!gefunden) {
     logSyncResult('WARNUNG', null, `AR ${label}`, 'Keine Angebotsnummer ermittelbar (weder origin-Order noch Header)',
       `origin=${JSON.stringify(invoice.origin || null)} header="${invoice.header || ''}"`);
     return false;
   }
+
+  const match = gefunden.match;
   const angebotsnummer = gefunden.angebotsnummer;
+  const quelle = gefunden.quelle;
 
-  const treffer = searchDealsByField(FIELD_KEYS.sevdesk_angebotsnummer, angebotsnummer);
-  if (treffer.length === 0) {
-    logSyncResult('ERROR', null, `AR ${label}`, 'Kein Pipedrive Deal gefunden', `Angebotsnummer "${angebotsnummer}"`);
-    return false;
-  }
-  if (treffer.length > 1) {
-    logSyncResult('WARNUNG', null, `AR ${label}`, 'Mehrere Deals über Angebotsnummer gefunden',
-      `Angebotsnummer "${angebotsnummer}", Kandidaten: ${treffer.join(', ')}`);
+  if (match.ambiguous) {
+    const details = match.konflikt
+      ? match.konflikt
+      : `Kandidaten: ${match.candidates.join(', ')} -- Angebotsnummer "${angebotsnummer}" im richtigen Deal eintragen`;
+    logSyncResult('WARNUNG', null, `AR ${label}`, `Mehrere Deals über ${match.matchedBy} gefunden`, details);
     return false;
   }
 
-  const dealId = treffer[0];
+  if (!match.dealId) {
+    logSyncResult('ERROR', null, `AR ${label}`, 'Kein Pipedrive Deal gefunden', `[${quelle}] Angebotsnummer "${angebotsnummer}"`);
+    return false;
+  }
+
+  const dealId = match.dealId;
 
   if (!istDealGewonnen_(dealId)) {
     logSyncResult('SOFT_ERROR', dealId, `AR ${label}`, 'Deal noch nicht Gewonnen',
@@ -233,14 +247,14 @@ function syncZahlungseingangFuerRechnung_(invoice) {
 
   if (ZAHLUNGSEINGANG_DRY_RUN) {
     Logger.log(`[dry] AR ${label} → Deal ${dealId} würde Zahlungseingang setzen + Aktivität anlegen`);
-    logSyncResult('DRY', dealId, `AR ${label}`, '-', `[${gefunden.quelle}] Angebotsnummer "${angebotsnummer}" -- würde geschrieben`);
+    logSyncResult('DRY', dealId, `AR ${label}`, '-', `[${quelle}/${match.matchedBy}] Angebotsnummer "${angebotsnummer}" -- würde geschrieben`);
     return true;
   }
 
   schreibeZahlungseingangAufDeal_(dealId);
   legeZahlungseingangAktivitaetAn_(dealId);
 
-  logSyncResult('SUCCESS', dealId, `AR ${label}`, '-', `[${gefunden.quelle}] Angebotsnummer "${angebotsnummer}" -- Zahlungseingang gesetzt + Aktivität angelegt`);
+  logSyncResult('SUCCESS', dealId, `AR ${label}`, '-', `[${quelle}/${match.matchedBy}] Angebotsnummer "${angebotsnummer}" -- Zahlungseingang gesetzt + Aktivität angelegt`);
   Logger.log(`✓ AR ${label} → Deal ${dealId}: Zahlungseingang gesetzt`);
   return true;
 }
@@ -335,19 +349,30 @@ function testFetchInvoiceOnly() {
   const invoice = data.objects[0];
   Logger.log('=== Komplettes Invoice-Objekt ===');
   Logger.log(JSON.stringify(invoice, null, 2));
-  Logger.log('\n=== Angebotsnummer-Ermittlung ===');
+  Logger.log('\n=== Deal-Ermittlung ===');
   Logger.log('origin: ' + JSON.stringify(invoice.origin));
   Logger.log('header: ' + JSON.stringify(invoice.header));
-  Logger.log('headText: ' + JSON.stringify(invoice.headText));
-  Logger.log('Ergebnis: ' + JSON.stringify(ermittleAngebotsnummerFuerRechnung_(invoice)));
+  Logger.log('Ergebnis: ' + JSON.stringify(ermittleDealFuerRechnung_(invoice)));
 }
 
-/** Trockenlauf über den kompletten Bestand, ohne zu schreiben (ZAHLUNGSEINGANG_DRY_RUN wird dabei ignoriert -- immer read-only). */
+/**
+ * Trockenlauf über einen Ausschnitt des Bestands, ohne zu schreiben (ZAHLUNGSEINGANG_DRY_RUN
+ * wird dabei ignoriert -- immer read-only). Macht pro Rechnung mehrere API-Calls
+ * (voller Order-Abruf + Deal-Suche) -- bei 219 Rechnungen würde ein kompletter
+ * Durchlauf ans 6-Min-Limit stoßen, deshalb per Default auf die ersten 30 gedeckelt.
+ */
 function testMappingAllerBezahltenAR() {
-  const alle = fetchBezahlteAnzahlungsrechnungen_();
-  Logger.log(`${alle.length} bezahlte Anzahlungsrechnungen gefunden.`);
+  const LIMIT = 30;
+  const alle = fetchBezahlteAnzahlungsrechnungen_().slice(0, LIMIT);
+  Logger.log(`Prüfe die ersten ${alle.length} bezahlten Anzahlungsrechnungen (von insgesamt mehr, LIMIT=${LIMIT}).`);
   alle.forEach(function (r) {
-    const gefunden = ermittleAngebotsnummerFuerRechnung_(r);
-    Logger.log(`  ${r.invoiceNumber || r.id}: ${gefunden ? `${gefunden.angebotsnummer} [${gefunden.quelle}]` : '⚠️ NICHT GEFUNDEN'}`);
+    const gefunden = ermittleDealFuerRechnung_(r);
+    if (!gefunden) {
+      Logger.log(`  ${r.invoiceNumber || r.id}: ⚠️ NICHT GEFUNDEN`);
+      return;
+    }
+    const m = gefunden.match;
+    const status = m.ambiguous ? `MEHRDEUTIG (${m.matchedBy})` : (m.dealId ? `Deal ${m.dealId}` : 'KEIN TREFFER');
+    Logger.log(`  ${r.invoiceNumber || r.id}: ${gefunden.angebotsnummer} [${gefunden.quelle}] -> ${status}`);
   });
 }
