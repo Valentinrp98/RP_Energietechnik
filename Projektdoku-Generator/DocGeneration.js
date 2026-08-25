@@ -379,9 +379,15 @@ function buildProjectDoc(deal, person, adresse) {
     ['Sonstige Mitteilung Kunde', zeigeWert(cf[NOTIZEN_KUNDE_FIELD_KEY])]
   ]);
 
+  body.appendParagraph('8. Elektro- und Kleinmaterial').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  appendKeyValueTable(body, [
+    ['Gezahlt von', resolveEnumLabel(cf[ELEKTROMATERIAL_GEZAHLT_FIELD_KEY], ELEKTROMATERIAL_ID_TO_NAME)],
+    ['Organisiert von', resolveEnumLabel(cf[ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY], ELEKTROMATERIAL_ID_TO_NAME)]
+  ]);
+
   const partnerId = cf[MONTAGEPARTNER_FIELD_KEY];
   if (partnerId) {
-    body.appendParagraph('8. Montagepartner').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+    body.appendParagraph('9. Montagepartner').setHeading(DocumentApp.ParagraphHeading.HEADING1);
     body.appendParagraph(resolveEnumLabel(partnerId, MONTAGEPARTNER_ID_TO_NAME));
   }
 

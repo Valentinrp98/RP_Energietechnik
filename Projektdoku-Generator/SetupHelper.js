@@ -216,6 +216,25 @@ function korrigierePlzInAdressfeldV2() {
   });
 }
 
+/**
+ * Einmalig ausführen (25.08.2026): liefert field_code + Options-IDs der beiden neuen
+ * Elektromaterial-Felder, gefiltert statt der vollen 500-Felder-Liste von listDealFieldsHelper().
+ * ELEKTROMATERIAL_GEZAHLT_FIELD_KEY und ELEKTROMATERIAL_OPTION_IDS in Config.js danach eintragen,
+ * dann checkConfiguration() zur Gegenprobe laufen lassen.
+ */
+function zeigeElektromaterialFelder() {
+  const fields = fetchPipedrive('dealFields?limit=500');
+  const treffer = fields.filter(f => f.field_name.toLowerCase().includes('elektromaterial'));
+  if (treffer.length === 0) {
+    Logger.log('Kein Feld mit "Elektromaterial" im Namen gefunden.');
+    return;
+  }
+  treffer.forEach(f => {
+    const optionsInfo = f.options ? ` -- Optionen: ${f.options.map(o => `${o.label}=${o.id}`).join(', ')}` : ' -- keine Optionen (kein enum/set?)';
+    Logger.log(`${f.field_name}  -->  ${f.field_code} (${f.field_type})${optionsInfo}`);
+  });
+}
+
 /** Debug: listet alle Deal-Custom-Fields (field_name + field_code + Options-IDs bei Enum/Set). */
 function listDealFieldsHelper() {
   const fields = fetchPipedrive('dealFields?limit=500');
@@ -239,6 +258,11 @@ function checkConfiguration() {
     AUSRICHTUNG_FIELD_KEY, DC_TERMIN_FIELD_KEY, AC_TERMIN_FIELD_KEY, IB_TERMIN_FIELD_KEY,
     DC_KABELWEG_FIELD_KEY, AC_KABELWEG_FIELD_KEY, ORT_VERTEILER_FIELD_KEY,
     ANLAGENDETAILS_FIELD_KEY, LIEFERTERMIN_FIELD_KEY, NOTIZEN_KUNDE_FIELD_KEY
+    // ELEKTROMATERIAL_*: bewusst noch NICHT hier drin, solange ELEKTROMATERIAL_GEZAHLT_FIELD_KEY/
+    // ELEKTROMATERIAL_OPTION_IDS noch TODO-Platzhalter sind -- checkConfiguration() läuft im
+    // täglichen 2-Uhr-Trigger und blockiert bei jedem Problem den KOMPLETTEN Lauf (alle Deals), nicht
+    // nur diese zwei Felder. Erst zusammen mit den echten Werten aus zeigeElektromaterialFelder()
+    // eintragen, nie einen Zwischenstand live schalten, der den Trigger lahmlegt.
   };
   Object.entries(configWerte).forEach(([name, wert]) => {
     if (String(wert).startsWith('TODO_')) probleme.push(`${name} ist noch nicht ausgefüllt (${wert})`);
@@ -321,6 +345,8 @@ function checkConfiguration() {
       { key: EINDECKUNG_FIELD_KEY, map: EINDECKUNG_OPTION_IDS, label: 'Eindeckung' },
       { key: AUSRICHTUNG_FIELD_KEY, map: AUSRICHTUNG_OPTION_IDS, label: 'Ausrichtung' },
       { key: MONTAGEPARTNER_FIELD_KEY, map: MONTAGEPARTNER_OPTION_IDS, label: 'Montagepartner' }
+      // ELEKTROMATERIAL_OPTION_IDS bewusst noch nicht hier drin -- Platzhalter-IDs (0) würden
+      // checkConfiguration() JETZT SCHON zum Blocken bringen, siehe Kommentar bei configWerte oben.
     ];
     enumChecks.forEach(({ key, map, label }) => {
       const feld = byCode[key];
@@ -368,10 +394,11 @@ function testEinzelDeal() {
   // Doc wurde aber schon um 11:12 gebaut, also VOR dem sevdesk-Sync (14:48-14:50), der die echten
   // Modul-Daten erst gebracht hat -- das Doc zeigt also noch den alten Stand. forceRegenerate:true
   // wirft es weg und baut mit den jetzigen (korrekten) Anlagendetails neu.
-  // Tobias Knittelfelder (7093): Doku war schon erstellt, aber mit den falschen Hauptdach-Werten
-  // (Eindeckung/Neigung) statt der echten Zubau-Werte -- nach der Korrektur (25.08.) neu bauen.
+  // Deal 7455 (Siedler, 25.08.): Testlauf für die neue Sektion "8. Elektro- und Kleinmaterial" --
+  // forceRegenerate:true, damit ein evtl. schon vorhandenes Doc mit dem aktuellen Feldstand
+  // (inkl. der neuen Sektion) neu gebaut wird.
   const testDeals = [
-    7093
+    7455
   ].map(dealId => ({ dealId, forceRegenerate: true }));
   try {
     testDeals.forEach(({ dealId, forceRegenerate }) => {
