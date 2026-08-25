@@ -71,11 +71,20 @@ const KUNDEN_UNTERORDNER_NAMEN = [
   '5_Abschlussdoks.-Zaehlern._Fertigm._Prüfprot.'
 ];
 
-// TODO: Web-App-URL hier eintragen, NACHDEM einmal deployed wurde (Bereitstellen > Neue
-// Bereitstellung > Web App). Bewusst als Konstante statt als Funktionsparameter -- der ▷-Button
-// im Editor ruft Funktionen immer ohne Argumente auf, ein Parameter würde als "undefined" durchgehen
-// und einen kaputten Webhook auf die URL "undefined" registrieren (siehe SetupHelpers.gs).
-const WEB_APP_URL = 'TODO_WEB_APP_URL_NACH_DEPLOYMENT';
+// Web-App-URL der Deployment AKfycbwOT0kO7tcxfEsgJ412zOvTzb2p3IuUXxnbcQfAkPwB4h8n8vQ-QGbDSe8Gg0YpQ4o7
+// (24./25.08.2026 angelegt, vorher existierte gar keine Web-App-Deployment -- deshalb lief hier noch
+// nie ein Webhook). Bewusst als Konstante statt als Funktionsparameter -- der ▷-Button im Editor ruft
+// Funktionen immer ohne Argumente auf, ein Parameter würde als "undefined" durchgehen und einen
+// kaputten Webhook auf die URL "undefined" registrieren (siehe SetupHelpers.gs).
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwOT0kO7tcxfEsgJ412zOvTzb2p3IuUXxnbcQfAkPwB4h8n8vQ-QGbDSe8Gg0YpQ4o7/exec';
+
+// WICHTIG (siehe [[project_cloudflare_webhook_relay]] in der Claude-Memory): Apps-Script-Web-Apps
+// antworten auf jeden Aufruf zuerst mit HTTP 302 (Weiterleitung), was Pipedrive als Fehlschlag wertet
+// und den Webhook nach 3 Tagen Dauerausfall automatisch löscht. registerPipedriveWebhook() (siehe
+// SetupHelpers.gs) schickt deshalb NICHT WEB_APP_URL direkt an Pipedrive, sondern verpackt sie in
+// diesen Cloudflare-Worker-Relay, der die Weiterleitung selbst nachvollzieht und ein sauberes 200
+// zurückgibt.
+const RELAY_BASE_URL = 'https://wispy-band-24d4.valentin-be0.workers.dev/';
 
 // Wenn true: nichts wird in Drive/Pipedrive geschrieben, nur geloggt was passieren würde
 const DRY_RUN = false;

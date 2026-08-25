@@ -17,18 +17,25 @@ function registerPipedriveWebhook() {
     throw new Error('WEB_APP_URL in Config.gs ist noch nicht gesetzt -- erst als Web App deployen, dann die /exec-URL dort eintragen.');
   }
   const secret = getWebhookSecret(); // wirft Fehler, wenn WEBHOOK_SECRET noch nicht in Script Properties gesetzt ist
-  const subscriptionUrl = `${WEB_APP_URL}?token=${encodeURIComponent(secret)}`;
+  const targetUrl = `${WEB_APP_URL}?token=${encodeURIComponent(secret)}`;
+  // Durch den Relay verpacken (siehe Begründung bei RELAY_BASE_URL in Config.gs) -- NICHT WEB_APP_URL
+  // direkt an Pipedrive melden, sonst scheitert die Zustellung nach spätestens 3 Tagen an der 302.
+  const subscriptionUrl = `${RELAY_BASE_URL}?target=${encodeURIComponent(targetUrl)}`;
 
-  const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/webhooks`;
+  // WICHTIG (CLAUDE.md-Learning "Webhooks gibt es nur in v1"): Registrierung MUSS über /v1/ mit
+  // api_token als QUERY-PARAMETER laufen, nicht über den v2-REST-Endpunkt (der hier ein anderes
+  // Body-Schema erwartet -- "event_objects" als Array statt "event_object" als String -- und mit
+  // dem hier verwendeten Schema HTTP 400 ERR_SCHEMA_VALIDATION_FAILED wirft). version:"2.0" +
+  // event_action:"change" sorgt trotzdem für das v2-Payload-Format (data/previous) im Webhook selbst.
+  const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/v1/webhooks?api_token=${getApiToken()}`;
   const response = UrlFetchApp.fetch(url, {
     method: 'post',
     contentType: 'application/json',
-    headers: { 'x-api-token': getApiToken() },
     payload: JSON.stringify({
       subscription_url: subscriptionUrl,
       event_action: 'change',
       event_object: 'deal',
-      version: '2.0' // ohne dieses Feld liefert Pipedrive den v1-Payload (current/previous statt data/previous)
+      version: '2.0'
     }),
     muteHttpExceptions: true
   });
@@ -141,10 +148,10 @@ function setzeBekannteKundenordnerLinks() {
 /** Für Einzeltests: einen bekannten Deal durchlaufen lassen (Deal-ID unten anpassen). */
 function testEinzelDeal() {
   starteLauf('testEinzelDeal');
-  // Tobias Knittelfelder (7093): beim "Gewonnen"-Webhook war Montagepartner noch nicht gesetzt
-  // (übersprungen), wurde erst später von Montagepartner-aus-Bundesland nachgetragen -- der
-  // Webhook feuert aber nur EINMAL beim status-Wechsel, also hier manuell nachgeholt.
-  const dealIds = [7093];
+  // Michael Siedler (7455): Webhook gab es fuer dieses Projekt bis 25.08. gar nicht (WEB_APP_URL
+  // stand noch auf TODO_ -- nie deployed), Deal war aber schon vorher "Gewonnen". Feuert nicht
+  // rueckwirkend, deshalb hier manuell nachgeholt.
+  const dealIds = [7455];
   try {
     dealIds.forEach(dealId => {
       const result = processGewonnenDeal(dealId);
