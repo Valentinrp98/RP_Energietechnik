@@ -100,38 +100,22 @@ function createSheetRowForDeal(deal) {
   const telefon = person?.phones?.[0]?.value || '';
   const moduleAnzahl = cf[MODULE_ANZAHL_FIELD_KEY] || '';
   const speicherKwh = cf[SPEICHER_KWH_FIELD_KEY] || '';
+  const erstellungsdatum = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy');
 
-  if (DRY_RUN) {
-    logRow('zeile anlegen', dealId, partner, null, 'DRY-RUN', `würde Zeile für "${name}" anlegen`);
-    return `DRY-RUN: würde Zeile für "${name}" im ${partner}-Sheet anlegen`;
-  }
-
-  const nameCol = findColumnIndexByHeader(sheet, COL.name);
-  const ordnerLinkCol = findColumnIndexByHeader(sheet, COL.ordnerLink);
-
-  // Zielzeile muss vor dem Schreiben als leer geprüft werden -- sonst besteht bei Sheets mit
-  // Zusatzinhalt unterhalb der Datenzeilen (Summen, Notizen) das Risiko, dort hineinzuschreiben.
-  const checkCols = [dealIdCol, nameCol].filter(Boolean);
-  const newRow = findNextEmptyRowFor(sheet, checkCols);
-
-  if (nameCol) sheet.getRange(newRow, nameCol).setValue(name);
-  if (ordnerLinkCol) sheet.getRange(newRow, ordnerLinkCol).setValue(ordnerLink);
-  sheet.getRange(newRow, dealIdCol).setValue(dealId);
-
-  // Stufe-1-Felder, siehe Kommentar oben -- nur schreiben, wenn die Spalte existiert (Partner-
-  // Sheet noch nicht auf die neue Struktur erweitert) und ein Wert da ist, sonst leer lassen.
-  [
-    [COL.adresse, adresse],
-    [COL.plz, plz],
-    [COL.telefon, telefon],
-    [COL.module, moduleAnzahl],
-    [COL.speicher, speicherKwh]
-  ].forEach(([header, wert]) => {
-    if (!wert) return;
-    const col = findColumnIndexByHeader(sheet, header);
-    if (col) sheet.getRange(newRow, col).setValue(wert);
-  });
-
+  // Komplette Liste aller Werte, die diese Zeile bekommen würde -- EINMAL aufgebaut, sowohl fürs
+  // DRY-RUN-Log (Valentin, 25.08.: "ultra ungenau" -- vorher stand da nur der Name) als auch für
+  // den echten Schreibvorgang unten. So können Log und tatsächliches Schreiben nie auseinanderlaufen.
+  const geplanteWerte = {
+    [COL.name]: name,
+    [COL.ordnerLink]: ordnerLink,
+    [COL.dealId]: dealId,
+    [COL.adresse]: adresse,
+    [COL.plz]: plz,
+    [COL.telefon]: telefon,
+    [COL.module]: moduleAnzahl,
+    [COL.speicher]: speicherKwh,
+    [COL.erstellungsdatum]: erstellungsdatum
+  };
   // Alle pipedrive_to_sheet- UND bidirektionalen Felder (DC-/AC-/IB-Termin, Materiallieferung, ...)
   // gleich mit dem aktuellen Pipedrive-Wert befüllen, statt bis zum nächsten 15-Minuten-Sync zu warten.
   // combineFrom-Felder (z.B. "Sonstige Informationen") haben kein pipedriveFieldKey -- derselbe
@@ -140,20 +124,31 @@ function createSheetRowForDeal(deal) {
     .filter(f => (f.direction === 'pipedrive_to_sheet' || f.direction === 'bidirektional')
       && (f.combineFrom || !f.pipedriveFieldKey.startsWith('TODO_')))
     .forEach(fieldConfig => {
-      const col = findColumnIndexByHeader(sheet, fieldConfig.sheetColumnHeader);
-      const wert = fieldConfig.combineFrom
+      geplanteWerte[fieldConfig.sheetColumnHeader] = fieldConfig.combineFrom
         ? fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean).join('\n---\n')
         : cf[fieldConfig.pipedriveFieldKey];
-      if (col && wert !== undefined && wert !== '') sheet.getRange(newRow, col).setValue(wert);
     });
+  // Nur Header behalten, die wirklich einen Wert hätten -- sonst zeigt das Log lauter "" für
+  // leere Termine/Felder und wird selbst wieder unübersichtlich.
+  const befuellteWerte = Object.fromEntries(
+    Object.entries(geplanteWerte).filter(([, wert]) => wert !== undefined && wert !== '' && wert !== null)
+  );
 
-  // Erstellungsdatum: wann die Zeile angelegt wurde, direkt als Spaltenwert (nicht nur als Notiz,
-  // siehe unten) -- der Partner soll das ohne Hovern sehen können. Valentin, 25.08.
-  const erstellungsdatumCol = findColumnIndexByHeader(sheet, COL.erstellungsdatum);
-  if (erstellungsdatumCol) {
-    sheet.getRange(newRow, erstellungsdatumCol).setValue(
-      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy'));
+  if (DRY_RUN) {
+    logRow('zeile anlegen', dealId, partner, null, 'DRY-RUN', `würde Zeile anlegen: ${JSON.stringify(befuellteWerte)}`);
+    return `DRY-RUN: würde Zeile für "${name}" im ${partner}-Sheet anlegen (${Object.keys(befuellteWerte).length} Felder)`;
   }
+
+  // Zielzeile muss vor dem Schreiben als leer geprüft werden -- sonst besteht bei Sheets mit
+  // Zusatzinhalt unterhalb der Datenzeilen (Summen, Notizen) das Risiko, dort hineinzuschreiben.
+  const nameCol = findColumnIndexByHeader(sheet, COL.name);
+  const checkCols = [dealIdCol, nameCol].filter(Boolean);
+  const newRow = findNextEmptyRowFor(sheet, checkCols);
+
+  Object.entries(befuellteWerte).forEach(([header, wert]) => {
+    const col = findColumnIndexByHeader(sheet, header);
+    if (col) sheet.getRange(newRow, col).setValue(wert);
+  });
 
   // Beantwortet ein für alle Mal "woher kommt diese Zeile" -- und macht sichtbar, dass sie
   // nicht von Hand eingetragen wurde (also auch nicht von Hand gelöscht werden sollte).
