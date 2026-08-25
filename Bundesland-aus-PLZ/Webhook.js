@@ -17,7 +17,7 @@
 // [[project_cloudflare_webhook_relay]] in der Claude-Memory (302-Redirect-Problem).
 const WEBHOOK_SUBSCRIPTION_URL = 'https://wispy-band-24d4.valentin-be0.workers.dev/?target=https%3A%2F%2Fscript.google.com%2Fmacros%2Fs%2FAKfycbz6qogKvDL1wpO5bkITp8W9h2f6wHoha_QK6JtsJD7Cil9rF-dpeJqa8WQR391HmIA60Q%2Fexec%3Fsecret%3D285cba4dc5c4d3d3d15bb45c5973fa57';
 const WEBHOOK_SHARED_SECRET = '285cba4dc5c4d3d3d15bb45c5973fa57';
-const WEBHOOK_ID_ZUM_LOESCHEN = 0;
+const WEBHOOK_ID_ZUM_LOESCHEN = 1683942; // alter Webhook mit direkter Google-URL (302, scheiterte dauerhaft)
 
 // ===== EMPFANG =====
 
