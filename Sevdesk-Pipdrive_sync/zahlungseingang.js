@@ -251,8 +251,14 @@ function syncZahlungseingangFuerRechnung_(invoice) {
     return true;
   }
 
-  schreibeZahlungseingangAufDeal_(dealId);
-  legeZahlungseingangAktivitaetAn_(dealId);
+  try {
+    schreibeZahlungseingangAufDeal_(dealId);
+    legeZahlungseingangAktivitaetAn_(dealId);
+  } catch (e) {
+    logSyncResult('ERROR', dealId, `AR ${label}`, e.message, `[${quelle}/${match.matchedBy}] Angebotsnummer "${angebotsnummer}"`);
+    Logger.log(`✗ AR ${label} → Deal ${dealId}: ${e.message}`);
+    return false;
+  }
 
   logSyncResult('SUCCESS', dealId, `AR ${label}`, '-', `[${quelle}/${match.matchedBy}] Angebotsnummer "${angebotsnummer}" -- Zahlungseingang gesetzt + Aktivität angelegt`);
   Logger.log(`✓ AR ${label} → Deal ${dealId}: Zahlungseingang gesetzt`);
@@ -288,6 +294,11 @@ function syncZahlungseingaenge() {
     if (erfolg && !ZAHLUNGSEINGANG_DRY_RUN) {
       state[r.id] = true;
       verarbeitet++;
+      // Alle 5 Rechnungen zwischenspeichern (gleiches Muster wie syncPendingOrders), damit ein
+      // Fehler bei einer späteren Rechnung im selben Batch nicht den State der bereits erfolgreich
+      // verarbeiteten verwirft -- sonst würde der nächste Lauf für diese die Aktivität erneut
+      // anlegen (POST /activities ist nicht idempotent).
+      if (verarbeitet % 5 === 0) saveZahlungseingangState_(state);
     }
   }
 
@@ -313,7 +324,10 @@ function pruefeZahlungseingangKonfiguration() {
       probleme.push(`field_code "${FIELD_KEYS.zahlungseingang_erhalten}" existiert nicht (mehr) in Pipedrive.`);
     } else {
       const erwartetesLabel = Object.keys(ENUM_OPTION_IDS.Zahlungseingang_erhalten || {})[0] || 'Erhalten';
-      const treffer = (feld.options || []).find(function (o) { return o.label === erwartetesLabel; });
+      // Case-insensitiver Abgleich (gleiches Muster wie pruefeKonfiguration() in SyncEngine.gs, nach
+      // echtem Fehlalarm SUNOVA/LUXOR/TRINASOLAR): geschrieben/gelesen wird über die numerische
+      // Options-ID, eine abweichende Schreibweise ist für den echten Schreibpfad folgenlos.
+      const treffer = (feld.options || []).find(function (o) { return o.label.toLowerCase() === erwartetesLabel.toLowerCase(); });
       const erwarteteId = (ENUM_OPTION_IDS.Zahlungseingang_erhalten || {})[erwartetesLabel];
       if (!treffer) {
         const echteOptionen = (feld.options || []).map(function (o) { return `'${o.label}': ${o.id}`; }).join(', ');
