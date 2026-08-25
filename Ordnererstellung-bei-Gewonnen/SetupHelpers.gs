@@ -7,10 +7,10 @@
  * in Config.gs muss vorher eingetragen sein -- der ▷-Button ruft Funktionen ohne Argumente
  * auf, ein Funktionsparameter für die URL würde also als "undefined" registriert werden).
  *
- * Registriert über die v2-Webhooks-Endpoint (event_action "change"), passend zum doPost-Handler
- * in WebhookHandler.gs, der body.data/body.previous erwartet. Falls Pipedrive hier zu v1-Verhalten
- * zurückfällt: doPost() liest defensiv auch body.current, sollte also trotzdem funktionieren --
- * mit listPipedriveWebhooks() nach der Registrierung trotzdem gegenchecken, welche Version aktiv ist.
+ * Registriert über die v1-Webhooks-Endpoint (Webhooks gibt es nur in v1, api_token als
+ * Query-Parameter), aber mit version:"2.0" + event_action:"change" im Body, sodass Pipedrive
+ * trotzdem das v2-Payload-Format (data/previous) an den doPost-Handler in WebhookHandler.gs
+ * liefert. Details/Begründung siehe Kommentar direkt über der url-Konstante unten.
  */
 function registerPipedriveWebhook() {
   if (WEB_APP_URL.startsWith('TODO_')) {
@@ -27,7 +27,7 @@ function registerPipedriveWebhook() {
   // Body-Schema erwartet -- "event_objects" als Array statt "event_object" als String -- und mit
   // dem hier verwendeten Schema HTTP 400 ERR_SCHEMA_VALIDATION_FAILED wirft). version:"2.0" +
   // event_action:"change" sorgt trotzdem für das v2-Payload-Format (data/previous) im Webhook selbst.
-  const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/v1/webhooks?api_token=${getApiToken()}`;
+  const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/v1/webhooks?api_token=${encodeURIComponent(getApiToken())}`;
   const response = UrlFetchApp.fetch(url, {
     method: 'post',
     contentType: 'application/json',
