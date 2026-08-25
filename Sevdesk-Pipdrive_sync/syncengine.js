@@ -897,6 +897,52 @@ function SETUP_EINMALIG_createTrigger() {
   Logger.log('15-Minuten-Trigger für syncPendingOrders() angelegt.');
 }
 
+/** Diagnose: listet alle dauerhaft geparkten Aufträge mit Kundennummer/Angebotsnummer, damit man
+ *  gezielt nachschauen kann, warum die Zuordnung zu Pipedrive gescheitert ist. */
+function zeigeGeparkteAuftraege() {
+  const state = getSyncState();
+  const geparkteIds = Object.keys(state).filter(id => state[id].geparkt);
+  if (geparkteIds.length === 0) {
+    Logger.log('Keine geparkten Aufträge.');
+    return;
+  }
+  Logger.log(`${geparkteIds.length} geparkte Aufträge:`);
+  geparkteIds.forEach(id => {
+    try {
+      const order = fetchOrderFromSevdesk(id);
+      const match = findTargetDeal(order);
+      Logger.log(`Order ${id}: Angebotsnummer="${order.orderNumber}", Kundennummer="${order.customerId}", ` +
+                 `Versuche=${state[id].versuche}, match=${match.matchedBy || 'KEIN TREFFER'}` +
+                 (match.konflikt ? `, KONFLIKT: ${match.konflikt}` : '') +
+                 (match.ambiguous ? `, mehrdeutig (Kandidaten: ${match.candidates.join(',')})` : ''));
+    } catch (err) {
+      Logger.log(`Order ${id}: Fehler beim Abrufen -- ${err.message}`);
+    }
+  });
+}
+
+// Für entparkeAuftraege() -- Editor-Funktionen mit Parametern kann man nicht per ▷-Button starten,
+// deshalb Konstante statt Funktionsargument (gleiches Muster wie WEBHOOK_ID_ZUM_LOESCHEN).
+const ORDER_IDS_ZUM_ENTPARKEN = ['29922505', '29975012'];
+
+/** Entfernt geparkt:true bei den oben eingetragenen Order-IDs, damit syncPendingOrders() sie beim
+ *  nächsten Lauf wieder ganz normal versucht (nicht sofort selbst syncen -- nur die Sperre lösen). */
+function entparkeAuftraege() {
+  const state = getSyncState();
+  let entparkt = 0;
+  ORDER_IDS_ZUM_ENTPARKEN.forEach(id => {
+    if (state[id] && state[id].geparkt) {
+      state[id] = { ts: null, gespeichert: heuteAlsIso(), versuche: 0 };
+      entparkt++;
+      Logger.log(`Order ${id} entparkt -- wird beim nächsten syncPendingOrders()-Lauf erneut versucht.`);
+    } else {
+      Logger.log(`Order ${id}: nicht (mehr) geparkt -- nichts zu tun.`);
+    }
+  });
+  saveSyncState(state);
+  Logger.log(`${entparkt} Auftrag/Aufträge entparkt.`);
+}
+
 function syncPendingOrders() {
   const state = getSyncState();
   let offset = 0;
