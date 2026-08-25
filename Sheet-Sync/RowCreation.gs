@@ -125,9 +125,13 @@ function createSheetRowForDeal(deal) {
     .filter(f => (f.direction === 'pipedrive_to_sheet' || f.direction === 'bidirektional')
       && (f.combineFrom || !f.pipedriveFieldKey.startsWith('TODO_')))
     .forEach(fieldConfig => {
-      geplanteWerte[fieldConfig.sheetColumnHeader] = fieldConfig.combineFrom
+      const wert = fieldConfig.combineFrom
         ? fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean).join('\n---\n')
         : cf[fieldConfig.pipedriveFieldKey];
+      // Nur überschreiben, wenn Pipedrive tatsächlich einen Wert liefert -- sonst würde z.B.
+      // COL.module den oben schon berechneten moduleAnzahl-Fallback verlieren, nur weil das
+      // neuere Anlagendetails-Summary-Feld bei diesem Deal (noch) nicht gesetzt ist.
+      if (wert !== undefined) geplanteWerte[fieldConfig.sheetColumnHeader] = wert;
     });
   // Nur Header behalten, die wirklich einen Wert hätten -- sonst zeigt das Log lauter "" für
   // leere Termine/Felder und wird selbst wieder unübersichtlich.

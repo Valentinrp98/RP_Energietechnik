@@ -196,7 +196,8 @@ function protectDealIdColumn() {
       { header: COL.plz, label: 'PLZ' },
       { header: COL.telefon, label: 'Telefon Kunde' },
       { header: COL.module, label: 'Anlagengröße (Module)' },
-      { header: COL.speicher, label: 'Speicher (kWh)' }
+      { header: COL.speicher, label: 'Speicher (kWh)' },
+      { header: COL.erstellungsdatum, label: 'Erstellungsdatum' }
     ].concat(geschuetzteFelder.map(f => ({ header: f.sheetColumnHeader, label: f.label })));
 
     zuSchuetzendeSpalten.forEach(({ header, label }) => {

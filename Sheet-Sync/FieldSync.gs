@@ -278,6 +278,11 @@ function syncPipedriveToSheetFields() {
             ? fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean).join('\n---\n')
             : cf[fieldConfig.pipedriveFieldKey];
           if (pipedriveWert === undefined) return;
+          // combineFrom liefert bei leeren Quellfeldern '' statt undefined (Array.join auf leerem
+          // Array) -- ohne diesen Check überschreibt das eine bereits befüllte Sheet-Zelle mit
+          // leer, sobald die letzte Pipedrive-Quelle geleert wird. RowCreation.gs filtert '' beim
+          // Zeilen-Anlegen genauso heraus.
+          if (fieldConfig.combineFrom && pipedriveWert === '') return;
           const aktuellerWert = werte[i][col - 1];
           // String-Vergleich: Sheets liefert Number/Date, Pipedrive meist String.
           if (String(pipedriveWert) === String(aktuellerWert)) return;
