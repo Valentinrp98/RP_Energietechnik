@@ -17,16 +17,18 @@ function SETUP_EINMALIG_createDailyTrigger() {
 }
 
 /**
- * EINMALIG: fügt 4 neue Optionen zum "Eindeckung"-Feld (Pipedrive-intern EINDECKUNG_FIELD_KEY,
- * im Alltag "Dachart" genannt) hinzu -- Valentins Feedback 24.08.: Zaun, Fassade, Rhombus Eternit,
- * Prefa fehlen. Feld-Optionen lassen sich nur über die v1-API bearbeiten (v2 hat kein
- * Field-Management-Endpoint, wie schon bei den Webhooks) -- deshalb hier ein direkter v1-Call statt
- * fetchPipedrive/patchPipedrive (die sind fest auf v2 verdrahtet, siehe Config.js).
- * Bestehende Optionen MÜSSEN mit ihrer id+label im PUT-Body mitgeschickt werden, sonst würde
- * Pipedrive sie stillschweigend löschen (die API ersetzt die komplette Options-Liste, kein Append).
+ * EINMALIG: fügt neue Optionen zum "Eindeckung"-Feld (Pipedrive-intern EINDECKUNG_FIELD_KEY,
+ * im Alltag "Dachart" genannt) hinzu. Feld-Optionen lassen sich nur über die v1-API bearbeiten
+ * (v2 hat kein Field-Management-Endpoint, wie schon bei den Webhooks) -- deshalb hier ein
+ * direkter v1-Call statt fetchPipedrive/patchPipedrive (die sind fest auf v2 verdrahtet, siehe
+ * Config.js). Bestehende Optionen MÜSSEN mit ihrer id+label im PUT-Body mitgeschickt werden, sonst
+ * würde Pipedrive sie stillschweigend löschen (die API ersetzt die komplette Options-Liste, kein
+ * Append) -- die Funktion filtert selbst, welche der NEUE_OPTIONEN schon existieren.
+ * 25.08.: 'Sandwichpaneele' ergänzt (Zubau-Dach Deal 7093, Tobias Knittelfelder).
+ * 24.08.: 'Zaun', 'Fassade', 'Rhombus Eternit', 'Prefa' ergänzt (Valentins Feedback).
  */
 function fuegeEindeckungOptionenHinzu() {
-  const NEUE_OPTIONEN = ['Zaun', 'Fassade', 'Rhombus Eternit', 'Prefa'];
+  const NEUE_OPTIONEN = ['Zaun', 'Fassade', 'Rhombus Eternit', 'Prefa', 'Sandwichpaneele'];
 
   const feldUrl = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v1/dealFields?api_token=${encodeURIComponent(getApiToken())}`;
   const feldResponse = UrlFetchApp.fetch(feldUrl, { muteHttpExceptions: true });
@@ -366,8 +368,10 @@ function testEinzelDeal() {
   // Doc wurde aber schon um 11:12 gebaut, also VOR dem sevdesk-Sync (14:48-14:50), der die echten
   // Modul-Daten erst gebracht hat -- das Doc zeigt also noch den alten Stand. forceRegenerate:true
   // wirft es weg und baut mit den jetzigen (korrekten) Anlagendetails neu.
+  // Michael Siedler (7455): Feld stand schon vorher auf "rdy for creation" -- kein frisches
+  // change-Event, deshalb hier manuell angestoßen (Kundenordner-Link existiert jetzt, 25.08.).
   const testDeals = [
-    7072
+    7455
   ].map(dealId => ({ dealId, forceRegenerate: true }));
   try {
     testDeals.forEach(({ dealId, forceRegenerate }) => {

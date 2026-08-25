@@ -88,7 +88,7 @@ const EINDECKUNG_FIELD_KEY = '2e8cc4c7d0592a418a58394a470e3386d125654a'; // enum
 const EINDECKUNG_OPTION_IDS = {
   'Ziegeldach': 92, 'Blechdach Trapez': 93, 'Blechdach Falz': 94, 'Welleternit': 95,
   'Flachdach (Kies)': 96, 'Flachdach (Beton)': 97, 'Flachdach (begrünt)': 98,
-  'Zaun': 251, 'Fassade': 252, 'Rhombus Eternit': 253, 'Prefa': 254
+  'Zaun': 251, 'Fassade': 252, 'Rhombus Eternit': 253, 'Prefa': 254, 'Sandwichpaneele': 255
 };
 const EINDECKUNG_ID_TO_NAME = invertOptionMap(EINDECKUNG_OPTION_IDS);
 
