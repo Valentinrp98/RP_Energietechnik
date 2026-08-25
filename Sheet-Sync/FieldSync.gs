@@ -208,9 +208,14 @@ function syncPipedriveToSheetFields() {
   const summary = { geschrieben: 0, dryRun: 0 };
   let partnerVerarbeitet = 0;
 
-  const relevanteFelder = SYNC_FIELD_CONFIG.filter(
-    f => (f.direction === 'pipedrive_to_sheet' || f.direction === 'bidirektional') && !f.pipedriveFieldKey.startsWith('TODO_')
-  );
+  // combineFrom (z.B. "Sonstige Informationen" aus zwei Notizfeldern) hat statt einem einzelnen
+  // pipedriveFieldKey ein Array -- deshalb hier defensiv geprüft, sonst würde startsWith() auf
+  // undefined krachen.
+  const relevanteFelder = SYNC_FIELD_CONFIG.filter(f => {
+    if (f.direction !== 'pipedrive_to_sheet' && f.direction !== 'bidirektional') return false;
+    if (f.combineFrom) return true;
+    return !f.pipedriveFieldKey.startsWith('TODO_');
+  });
   if (relevanteFelder.length === 0) {
     Logger.log('Keine Felder mit Richtung "pipedrive_to_sheet"/"bidirektional" konfiguriert -- nichts zu tun.');
     logLaufEnde('KETTE_BLOCKIERT', { grund: 'keine pipedrive_to_sheet-Felder konfiguriert' });
@@ -266,7 +271,12 @@ function syncPipedriveToSheetFields() {
         const cf = deal.custom_fields || {};
 
         feldSpalten.forEach(({ fieldConfig, col }) => {
-          const pipedriveWert = cf[fieldConfig.pipedriveFieldKey];
+          // combineFrom: mehrere Pipedrive-Freitextfelder zu einem Sheet-Wert zusammenfassen
+          // (z.B. "Sonstige Informationen" aus internen Notizen UND Kunden-Mitteilung, Valentin
+          // 25.08. -- beide sollen der Montagepartner sehen, es gibt aber nur eine Sheet-Spalte).
+          const pipedriveWert = fieldConfig.combineFrom
+            ? fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean).join('\n---\n')
+            : cf[fieldConfig.pipedriveFieldKey];
           if (pipedriveWert === undefined) return;
           const aktuellerWert = werte[i][col - 1];
           // String-Vergleich: Sheets liefert Number/Date, Pipedrive meist String.

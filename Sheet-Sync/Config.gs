@@ -18,6 +18,11 @@ const SPEICHER_KWH_FIELD_KEY = 'd8e9435192bb719365e9bc3186dcba540dff26bd';
 // Sevdesk-Pipdrive_sync) 1:1 in die Sheet-Spalte "Anlagengröße (Module)" -- kein Parsing nötig.
 const ANLAGENDETAILS_FIELD_KEY = 'a38455087829e67f22cb5217a44c3cf31f39bcbc';
 
+// Dieselben Freitextfelder wie in Projektdoku-Generator/Config.js -- für "Sonstige Informationen"
+// im Partner-Sheet, kombiniert aus beiden (siehe combineFrom in SYNC_FIELD_CONFIG unten).
+const NOTIZEN_INTERN_FIELD_KEY = '2565f8005e57f0b6bad0a36560f9f3213beffe98'; // "Projektdoku-Notizen"
+const NOTIZEN_KUNDE_FIELD_KEY = '0aff5c6f5bd4d7990c171cbe62a670bfabd5c0fd'; // "Sonstige Mitteilung Kunde"
+
 // Stufe 2 (IDEEN-Felder-und-Aktionen.md, R1+R2, die zwei "Anruf-Killer"): TODO, Feldcode erst
 // eintragen nachdem listDealFieldsHelper() geprüft hat, ob unter den 33 Fulfillment-Feldern vom
 // 10.08. schon ein passendes Datumsfeld existiert -- sonst neu in Pipedrive anlegen (Typ: Datum,
@@ -103,7 +108,9 @@ const MONTAGEPARTNER_OPTION_IDS = {
   'Berger Elektrotechnik (KTN)': 158,
   'Greensky (OÖ, SBG)': 159,
   'KOLLSTAR (OÖ)': 160,
-  'Kreuzeder (OÖ, SBG)': 161
+  'Kreuzeder (OÖ, SBG)': 161,
+  'Tiroler Partner (T)': 243,
+  'Vorarlberg Partner (V)': 244
 };
 const MONTAGEPARTNER_ID_TO_NAME = Object.fromEntries(
   Object.entries(MONTAGEPARTNER_OPTION_IDS).map(([name, id]) => [id, name])
@@ -127,7 +134,9 @@ const PARTNER_SHEET_CONFIG = {
   'Berger Elektrotechnik (KTN)': { sheetId: 'TODO_SHEET_ID_BERGER', tabName: 'TODO_TABNAME_BERGER' },
   'Greensky (OÖ, SBG)': { sheetId: 'TODO_SHEET_ID_GREENSKY', tabName: 'TODO_TABNAME_GREENSKY' },
   'KOLLSTAR (OÖ)': { sheetId: '1KPYBeVzsj0izYI6ZzUza4Bl5JcUIzWI1m5oojTOJ47E', tabName: 'Tabellenblatt1' }, // Testumgebung
-  'Kreuzeder (OÖ, SBG)': { sheetId: 'TODO_SHEET_ID_KREUZEDER', tabName: 'TODO_TABNAME_KREUZEDER' }
+  'Kreuzeder (OÖ, SBG)': { sheetId: 'TODO_SHEET_ID_KREUZEDER', tabName: 'TODO_TABNAME_KREUZEDER' },
+  'Tiroler Partner (T)': { sheetId: 'TODO_SHEET_ID_TIROL', tabName: 'TODO_TABNAME_TIROL' },
+  'Vorarlberg Partner (V)': { sheetId: 'TODO_SHEET_ID_VORARLBERG', tabName: 'TODO_TABNAME_VORARLBERG' }
 };
 
 /** Öffnet den konfigurierten Ziel-Tab für einen Partner, wirft klaren Fehler wenn Config/Tab fehlt. */
@@ -177,7 +186,8 @@ const COL = {
   ibErledigt: 'IB erledigt',
   wunschtermin: 'Wunschtermin Partner',
   ordnerLink: 'Link zum Kundenordner',
-  dealId: 'Deal-ID'
+  dealId: 'Deal-ID',
+  sonstigeInfos: 'Sonstige Informationen'
 };
 
 /**
@@ -195,6 +205,15 @@ const SYNC_FIELD_CONFIG = [
     label: 'Anlagendetails (Summary)',
     sheetColumnHeader: COL.module,
     pipedriveFieldKey: ANLAGENDETAILS_FIELD_KEY,
+    direction: 'pipedrive_to_sheet'
+  },
+  // Valentin, 25.08.: "beide Notizen" -- interne Fulfillment-Hinweise UND was der Kunde selbst
+  // gesagt hat, beide sollen der Montagepartner sehen, es gibt aber nur eine Sheet-Spalte dafür.
+  // combineFrom statt pipedriveFieldKey -- siehe combineFrom-Handling in FieldSync.gs.
+  {
+    label: 'Sonstige Informationen',
+    sheetColumnHeader: COL.sonstigeInfos,
+    combineFrom: [NOTIZEN_INTERN_FIELD_KEY, NOTIZEN_KUNDE_FIELD_KEY],
     direction: 'pipedrive_to_sheet'
   },
   {
