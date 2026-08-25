@@ -111,14 +111,16 @@ const ANLAGENDETAILS_FIELD_KEY = 'a38455087829e67f22cb5217a44c3cf31f39bcbc'; // 
 const LIEFERTERMIN_FIELD_KEY = 'c0a676d8db66f0cb6300e8160e1401355a226990'; // "Material-Liefertermin", date
 const NOTIZEN_KUNDE_FIELD_KEY = '0aff5c6f5bd4d7990c171cbe62a670bfabd5c0fd'; // "Sonstige Mitteilung Kunde"
 
-// Neue Felder (25.08.2026): wer hat das Elektro-/Kleinmaterial bezahlt bzw. organisiert -- beide
-// enum mit denselben 3 Optionen (Kunde/RP/Montagepartner). ELEKTROMATERIAL_GEZAHLT_FIELD_KEY und
-// die Options-IDs sind noch TODO -- zeigeElektromaterialFelder() (SetupHelper.js) einmal laufen
-// lassen und hier eintragen, dann checkConfiguration() gegenprüfen.
-const ELEKTROMATERIAL_GEZAHLT_FIELD_KEY = 'TODO_ELEKTROMATERIAL_GEZAHLT_FIELD_CODE';
+// Neue Felder (25.08.2026): wer hat das Elektro-/Kleinmaterial bezahlt bzw. organisiert. Beide enum,
+// aber mit EIGENEN Options-IDs pro Feld (per zeigeElektromaterialFelder() verifiziert -- die IDs sind
+// trotz gleicher 4 Labels NICHT zwischen den beiden Feldern geteilt).
+const ELEKTROMATERIAL_GEZAHLT_FIELD_KEY = '1a352d7b69ffb99c05960d51b225c8bfaa422d82'; // "Elektromaterial gezahlt von"
+const ELEKTROMATERIAL_GEZAHLT_OPTION_IDS = { 'RP': 178, 'Montagepartner': 179, 'Kunde': 180, 'noch offen': 181 };
+const ELEKTROMATERIAL_GEZAHLT_ID_TO_NAME = invertOptionMap(ELEKTROMATERIAL_GEZAHLT_OPTION_IDS);
+
 const ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY = '767eb0f43cd9f52d8a06c113294adb2cc521e234'; // "Elektromaterial organisiert von"
-const ELEKTROMATERIAL_OPTION_IDS = { 'Kunde': 0, 'RP': 0, 'Montagepartner': 0 }; // TODO: echte Options-IDs eintragen
-const ELEKTROMATERIAL_ID_TO_NAME = invertOptionMap(ELEKTROMATERIAL_OPTION_IDS);
+const ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS = { 'RP': 256, 'Montagepartner': 257, 'Kunde': 258, 'noch offen': 259 };
+const ELEKTROMATERIAL_ORGANISIERT_ID_TO_NAME = invertOptionMap(ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS);
 
 // Alle Inhaltsfelder, die im Doc landen -- für den Vollständigkeits-Check im Log (siehe
 // checkFieldCompleteness). Reihenfolge/Label muss NICHT zur Doc-Reihenfolge passen, nur zur
@@ -140,11 +142,11 @@ const CONTENT_FIELDS = [
   // sonst zeigt die Log-Spalte dauerhaft dieselben zwei harmlosen Einträge und verliert ihren
   // Signalwert (genau die Spalte, die man beim Durchsehen des Log-Sheets zuerst anschaut).
   { key: NOTIZEN_INTERN_FIELD_KEY, label: 'Interne Notizen', optional: true },
-  { key: NOTIZEN_KUNDE_FIELD_KEY, label: 'Sonstige Mitteilung Kunde', optional: true }
-  // ELEKTROMATERIAL_*_FIELD_KEY bewusst noch nicht hier drin -- solange
-  // ELEKTROMATERIAL_GEZAHLT_FIELD_KEY ein TODO-Platzhalter ist, würde die Feld-Existenzprüfung in
-  // checkConfiguration() (die JEDES CONTENT_FIELDS-Element gegen dealFields abgleicht) den
-  // kompletten Tages-Trigger blockieren. Erst zusammen mit den echten Werten ergänzen.
+  { key: NOTIZEN_KUNDE_FIELD_KEY, label: 'Sonstige Mitteilung Kunde', optional: true },
+  // Neue Felder, bei bereits laufenden Deals im Regelfall noch leer -- zählen deshalb NICHT als
+  // Pflichtfeld mit, sonst zeigt "Leere Felder" im Log-Sheet ab sofort dauerhaft diese zwei.
+  { key: ELEKTROMATERIAL_GEZAHLT_FIELD_KEY, label: 'Elektromaterial gezahlt von', optional: true },
+  { key: ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY, label: 'Elektromaterial organisiert von', optional: true }
 ];
 
 /** Zählt befüllte/leere PFLICHT-Inhaltsfelder eines Deals -- Grundlage für die Log-Spalten "Befüllt" und "Leere Felder". */

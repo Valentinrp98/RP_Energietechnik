@@ -257,12 +257,8 @@ function checkConfiguration() {
     NOTIZEN_INTERN_FIELD_KEY, NETZANSUCHEN_FIELD_KEY, DACHFORM_FIELD_KEY, EINDECKUNG_FIELD_KEY,
     AUSRICHTUNG_FIELD_KEY, DC_TERMIN_FIELD_KEY, AC_TERMIN_FIELD_KEY, IB_TERMIN_FIELD_KEY,
     DC_KABELWEG_FIELD_KEY, AC_KABELWEG_FIELD_KEY, ORT_VERTEILER_FIELD_KEY,
-    ANLAGENDETAILS_FIELD_KEY, LIEFERTERMIN_FIELD_KEY, NOTIZEN_KUNDE_FIELD_KEY
-    // ELEKTROMATERIAL_*: bewusst noch NICHT hier drin, solange ELEKTROMATERIAL_GEZAHLT_FIELD_KEY/
-    // ELEKTROMATERIAL_OPTION_IDS noch TODO-Platzhalter sind -- checkConfiguration() läuft im
-    // täglichen 2-Uhr-Trigger und blockiert bei jedem Problem den KOMPLETTEN Lauf (alle Deals), nicht
-    // nur diese zwei Felder. Erst zusammen mit den echten Werten aus zeigeElektromaterialFelder()
-    // eintragen, nie einen Zwischenstand live schalten, der den Trigger lahmlegt.
+    ANLAGENDETAILS_FIELD_KEY, LIEFERTERMIN_FIELD_KEY, NOTIZEN_KUNDE_FIELD_KEY,
+    ELEKTROMATERIAL_GEZAHLT_FIELD_KEY, ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY
   };
   Object.entries(configWerte).forEach(([name, wert]) => {
     if (String(wert).startsWith('TODO_')) probleme.push(`${name} ist noch nicht ausgefüllt (${wert})`);
@@ -344,9 +340,9 @@ function checkConfiguration() {
       { key: DACHFORM_FIELD_KEY, map: DACHFORM_OPTION_IDS, label: 'Dachform' },
       { key: EINDECKUNG_FIELD_KEY, map: EINDECKUNG_OPTION_IDS, label: 'Eindeckung' },
       { key: AUSRICHTUNG_FIELD_KEY, map: AUSRICHTUNG_OPTION_IDS, label: 'Ausrichtung' },
-      { key: MONTAGEPARTNER_FIELD_KEY, map: MONTAGEPARTNER_OPTION_IDS, label: 'Montagepartner' }
-      // ELEKTROMATERIAL_OPTION_IDS bewusst noch nicht hier drin -- Platzhalter-IDs (0) würden
-      // checkConfiguration() JETZT SCHON zum Blocken bringen, siehe Kommentar bei configWerte oben.
+      { key: MONTAGEPARTNER_FIELD_KEY, map: MONTAGEPARTNER_OPTION_IDS, label: 'Montagepartner' },
+      { key: ELEKTROMATERIAL_GEZAHLT_FIELD_KEY, map: ELEKTROMATERIAL_GEZAHLT_OPTION_IDS, label: 'Elektromaterial gezahlt von' },
+      { key: ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY, map: ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS, label: 'Elektromaterial organisiert von' }
     ];
     enumChecks.forEach(({ key, map, label }) => {
       const feld = byCode[key];
