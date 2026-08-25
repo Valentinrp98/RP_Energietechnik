@@ -44,7 +44,7 @@ function fuegeEindeckungOptionenHinzu() {
   const bestehendeLabels = feld.options.map(o => o.label.toLowerCase());
   const wirklichNeu = NEUE_OPTIONEN.filter(label => !bestehendeLabels.includes(label.toLowerCase()));
   if (wirklichNeu.length === 0) {
-    Logger.log('Alle 4 Optionen sind schon vorhanden -- nichts zu tun.');
+    Logger.log(`Alle ${NEUE_OPTIONEN.length} Optionen sind schon vorhanden -- nichts zu tun.`);
     return;
   }
 
@@ -351,7 +351,7 @@ function checkConfiguration() {
       Object.entries(map).forEach(([erwartetesLabel, id]) => {
         if (!echt[String(id)]) {
           probleme.push(`${label}: Options-ID ${id} ("${erwartetesLabel}") existiert nicht mehr (gültig: ${Object.entries(echt).map(([i, l]) => `${l}=${i}`).join(', ')})`);
-        } else if (echt[String(id)] !== erwartetesLabel) {
+        } else if (echt[String(id)].toLowerCase() !== erwartetesLabel.toLowerCase()) {
           probleme.push(`${label}: Options-ID ${id} heißt in Pipedrive jetzt "${echt[String(id)]}", im Script steht "${erwartetesLabel}" -- Config.js nachziehen`);
         }
       });
