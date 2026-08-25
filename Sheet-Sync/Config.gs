@@ -13,6 +13,11 @@ const PLZ_FIELD_KEY = '5fef394025c936df4b58763b2b58c340fbb0d251'; // an der Pers
 const MODULE_ANZAHL_FIELD_KEY = '46e74c317774c91ac843a431780ad24d2e59da03';
 const SPEICHER_KWH_FIELD_KEY = 'd8e9435192bb719365e9bc3186dcba540dff26bd';
 
+// Valentin, 25.08.: statt Modul-/Speicher-Anzahl einzeln zu parsen, reicht der fertige
+// Anlagendetails-Text (dieselbe "Verkaufte_Artikel_Summary" wie in Projektdoku-Generator/
+// Sevdesk-Pipdrive_sync) 1:1 in die Sheet-Spalte "Anlagengröße (Module)" -- kein Parsing nötig.
+const ANLAGENDETAILS_FIELD_KEY = 'a38455087829e67f22cb5217a44c3cf31f39bcbc';
+
 // Stufe 2 (IDEEN-Felder-und-Aktionen.md, R1+R2, die zwei "Anruf-Killer"): TODO, Feldcode erst
 // eintragen nachdem listDealFieldsHelper() geprüft hat, ob unter den 33 Fulfillment-Feldern vom
 // 10.08. schon ein passendes Datumsfeld existiert -- sonst neu in Pipedrive anlegen (Typ: Datum,
@@ -183,6 +188,15 @@ const COL = {
  * Pipedrive-Feldcodes dafür angelegt sind (siehe listDealFieldsHelper() in SetupHelpers.gs).
  */
 const SYNC_FIELD_CONFIG = [
+  // Valentin, 25.08.: kompletter Anlagendetails-Text 1:1 rein, kein Aufsplitten in Modul-/
+  // Speicher-Einzelwerte -- MODULE_ANZAHL_FIELD_KEY/SPEICHER_KWH_FIELD_KEY bleiben unbenutzt.
+  // "Speicher (kWh)"-Spalte bekommt bewusst KEINEN eigenen Eintrag (steht ja schon im Summary-Text).
+  {
+    label: 'Anlagendetails (Summary)',
+    sheetColumnHeader: COL.module,
+    pipedriveFieldKey: ANLAGENDETAILS_FIELD_KEY,
+    direction: 'pipedrive_to_sheet'
+  },
   {
     label: 'Einspeisezählpunkt (ZPN)',
     sheetColumnHeader: COL.zpn,

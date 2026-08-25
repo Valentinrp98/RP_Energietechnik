@@ -273,7 +273,7 @@ function syncPipedriveToSheetFields() {
           if (String(pipedriveWert) === String(aktuellerWert)) return;
 
           if (DRY_RUN) {
-            logRow('pipedrive→sheet', dealId, partner, fieldConfig.label, 'DRY-RUN', `würde "${pipedriveWert}" ins Sheet schreiben`);
+            logRow('pipedrive→sheet', dealId, partner, fieldConfig.label, 'DRY-RUN', `würde "${zeigeWert(pipedriveWert)}" ins Sheet schreiben`);
             summary.dryRun++;
             return;
           }
@@ -292,7 +292,7 @@ function syncPipedriveToSheetFields() {
           zelle.setBackground('#fff2cc'); // gelb, wird von raeumeAlteNotizen() wieder entfernt
           summary.geschrieben++;
           logRow('pipedrive→sheet', dealId, partner, fieldConfig.label, 'geschrieben',
-                 `${zeigeWert(aktuellerWert)} -> ${pipedriveWert}`);
+                 `${zeigeWert(aktuellerWert)} -> ${zeigeWert(pipedriveWert)}`);
         });
       }
     });
