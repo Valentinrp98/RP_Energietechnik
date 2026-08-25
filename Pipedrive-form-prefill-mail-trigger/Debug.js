@@ -86,6 +86,37 @@ function schreibeUmfrageKnittelfelder7093() {
   Logger.log(`Deal ${dealId} aktualisiert. Custom Fields jetzt: ${JSON.stringify(result.custom_fields, null, 2)}`);
 }
 
+/**
+ * EINMALIG: Korrigiert Deal 7093 (Tobias Knittelfelder) -- Valentin hat am 25.08. bestätigt, dass
+ * NUR der Zubau für die PV-Anlage verwendet wird (nicht das Hauptgebäude). Die ursprünglich per
+ * schreibeUmfrageKnittelfelder7093() gesetzten Dachform/Eindeckung/Neigung-Werte waren fürs
+ * Hauptdach gedacht und falsch -- korrigiert auf die echten Zubau-Werte aus der Kunden-Mail.
+ * Gebäudehöhe/Unterkonstruktion/Sparren-Maße/Blitzschutz/Störflächen aus dem Formular bleiben
+ * unverändert (Valentin bestätigt: die galten schon für den Zubau).
+ */
+function korrigiereAufZubauKnittelfelder7093() {
+  const dealId = 7093;
+
+  const internNotiz = [
+    'ZUBAU-DACH (das ist der einzige für die PV-Anlage genutzte Dachteil, lt. Mail + Skizze 25.08.2026):',
+    'Ausrichtung (Gefällerichtung): Nord-Nordwest (N NW)',
+    'Größe: ca. 90m² (Skizze: 13,8x4,9m + 6,5x3,5m, L-Form)',
+    'Belastung (Verkehrs-/Schneelast/PV lt. Paneele): 2,25 kN/m²',
+    'Beschattung: Mauer Nachbargebäude Süd-Südost (S SO), ca. 60cm über Dachniveau',
+    'Kabelweg: West-Südwest (W SW) seitig vom Dach ins Gebäude, innen Platz für Speicher/WR',
+    'Zuleitung ins Gebäude vorhanden: 5x6mm² vom Hauptzählerkasten'
+  ].join('\n');
+
+  const result = patchPipedrive(`deals/${dealId}`, {
+    custom_fields: {
+      [EINDECKUNG_FIELD_KEY]: 255, // Sandwichpaneele (statt fälschlich Blechdach Trapez)
+      [DACHNEIGUNG_FIELD_KEY]: 3.5, // statt fälschlich 3
+      [NOTIZEN_INTERN_FIELD_KEY]: internNotiz
+    }
+  });
+  Logger.log(`Deal ${dealId} korrigiert. Eindeckung=${result.custom_fields[EINDECKUNG_FIELD_KEY]}, Neigung=${result.custom_fields[DACHNEIGUNG_FIELD_KEY]}`);
+}
+
 /** LIEST NUR: Auswahl-Optionen aller Multiple-Choice-Felder im Formular. */
 function logFormChoices() {
   const form = FormApp.openById(FORM_ID);
