@@ -115,6 +115,15 @@ function schreibeUmfrageKnittelfelder7093() {
 function korrigiereAufZubauKnittelfelder7093() {
   const dealId = 7093;
 
+  // Dachform war im ersten Schreibvorgang (schreibeUmfrageKnittelfelder7093) fälschlich fürs
+  // Hauptdach gesetzt (91 = Flachdach) und muss laut Docstring oben ebenfalls auf den Zubau
+  // korrigiert werden -- der richtige Wert (Pultdach vs. Flachdach lt. Foto+Skizze 25.08.) steht
+  // aber nirgends fest, deshalb hier bewusst nicht geraten (siehe DACHFORM_OPTIONS in Code.js).
+  const DACHFORM_ZUBAU = null; // TODO(Valentin): vor Ausführung mit Options-ID befüllen
+  if (DACHFORM_ZUBAU === null) {
+    throw new Error('DACHFORM_ZUBAU nicht gesetzt -- Dachform des Zubaus (Pultdach/Flachdach/...) mit Valentin klären vor Ausführung.');
+  }
+
   const internNotiz = [
     'ZUBAU-DACH (das ist der einzige für die PV-Anlage genutzte Dachteil, lt. Mail + Skizze 25.08.2026):',
     'Ausrichtung (Gefällerichtung): Nord-Nordwest (N NW)',
@@ -127,10 +136,11 @@ function korrigiereAufZubauKnittelfelder7093() {
 
   const result = patchPipedrive(`deals/${dealId}`, {
     custom_fields: {
+      [DACHFORM_FIELD_KEY]: DACHFORM_ZUBAU, // statt fälschlich 91 Flachdach (Hauptdach)
       [EINDECKUNG_FIELD_KEY]: 255, // Sandwichpaneele (statt fälschlich Blechdach Trapez)
       [DACHNEIGUNG_FIELD_KEY]: 3.5, // statt fälschlich 3
       [NOTIZEN_INTERN_FIELD_KEY]: internNotiz
     }
   });
-  Logger.log(`Deal ${dealId} korrigiert. Eindeckung=${result.custom_fields[EINDECKUNG_FIELD_KEY]}, Neigung=${result.custom_fields[DACHNEIGUNG_FIELD_KEY]}`);
+  Logger.log(`Deal ${dealId} korrigiert. Dachform=${result.custom_fields[DACHFORM_FIELD_KEY]}, Eindeckung=${result.custom_fields[EINDECKUNG_FIELD_KEY]}, Neigung=${result.custom_fields[DACHNEIGUNG_FIELD_KEY]}`);
 }
