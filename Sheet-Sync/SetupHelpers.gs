@@ -2,6 +2,24 @@
 // Im Apps-Script-Editor oben im Dropdown auswählen und ausführen (▷-Button).
 
 /**
+ * LIEST NUR: zeigt die echten Tab-Namen der 5 neuen Montageplanung-RP-Sheets -- zweimal falsch
+ * geraten ("Tabellenblatt1", dann "Sheet1"), deshalb hier direkt nachschauen statt nochmal zu raten.
+ */
+function zeigeTabNamenNeuerSheets() {
+  const ids = {
+    'Berger Elektrotechnik': '1agWue-J07hZpo-nRnyYzIxe1ow_QD9vaP61dyiT05G8',
+    'Greensky': '1pRHk5ITCUhMywUuyAn738hAcJ3oK9ZSxwC4EJ92yXnc',
+    'Kreuzeder': '19-TnTIXawgYrDGwMEJauNFRZZaxmzYNtnnIsY1M3MF4',
+    'Tiroler Partner': '10jV4UC_w23l2hyhcDVwG5YyCy95vFtOr_stFBpLotXg',
+    'Vorarlberg Partner': '1r7XorkWkmqOYc0aa_hcfncEOFaGOvxX6eLWYpOMQeRU'
+  };
+  Object.entries(ids).forEach(([label, id]) => {
+    const namen = SpreadsheetApp.openById(id).getSheets().map(s => s.getName());
+    Logger.log(`${label}: ${namen.join(', ')}`);
+  });
+}
+
+/**
  * EINMALIG: fügt die Spalte "Erstellungsdatum" (falls noch nicht vorhanden) ganz rechts in jedem
  * konfigurierten Partner-Sheet hinzu -- die 6 neu angelegten Sheets (KOLLSTAR-Test + 5 echte
  * Montageplanung-RP-Sheets) haben sie noch nicht, weil sie vor dieser Entscheidung erstellt wurden.
