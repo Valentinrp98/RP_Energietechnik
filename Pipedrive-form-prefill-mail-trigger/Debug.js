@@ -36,6 +36,56 @@ function zeigeFormAntwortSpalten() {
   header.forEach((h, i) => Logger.log(`Spalte ${i + 1}: ${h}`));
 }
 
+/**
+ * EINMALIG: Umfrage-Antwort von Tobias Knittelfelder (Deal 7093, 24.08.2026) einspielen.
+ * Deckt NUR das Hauptdach ab (Formular-Antwort) -- die separaten Zubau-Details aus der
+ * Kunden-Mail (Sandwichpaneele, 3,5°, ...) gehören zu einem ANDEREN Dach (Nebengebäude, siehe
+ * Foto+Skizze vom 25.08.) und landen deshalb NICHT in Dachform/Eindeckung/Neigung, sondern
+ * unten separat als Text in den internen Notizen -- sonst würden sie die echten Hauptdach-Werte
+ * überschreiben.
+ * Die 4 Formular-Restantworten (keine eigenen Pipedrive-Felder vorhanden, siehe Chat 25.08.)
+ * kommen in "Sonstige Mitteilung Kunde".
+ */
+function schreibeUmfrageKnittelfelder7093() {
+  const dealId = 7093;
+
+  const internNotiz = [
+    'ZUBAU-DACH (separates Nebengebäude, NICHT das Hauptdach -- Angaben lt. Mail + Skizze 25.08.2026):',
+    'Ausrichtung (Gefällerichtung): Nord-Nordwest (N NW)',
+    'Deckung: Sandwichpaneele',
+    'Größe: ca. 90m² (Skizze: 13,8x4,9m + 6,5x3,5m, L-Form)',
+    'Neigung: 3,5°',
+    'Belastung (Verkehrs-/Schneelast/PV lt. Paneele): 2,25 kN/m²',
+    'Beschattung: Mauer Nachbargebäude Süd-Südost (S SO), ca. 60cm über Dachniveau',
+    'Kabelweg: West-Südwest (W SW) seitig vom Dach ins Gebäude, innen Platz für Speicher/WR',
+    'Zuleitung ins Gebäude vorhanden: 5x6mm² vom Hauptzählerkasten'
+  ].join('\n');
+
+  const kundeNotiz = [
+    'Spezielle Wünsche bei der Belegung: Infos lt. Mail',
+    'Dachpläne vorhanden: Ja',
+    'Beschreibung Kabelweg (Hauptdach, lt. Formular): West Südwest (W SW) seitig vom Dach ins Gebäude',
+    'Sonstiges: Infos lt. Mail'
+  ].join('\n');
+
+  const result = patchPipedrive(`deals/${dealId}`, {
+    custom_fields: {
+      [DACHFORM_FIELD_KEY]: 91, // Flachdach (Hauptdach)
+      [EINDECKUNG_FIELD_KEY]: 93, // Blechdach Trapez (Hauptdach)
+      [DACHNEIGUNG_FIELD_KEY]: 3,
+      [GEBAEUDEHOEHE_FIELD_KEY]: 3,
+      [UNTERKONSTRUKTION_FIELD_KEY]: 100, // Pfetten
+      [HOEHE_SPARREN_FIELD_KEY]: 2.46,
+      [BREITE_SPARREN_FIELD_KEY]: 0.14,
+      [BLITZSCHUTZ_FIELD_KEY]: 102, // Nein
+      [STOERFLAECHEN_FIELD_KEY]: 103, // Ja
+      [NOTIZEN_KUNDE_FIELD_KEY]: kundeNotiz,
+      [NOTIZEN_INTERN_FIELD_KEY]: internNotiz
+    }
+  });
+  Logger.log(`Deal ${dealId} aktualisiert. Custom Fields jetzt: ${JSON.stringify(result.custom_fields, null, 2)}`);
+}
+
 /** LIEST NUR: Auswahl-Optionen aller Multiple-Choice-Felder im Formular. */
 function logFormChoices() {
   const form = FormApp.openById(FORM_ID);

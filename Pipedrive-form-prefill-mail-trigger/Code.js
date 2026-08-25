@@ -37,6 +37,10 @@ const STOERFLAECHEN_FIELD_KEY = '5f419ab6f29e7373cb3edf8bd74fc821ab54d028';
 const BLITZSCHUTZ_FIELD_KEY = 'd6a498297c4b89d3728e63f38fcde42fe20498e2';
 const AUSRICHTUNG_FIELD_KEY = '7ba65cad11182422467e4923292422b601f6da80';
 
+// Wiederverwendete Freitextfelder aus Projektdoku-Generator/Config.js (dieselben Pipedrive-Felder)
+const NOTIZEN_KUNDE_FIELD_KEY = '0aff5c6f5bd4d7990c171cbe62a670bfabd5c0fd'; // "Sonstige Mitteilung Kunde"
+const NOTIZEN_INTERN_FIELD_KEY = '2565f8005e57f0b6bad0a36560f9f3213beffe98'; // "Projektdoku-Notizen"
+
 
 // Options-Mapping: Pipedrive-Options-ID → Formular-Text (nur für enum-Felder)
 const DACHFORM_OPTIONS = { 88: 'Satteldach', 89: 'Walmdach', 90: 'Pultdach', 91: 'Flachdach' };
@@ -59,6 +63,23 @@ function getApiToken() {
 function fetchPipedrive(path) {
   const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`;
   const response = UrlFetchApp.fetch(url, {
+    headers: { 'x-api-token': getApiToken() },
+    muteHttpExceptions: true
+  });
+  const code = response.getResponseCode();
+  if (code !== 200) {
+    throw new Error(`Pipedrive API-Fehler ${code} bei "${path}": ${response.getContentText()}`);
+  }
+  return JSON.parse(response.getContentText()).data;
+}
+
+/** SCHREIBT: Pipedrive-PATCH mit Token im Header + Statusprüfung. */
+function patchPipedrive(path, payload) {
+  const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`;
+  const response = UrlFetchApp.fetch(url, {
+    method: 'patch',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
     headers: { 'x-api-token': getApiToken() },
     muteHttpExceptions: true
   });
