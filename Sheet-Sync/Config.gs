@@ -131,12 +131,12 @@ const MONTAGEPARTNER_ID_TO_NAME = Object.fromEntries(
 // "Montageplanung Ale".
 const PARTNER_SHEET_CONFIG = {
   'ALE-Engineering (NÖ, Wien, BGL)': { sheetId: '1wpv9OMBGHDMinbhiM1IROcyCoPkdNPOamdwUkvqw8OA', tabName: 'Tabellenblatt1' }, // Testumgebung
-  'Berger Elektrotechnik (KTN)': { sheetId: 'TODO_SHEET_ID_BERGER', tabName: 'TODO_TABNAME_BERGER' },
-  'Greensky (OÖ, SBG)': { sheetId: 'TODO_SHEET_ID_GREENSKY', tabName: 'TODO_TABNAME_GREENSKY' },
+  'Berger Elektrotechnik (KTN)': { sheetId: '1agWue-J07hZpo-nRnyYzIxe1ow_QD9vaP61dyiT05G8', tabName: 'Tabellenblatt1' },
+  'Greensky (OÖ, SBG)': { sheetId: '1pRHk5ITCUhMywUuyAn738hAcJ3oK9ZSxwC4EJ92yXnc', tabName: 'Tabellenblatt1' },
   'KOLLSTAR (OÖ)': { sheetId: '1KPYBeVzsj0izYI6ZzUza4Bl5JcUIzWI1m5oojTOJ47E', tabName: 'Tabellenblatt1' }, // Testumgebung
-  'Kreuzeder (OÖ, SBG)': { sheetId: 'TODO_SHEET_ID_KREUZEDER', tabName: 'TODO_TABNAME_KREUZEDER' },
-  'Tiroler Partner (T)': { sheetId: 'TODO_SHEET_ID_TIROL', tabName: 'TODO_TABNAME_TIROL' },
-  'Vorarlberg Partner (V)': { sheetId: 'TODO_SHEET_ID_VORARLBERG', tabName: 'TODO_TABNAME_VORARLBERG' }
+  'Kreuzeder (OÖ, SBG)': { sheetId: '19-TnTIXawgYrDGwMEJauNFRZZaxmzYNtnnIsY1M3MF4', tabName: 'Tabellenblatt1' },
+  'Tiroler Partner (T)': { sheetId: '10jV4UC_w23l2hyhcDVwG5YyCy95vFtOr_stFBpLotXg', tabName: 'Tabellenblatt1' },
+  'Vorarlberg Partner (V)': { sheetId: '1r7XorkWkmqOYc0aa_hcfncEOFaGOvxX6eLWYpOMQeRU', tabName: 'Tabellenblatt1' }
 };
 
 /** Öffnet den konfigurierten Ziel-Tab für einen Partner, wirft klaren Fehler wenn Config/Tab fehlt. */
