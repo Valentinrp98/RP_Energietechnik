@@ -72,13 +72,19 @@ function schreibeUmfrageKnittelfelder7093() {
 
   // Grundsatz (Valentin, 25.08.): Sonstige Mitteilung Kunde soll ALLE Formular-Antworten
   // enthalten, die kein eigenes Pipedrive-Feld haben -- nicht nur eine Auswahl davon.
+  // ACHTUNG: dieses Feld ist "autocomplete", NICHT normaler Freitext -- max. 255 Zeichen,
+  // sonst 400 ERR_SCHEMA_VALIDATION_FAILED (live entdeckt 25.08., noch nirgends dokumentiert).
+  // Deshalb hier bewusst knapp gehalten statt vollständiger Sätze.
   const kundeNotiz = [
-    'Spezielle Wünsche bei der Belegung: Infos lt. Mail',
-    'Dachpläne vorhanden: Ja',
-    'Beschreibung Kabelweg (Hauptdach, lt. Formular): West Südwest (W SW) seitig vom Dach ins Gebäude',
-    'Sonstiges: Infos lt. Mail',
-    'Visualisierung Dachsituation & Technik: (Datei-Upload, kein Wert im Copy-Paste enthalten)'
-  ].join('\n');
+    'Belegung: Infos lt. Mail.',
+    'Dachpläne: Ja.',
+    'Kabelweg (Hauptdach): W-SW seitig ins Gebäude.',
+    'Sonstiges: Infos lt. Mail.',
+    'Visualisierung: Datei-Upload (nicht im Copy-Paste enthalten).'
+  ].join(' ');
+  if (kundeNotiz.length > 255) {
+    throw new Error(`kundeNotiz ist ${kundeNotiz.length} Zeichen -- über dem 255er-Limit von "Sonstige Mitteilung Kunde", kürzen!`);
+  }
 
   const result = patchPipedrive(`deals/${dealId}`, {
     custom_fields: {
