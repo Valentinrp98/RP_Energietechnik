@@ -2,6 +2,36 @@
 // Im Apps-Script-Editor oben im Dropdown auswählen und ausführen (▷-Button).
 
 /**
+ * EINMALIG: fügt die Spalte "Erstellungsdatum" (falls noch nicht vorhanden) ganz rechts in jedem
+ * konfigurierten Partner-Sheet hinzu -- die 6 neu angelegten Sheets (KOLLSTAR-Test + 5 echte
+ * Montageplanung-RP-Sheets) haben sie noch nicht, weil sie vor dieser Entscheidung erstellt wurden.
+ * Nur Header, kein Rückwirkend-Befüllen bestehender Zeilen (deren Erstelldatum kennen wir nicht
+ * mehr genau) -- ab jetzt schreibt createSheetRowForDeal() das bei jeder NEUEN Zeile automatisch.
+ */
+function fuegeErstellungsdatumSpalteHinzu() {
+  Object.entries(PARTNER_SHEET_CONFIG).forEach(([partner, config]) => {
+    if (config.sheetId.startsWith('TODO_') || config.tabName.startsWith('TODO_')) {
+      Logger.log(`Übersprungen: "${partner}" noch nicht vollständig konfiguriert.`);
+      return;
+    }
+    let sheet;
+    try {
+      sheet = openPartnerSheet(partner);
+    } catch (err) {
+      Logger.log(`Übersprungen: "${partner}" -- ${err.message}`);
+      return;
+    }
+    if (findColumnIndexByHeader(sheet, COL.erstellungsdatum)) {
+      Logger.log(`"${partner}": Spalte "${COL.erstellungsdatum}" existiert schon.`);
+      return;
+    }
+    const neueSpalte = sheet.getLastColumn() + 1;
+    sheet.getRange(1, neueSpalte).setValue(COL.erstellungsdatum);
+    Logger.log(`"${partner}": Spalte "${COL.erstellungsdatum}" als Spalte ${neueSpalte} angelegt.`);
+  });
+}
+
+/**
  * Trägt Adresse/PLZ/Telefon/Anlagengröße/Speicher NACHTRÄGLICH in bereits bestehende Zeilen ein
  * (2026-08-17) -- betrifft alle Zeilen, die VOR Stufe 1 (IDEEN-Felder-und-Aktionen.md) angelegt
  * wurden und deren Spalten deshalb leer sind. createSheetRowForDeal() befüllt das nur bei NEUEN

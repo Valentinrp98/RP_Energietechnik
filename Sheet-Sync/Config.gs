@@ -187,7 +187,8 @@ const COL = {
   wunschtermin: 'Wunschtermin Partner',
   ordnerLink: 'Link zum Kundenordner',
   dealId: 'Deal-ID',
-  sonstigeInfos: 'Sonstige Informationen'
+  sonstigeInfos: 'Sonstige Informationen',
+  erstellungsdatum: 'Erstellungsdatum'
 };
 
 /**

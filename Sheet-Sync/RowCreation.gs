@@ -134,13 +134,26 @@ function createSheetRowForDeal(deal) {
 
   // Alle pipedrive_to_sheet- UND bidirektionalen Felder (DC-/AC-/IB-Termin, Materiallieferung, ...)
   // gleich mit dem aktuellen Pipedrive-Wert befüllen, statt bis zum nächsten 15-Minuten-Sync zu warten.
+  // combineFrom-Felder (z.B. "Sonstige Informationen") haben kein pipedriveFieldKey -- derselbe
+  // Guard wie in FieldSync.gs syncPipedriveToSheetFields(), sonst crasht startsWith() auf undefined.
   SYNC_FIELD_CONFIG
-    .filter(f => (f.direction === 'pipedrive_to_sheet' || f.direction === 'bidirektional') && !f.pipedriveFieldKey.startsWith('TODO_'))
+    .filter(f => (f.direction === 'pipedrive_to_sheet' || f.direction === 'bidirektional')
+      && (f.combineFrom || !f.pipedriveFieldKey.startsWith('TODO_')))
     .forEach(fieldConfig => {
       const col = findColumnIndexByHeader(sheet, fieldConfig.sheetColumnHeader);
-      const wert = cf[fieldConfig.pipedriveFieldKey];
-      if (col && wert !== undefined) sheet.getRange(newRow, col).setValue(wert);
+      const wert = fieldConfig.combineFrom
+        ? fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean).join('\n---\n')
+        : cf[fieldConfig.pipedriveFieldKey];
+      if (col && wert !== undefined && wert !== '') sheet.getRange(newRow, col).setValue(wert);
     });
+
+  // Erstellungsdatum: wann die Zeile angelegt wurde, direkt als Spaltenwert (nicht nur als Notiz,
+  // siehe unten) -- der Partner soll das ohne Hovern sehen können. Valentin, 25.08.
+  const erstellungsdatumCol = findColumnIndexByHeader(sheet, COL.erstellungsdatum);
+  if (erstellungsdatumCol) {
+    sheet.getRange(newRow, erstellungsdatumCol).setValue(
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy'));
+  }
 
   // Beantwortet ein für alle Mal "woher kommt diese Zeile" -- und macht sichtbar, dass sie
   // nicht von Hand eingetragen wurde (also auch nicht von Hand gelöscht werden sollte).
