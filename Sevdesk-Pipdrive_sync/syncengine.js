@@ -1038,10 +1038,18 @@ function syncPendingOrders() {
 
   // Nur Aufträge, die neu sind, sich seit dem letzten Sync geändert haben, oder beim letzten
   // Versuch fehlgeschlagen sind (ts dann null, siehe unten) -- ausser sie sind schon geparkt (V2).
+  // FIX (26.08.2026): geparkt hiess bisher "fuer immer ignorieren", bis jemand von Hand
+  // entparkeAuftraege() ausfuehrt -- dabei loest sich der haeufigste Grund (Kundennummer/
+  // Angebotsnummer wurde nachtraeglich in Pipedrive ergaenzt, wie bei Mario Golger) von selbst,
+  // ohne dass das Script je davon erfaehrt. Geparkte Auftraege deshalb 1x/Tag automatisch erneut
+  // versuchen (kein Mail-Spam-Risiko: "Kein Deal gefunden" loest keine alarmiereBeiKonflikt()-Mail
+  // aus, nur der seltenere Angebotsnummer-Konflikt tut das). Klappt's, entparkt der normale
+  // Erfolgspfad unten automatisch (state ohne geparkt-Flag). Klappt's nicht, bleibt er bis zum
+  // naechsten Kalendertag geparkt.
   const zuSyncen = alleAuftraege.filter(o => {
     const s = state[o.id];
     if (!s) return true;
-    if (s.geparkt) return false;
+    if (s.geparkt) return s.gespeichert < heuteAlsIso();
     return s.ts !== (o.update || '');
   });
 
