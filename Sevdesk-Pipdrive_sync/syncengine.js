@@ -148,44 +148,59 @@ function searchDealsByField(fieldKey, value) {
 
 /**
  * Findet den Ziel-Deal für einen sevdesk-Auftrag.
- * @returns {{dealId, matchedBy, ambiguous, candidates}}
+ * @returns {{dealId, matchedBy, ambiguous, candidates, konflikt}}
  */
 function findTargetDeal(order) {
-  // --- Stufe 1: Angebotsnummer (immer eindeutig, auch bei mehreren Angeboten pro Kunde)
+  // Wird gesetzt, wenn Stufe 1 einen Deal über die Angebotsnummer findet, die Kundennummer-
+  // Gegenprobe aber nicht passt. FIX (26.08.2026, Deal 7138/7356): vorher wurde das als sofortiger
+  // Abbruch behandelt -- dabei kann sevdesk dieselbe Angebotsnummer nachweislich an zwei
+  // verschiedene Kunden vergeben (live beobachtet: "2026-630-A" bei Schwaiger UND Radmacher).
+  // Jetzt läuft die Suche bei so einem Konflikt zu Stufe 2 (Kundennummer) weiter -- der eigentliche
+  // Fehler war ja nicht "kein Treffer", sondern "der über die Nummer gefundene Deal ist der falsche".
+  let angebotsnummerKonflikt = null;
+
+  // --- Stufe 1: Angebotsnummer (i.d.R. eindeutig, aber siehe oben: nicht garantiert)
   if (order.orderNumber) {
     const byNumber = searchDealsByField(FIELD_KEYS.sevdesk_angebotsnummer, order.orderNumber);
     if (byNumber.length === 1) {
-      // Gegenprobe: falls der gefundene Deal AUCH eine Kundennummer trägt, muss sie zum
-      // Auftrag passen. Tut sie das nicht, deutet das auf einen Tippfehler bei der
-      // Angebotsnummer hin (falscher Deal) — dann lieber warnen statt blind schreiben.
       if (order.customerId) {
         const kundeCheck = getDealCustomFieldValue(byNumber[0], FIELD_KEYS.sevdesk_kunden_id);
         if (kundeCheck && kundeCheck !== String(order.customerId)) {
-          return {
-            dealId: null, matchedBy: 'Angebotsnummer', ambiguous: true,
-            candidates: byNumber,
-            konflikt: `Deal ${byNumber[0]} hat Angebotsnummer "${order.orderNumber}", aber Kundennummer "${kundeCheck}" statt erwarteter "${order.customerId}" — vermutlich falscher Deal`
-          };
+          angebotsnummerKonflikt = `Deal ${byNumber[0]} hat Angebotsnummer "${order.orderNumber}", aber Kundennummer "${kundeCheck}" statt erwarteter "${order.customerId}" — vermutlich doppelt vergebene Angebotsnummer in sevdesk (weiter versucht über Kundennummer)`;
+          // Kein return -- bewusst zu Stufe 2 weiterlaufen.
+        } else {
+          return { dealId: byNumber[0], matchedBy: 'Angebotsnummer', ambiguous: false, candidates: byNumber };
         }
+      } else {
+        return { dealId: byNumber[0], matchedBy: 'Angebotsnummer', ambiguous: false, candidates: byNumber };
       }
-      return { dealId: byNumber[0], matchedBy: 'Angebotsnummer', ambiguous: false, candidates: byNumber };
     }
     if (byNumber.length > 1) {
-      // Sollte nie passieren — dieselbe Angebotsnummer steht in mehreren Deals
+      // Mehrere Deals TRAGEN dieselbe Angebotsnummer -- das ist mit Kundennummer allein nicht mehr
+      // sicher auflösbar, welcher Deal gemeint ist. Hier bleibt der Abbruch richtig.
       return { dealId: null, matchedBy: 'Angebotsnummer', ambiguous: true, candidates: byNumber };
     }
   }
 
-  // --- Stufe 2: Kundennummer als Fallback (nur wenn eindeutig)
+  // --- Stufe 2: Kundennummer (Fallback bei fehlender Angebotsnummer ODER Konflikt aus Stufe 1)
   if (order.customerId) {
     const byCustomer = searchDealsByField(FIELD_KEYS.sevdesk_kunden_id, order.customerId);
     if (byCustomer.length === 1) {
-      return { dealId: byCustomer[0], matchedBy: 'Kundennummer', ambiguous: false, candidates: byCustomer };
+      return {
+        dealId: byCustomer[0], matchedBy: 'Kundennummer', ambiguous: false, candidates: byCustomer,
+        konflikt: angebotsnummerKonflikt || undefined
+      };
     }
     if (byCustomer.length > 1) {
       // Kunde hat mehrere Deals → Angebotsnummer muss gepflegt werden
-      return { dealId: null, matchedBy: 'Kundennummer', ambiguous: true, candidates: byCustomer };
+      return { dealId: null, matchedBy: 'Kundennummer', ambiguous: true, candidates: byCustomer, konflikt: angebotsnummerKonflikt || undefined };
     }
+  }
+
+  if (angebotsnummerKonflikt) {
+    // Weder über die Angebotsnummer (Konflikt) noch über Kundennummer eindeutig auflösbar --
+    // jetzt bleibt nur noch der manuelle Weg (syncDirektAufBekannterDeal mit sevdesk-Order-ID).
+    return { dealId: null, matchedBy: 'Angebotsnummer', ambiguous: true, candidates: [], konflikt: angebotsnummerKonflikt };
   }
 
   return { dealId: null, matchedBy: null, ambiguous: false, candidates: [] };
@@ -436,10 +451,17 @@ function syncOrderToPipedrive(orderId) {
     const warnung = aggregated.unknownArticles.length > 0
       ? ` | ⚠️ Unbekannt: ${aggregated.unknownArticles.join(', ')}`
       : '';
-    const details = `[${match.matchedBy}] ${erkannt}${warnung}`;
+    // match.konflikt kann trotz erfolgreichem Schreiben gesetzt sein (Stufe 1 hatte einen falschen
+    // Angebotsnummer-Treffer, Stufe 2 hat über Kundennummer korrekt aufgelöst) -- die doppelt
+    // vergebene Nummer bleibt trotzdem eine Pipedrive/sevdesk-Datenlücke, die aufgeräumt gehört.
+    const konfliktHinweis = match.konflikt ? ` | ⚠️ ${match.konflikt}` : '';
+    const details = `[${match.matchedBy}] ${erkannt}${warnung}${konfliktHinweis}`;
 
     logSyncResult(DRY_RUN ? 'DRY_RUN' : 'SUCCESS', dealId, label, '-', details);
     Logger.log(`${DRY_RUN ? '(DRY_RUN, nichts geschrieben) ' : ''}✓ ${label} → Deal ${dealId} (${match.matchedBy})`);
+    if (match.konflikt) {
+      alarmiereBeiKonflikt(label, `Erfolgreich über Kundennummer nach Deal ${dealId} geschrieben, ABER: ${match.konflikt}`);
+    }
     return true;
 
   } catch (e) {
