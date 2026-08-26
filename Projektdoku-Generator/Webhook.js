@@ -80,31 +80,51 @@ function verarbeiteWebhookEvent(e) {
       return;
     }
 
-    // BUGFIX 2026-08-26: hieß bis dahin "meta.entity" -- das Feld existiert im echten Pipedrive-v2-
-    // Payload NICHT, es heißt "meta.object" (per Pipedrive-Doku verifiziert, siehe
-    // https://pipedrive.readme.io/docs/guide-for-webhooks). "meta.entity" war seit dem allerersten
-    // Deploy immer undefined, die Bedingung damit immer wahr -- JEDES Event wurde seit Go-Live
-    // stillschweigend ignoriert. Ist nie aufgefallen, weil doPost() bewusst immer mit 200 antwortet
-    // (siehe Kommentar oben) -- die Webhook-Health-Prüfung vom 25.08. hat nur die Zustellung
-    // (is_active/last_http_status) geprüft, nie die tatsächliche Verarbeitung im Code.
+    // BUGFIX 2026-08-26 (zweiter Anlauf -- der erste war falsch): das Entity-Feld heißt im
+    // Webhooks-**v2**-Payload "meta.entity". "meta.object" ist die **v1**-Schreibweise. Ein Fix
+    // vom selben Tag hatte das genau umgedreht (entity -> object) und damit den bis dahin
+    // funktionierenden Filter kaputtgemacht: meta.object ist in v2 undefined, die Bedingung damit
+    // immer wahr, jedes Event wurde ab Deployment-Version 3 stillschweigend verworfen.
+    // Quelle: https://pipedrive.readme.io/docs/guide-for-webhooks-v2#webhook-format (v2: meta.entity)
+    // vs. https://pipedrive.readme.io/docs/guide-for-webhooks (v1: meta.object) -- beide am
+    // 26.08.2026 direkt gegen die Doku geprueft, nicht aus dem Gedaechtnis.
+    // Deshalb wird jetzt BEIDES akzeptiert: der Filter darf nicht davon abhaengen, welche
+    // Payload-Variante Pipedrive schickt -- diese Fehlerklasse soll in keiner Richtung mehr moeglich sein.
     const meta = payload.meta || {};
-    if (meta.object !== 'deal' || meta.action !== 'change') {
-      Logger.log(`doPost: Event ${meta.action}.${meta.object} ignoriert (nur change.deal registriert/erwartet).`);
+    const entity = meta.entity || meta.object;
+    if (entity !== 'deal' || meta.action !== 'change') {
+      // Ins Log-SHEET, nicht nur nach Stackdriver: genau dieser Zweig hat den Fix-Fehler oben
+      // unsichtbar gemacht. Der stille Ausstieg weiter unten (Feld nicht betroffen) bleibt still --
+      // der ist der Normalfall. Ein unerwartetes meta ist es nicht.
+      logRow(null, null, null, 'SOFT_ERROR', null, null,
+             `[Webhook] Event verworfen -- erwartet change.deal, bekommen ${meta.action}.${entity}. Roh-meta: ${JSON.stringify(meta)}`);
       return;
     }
 
     const deal = payload.data;
     if (!deal || !deal.id) {
-      Logger.log('doPost: kein data.id im Payload -- Event ignoriert.');
+      logRow(null, null, null, 'SOFT_ERROR', null, null,
+             `[Webhook] Event verworfen -- kein data.id im Payload. Roh-meta: ${JSON.stringify(meta)}`);
       return;
     }
 
-    const cf = deal.custom_fields || {};
-    const status = String(cf[DOKU_STATUS_FIELD_KEY]);
-    let forceRegenerate;
-    if (status === String(DOKU_STATUS_OPTION_TRIGGER)) forceRegenerate = false;
-    else if (status === String(DOKU_STATUS_OPTION_NEU_ERSTELLEN)) forceRegenerate = true;
-    else return; // die meisten Deal-Änderungen betreffen dieses Feld nicht -- stiller, günstiger Ausstieg
+    // Vorab-Filter auf dem rohen Payload, ohne API-Call -- der weit ueberwiegende Teil aller
+    // change.deal-Events betrifft das Statusfeld gar nicht, und genau das ist der Kostenvorteil
+    // gegenueber dem Vollscan im Tages-Trigger.
+    // Fehlt der custom_fields-Block ganz, wird NICHT still ausgestiegen: dann ist die
+    // Payload-Annahme falsch (wie oben schon einmal) und wir wuerden wieder alles lautlos verwerfen.
+    // Stattdessen einmal frisch nachladen und laut ins Log schreiben.
+    if (!deal.custom_fields) {
+      logRow(deal.id, deal.title, null, 'SOFT_ERROR', null, null,
+             '[Webhook] Payload enthaelt keinen custom_fields-Block -- Vorab-Filter nicht moeglich, Deal wird frisch geprueft. Wenn das dauerhaft auftritt: Payload-Format hat sich geaendert.');
+      verarbeiteTreffer(deal.id, deal.title);
+      return;
+    }
+
+    const status = String(deal.custom_fields[DOKU_STATUS_FIELD_KEY]);
+    if (status !== String(DOKU_STATUS_OPTION_TRIGGER) && status !== String(DOKU_STATUS_OPTION_NEU_ERSTELLEN)) {
+      return; // Normalfall: diese Deal-Aenderung betrifft das Statusfeld nicht -- stiller, guenstiger Ausstieg
+    }
 
     verarbeiteTreffer(deal.id, deal.title);
   } finally {
@@ -132,6 +152,15 @@ function verarbeiteTreffer(dealId, dealTitelAusPayload) {
     // Status frisch neu auswerten statt den Payload-Wert von oben weiterzureichen -- zwischen Event
     // und dieser Zeile kann der Deal schon wieder anders stehen (z.B. Tages-Trigger war schneller).
     const statusFrisch = String((deal.custom_fields || {})[DOKU_STATUS_FIELD_KEY]);
+    // Und dann auch WIRKLICH danach handeln: ohne diese Prüfung würde processDeal() unabhängig vom
+    // frischen Status laufen. Das ist der Unterschied zwischen "Doku bei Bedarf" und "Doku bei jeder
+    // beliebigen Deal-Änderung" -- der Tages-Trigger filtert in findDealsForDokuErstellung(), dieser
+    // Pfad hatte kein Gegenstück dazu. Nötig geworden durch den custom_fields-Fallback in
+    // verarbeiteWebhookEvent(), der hier absichtlich ungefiltert hereinkommt.
+    if (statusFrisch !== String(DOKU_STATUS_OPTION_TRIGGER) && statusFrisch !== String(DOKU_STATUS_OPTION_NEU_ERSTELLEN)) {
+      Logger.log(`doPost: Deal ${dealId} steht beim Nachladen auf Status "${statusFrisch}" -- kein Trigger-Wert (mehr), nichts zu tun.`);
+      return;
+    }
     const forceRegenerate = statusFrisch === String(DOKU_STATUS_OPTION_NEU_ERSTELLEN);
     const result = processDeal(deal, forceRegenerate);
     logRow(deal.id, deal.title, result.kunde, result.status, result.docUrl, result.completeness, `[Webhook] ${result.detail}`);
@@ -231,4 +260,29 @@ function loescheWebhookMitId() {
   const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/v1/webhooks/${WEBHOOK_ID_ZUM_LOESCHEN}?api_token=${getApiToken()}`;
   const response = UrlFetchApp.fetch(url, { method: 'delete', muteHttpExceptions: true });
   Logger.log(`Löschung: HTTP ${response.getResponseCode()} -- ${response.getContentText()}`);
+}
+
+/**
+ * Ein Aufruf, der beide Wege prüft: den Webhook (Sofort-Reaktion) UND den Tages-Trigger
+ * (Sicherheitsnetz). Entstanden am 26.08.2026, weil das Log-Sheet gezeigt hat, dass BEIDE Wege
+ * gleichzeitig still lagen -- kein einziger "[Webhook]"-Eintrag seit Go-Live, und keine
+ * Zusammenfassungszeile des Tageslaufs mehr seit dem 21.08. Alle Einträge dazwischen kamen von
+ * manuellen testEinzelDeal()-Läufen. Genau diese Kombination sieht von außen aus wie
+ * "das Script funktioniert doch", weil ja Dokumente entstehen.
+ *
+ * Wichtig: ein von Pipedrive nach 3 Tagen Dauerausfall automatisch deaktivierter Webhook wird
+ * NICHT dadurch wieder aktiv, dass man WEBHOOK_SUBSCRIPTION_URL im Code korrigiert -- die
+ * Registrierung lebt in Pipedrive, nicht im Script. Dann muss SETUP_EINMALIG_registerWebhook()
+ * erneut laufen.
+ */
+function DIAGNOSE_pruefeGesundheit() {
+  const trigger = ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'generateDailyProjectDocumentation');
+  if (trigger.length === 0) {
+    Logger.log('TAGES-TRIGGER: KEINER vorhanden -- das Sicherheitsnetz fehlt. SETUP_EINMALIG_createDailyTrigger() ausführen.');
+  } else {
+    Logger.log(`TAGES-TRIGGER: ${trigger.length} vorhanden (${trigger.length > 1 ? 'ACHTUNG: Duplikate, läuft mehrfach' : 'ok'}).`);
+  }
+  Logger.log('--- Webhook ---');
+  checkWebhookRegistration();
 }
