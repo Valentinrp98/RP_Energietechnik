@@ -602,15 +602,44 @@ function syncDirektAufBekannterDeal(dealId, orderId) {
 
 /**
  * Einmal-Fix (26.08.2026): Deal 7138 (Wolfgang Schwaiger, sevdesk-Kundennummer 4062) blieb leer,
- * weil sevdesk die Angebotsnummer "2026-630-A" DOPPELT vergeben hat -- Deal 7356 (Irene Radmacher,
- * Kundennummer 4061) hat dieselbe Nummer, aber einen anderen sevdesk-Auftrag. Die Angebotsnummer-
- * Suche fand deshalb nur Radmachers Deal, die Kundennummer-Gegenprobe hat zu Recht "falscher Deal"
- * gemeldet und nichts geschrieben (siehe project_sevdesk_pipedrive_sync). Schreibt hier über die
- * eindeutige sevdesk-Order-ID direkt auf den bekannten Deal -- umgeht die kollidierende
- * Angebotsnummer komplett, keine Text-Suche nötig.
+ * weil die Angebotsnummer-Suche nur Deal 7356 (Irene Radmacher) fand und die Kundennummer-
+ * Gegenprobe zu Recht "falscher Deal" meldete. Schreibt hier über die eindeutige sevdesk-Order-ID
+ * direkt auf den bekannten Deal -- umgeht die Text-Suche komplett.
+ *
+ * KORREKTUR der ursprünglichen Diagnose (26.08.2026, nach PDF-Vergleich): war KEIN sevdesk-
+ * Duplikat, wie zunächst angenommen -- "2026-630-A" (Schwaiger) und "2026-633-A" (Radmacher) sind
+ * zwei echte, unterschiedliche sevdesk-Angebote. Der eigentliche Fehler war ein Tippfehler: bei
+ * Deal 7356 stand fälschlich "2026-630-A" im Angebotsnummer-Feld statt "2026-633-A" (630/633
+ * leicht verwechselbar). Die Artikel-Daten bei Deal 7356 waren davon nicht betroffen (über die
+ * Kundennummer-Route korrekt aus 2026-633-A geschrieben) -- siehe korrigiereIreneRadmacher7356()
+ * für den eigentlichen Fix.
  */
 function korrigiereWolfgangSchwaiger7138() {
   syncDirektAufBekannterDeal(7138, 29997036);
+}
+
+/**
+ * Einmal-Fix (26.08.2026): Deal 7356 (Irene Radmacher) hatte im Angebotsnummer-Feld fälschlich
+ * "2026-630-A" (Wolfgang Schwaigers Nummer) statt ihrer echten "2026-633-A" stehen -- Tippfehler,
+ * kein sevdesk-Duplikat (siehe Kommentar bei korrigiereWolfgangSchwaiger7138()). Die bereits
+ * geschriebenen Artikel-Daten sind korrekt (stammen schon von Order 2026-633-A), deshalb hier NUR
+ * das Angebotsnummer-Feld korrigieren -- kein erneuter Artikel-Schreibvorgang nötig.
+ */
+function korrigiereIreneRadmacher7356() {
+  if (DRY_RUN) {
+    Logger.log('DRY_RUN aktiv -- würde Angebotsnummer bei Deal 7356 auf "2026-633-A" korrigieren.');
+    return;
+  }
+  const result = pipedriveFetch('/deals/7356', {
+    method: 'patch',
+    contentType: 'application/json',
+    payload: JSON.stringify({ custom_fields: { [FIELD_KEYS.sevdesk_angebotsnummer]: '2026-633-A' } })
+  });
+  if (!result.success) {
+    Logger.log(`✗ Deal 7356: Korrektur fehlgeschlagen -- ${JSON.stringify(result).substring(0, 200)}`);
+    return;
+  }
+  Logger.log('✓ Deal 7356: Angebotsnummer auf "2026-633-A" korrigiert.');
 }
 
 /**
