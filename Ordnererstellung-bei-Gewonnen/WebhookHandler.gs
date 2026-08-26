@@ -3,8 +3,20 @@
 // und die Web-App-URL bei registerPipedriveWebhook() (siehe SetupHelpers.gs) hinterlegt wurde.
 
 /**
- * Wird von Pipedrive aufgerufen, sobald sich ein Deal ändert (Webhook-Event "updated.deal").
- * Reagiert nur auf den Wechsel status -> "won", ignoriert alles andere.
+ * Wird von Pipedrive aufgerufen, sobald sich ein Deal ändert (Webhook-Event "change.deal").
+ * Reagiert auf JEDE Änderung an einem aktuell gewonnenen Deal, nicht nur auf den Wechsel
+ * status -> "won" selbst.
+ *
+ * Bewusst NICHT auf den reinen Status-Wechsel-Moment eingeschränkt (frühere Fassung): war beim
+ * Gewinnen noch kein Montagepartner gesetzt (Bundesland/Montagepartner-Zuordnung noch nicht
+ * durchgelaufen), gab es danach nie wieder einen Status-Wechsel, der erneut ausgelöst hätte --
+ * der Ordner wäre für diesen Deal nie automatisch entstanden (siehe Fall Knittelfelder/7093,
+ * manuell nachgeholt). Jetzt reagiert der Handler wie Bundesland-aus-PLZ/Montagepartner-aus-
+ * Bundesland auf jedes change.deal-Event und verlässt sich auf die Idempotenz in
+ * processGewonnenDealUnlocked() (Skip bei fehlendem Partner / bereits vorhandenem Link) --
+ * dieselbe Kettenreaktion wie zwischen den beiden anderen Scripts greift damit auch hier: setzt
+ * Montagepartner-aus-Bundesland den Partner NACH dem Gewinn, feuert das selbst ein change.deal,
+ * und dieser Handler bekommt jetzt eine zweite Chance.
  */
 function doPost(e) {
   starteLauf('doPost (Webhook)');
@@ -21,17 +33,9 @@ function doPost(e) {
     // Welche Version tatsächlich registriert ist, hängt von registerPipedriveWebhook() ab (siehe
     // SetupHelpers.gs) -- so bricht der Handler nicht still, falls sich das mal ändert.
     const data = body.data || body.current || {};
-    const previous = body.previous || {};
 
-    // v2-Webhooks schicken in "previous" oft nur die tatsächlich geänderten Felder. Bei jeder
-    // beliebigen Änderung an einem BEREITS gewonnenen Deal fehlt "status" dann in previous ->
-    // previous.status wäre undefined -> "undefined !== 'won'" ist true -> jede Feldänderung sähe
-    // wie ein frischer Gewinn aus. Deshalb zusätzlich prüfen, ob "status" überhaupt im previous-
-    // Objekt vorkommt.
-    const statusHatSichGeaendert = Object.prototype.hasOwnProperty.call(previous, 'status');
-    const istNeuGewonnen = data.status === 'won' && statusHatSichGeaendert && previous.status !== 'won';
-    if (!istNeuGewonnen) {
-      return ContentService.createTextOutput('ignoriert (kein neuer Gewonnen-Status)');
+    if (data.status !== 'won') {
+      return ContentService.createTextOutput('ignoriert (Deal aktuell nicht gewonnen)');
     }
 
     const result = processGewonnenDeal(data.id);
