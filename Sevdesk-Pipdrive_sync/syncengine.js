@@ -362,6 +362,45 @@ function formatiereErkannteFelder(aggregated) {
   return aggregated.summary ? `${zeile} || Rohpositionen: ${aggregated.summary}` : zeile;
 }
 
+/**
+ * Mailt EINMAL pro Konflikt-Fall (Angebotsnummer bei mehreren Deals bzw. Kundennummer-Gegenprobe
+ * fehlgeschlagen, siehe syncOrderToPipedrive) an Valentin -- diese WARNUNG-Zeilen sind selten und
+ * brauchen fast immer eine manuelle Korrektur in Pipedrive/sevdesk (siehe Deal 7138/7356, 26.08.2026:
+ * doppelt vergebene sevdesk-Angebotsnummer). Dedupe über Script Property, sonst mailt jeder
+ * 5-Minuten-Lauf erneut, bis jemand den Konflikt behebt.
+ */
+function alarmiereBeiKonflikt(label, details) {
+  const key = 'KONFLIKT_ALARM_GESENDET';
+  const props = PropertiesService.getScriptProperties();
+  let gesendet;
+  try {
+    gesendet = JSON.parse(props.getProperty(key) || '{}');
+  } catch (e) {
+    gesendet = {};
+  }
+  if (gesendet[label]) return;
+
+  // Alte Einträge (>90 Tage) aufräumen, gleiche Regel wie beim Sync-State -- sonst wächst die
+  // Property unbegrenzt und läuft irgendwann in die 9-KB-Grenze.
+  const grenze = new Date();
+  grenze.setDate(grenze.getDate() - SYNC_STATE_MAX_AGE_TAGE);
+  const grenzeIso = Utilities.formatDate(grenze, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  Object.keys(gesendet).forEach(k => { if (gesendet[k] < grenzeIso) delete gesendet[k]; });
+
+  gesendet[label] = heuteAlsIso();
+  props.setProperty(key, JSON.stringify(gesendet));
+
+  try {
+    MailApp.sendEmail({
+      to: 'valentin@rp-energietechnik.at',
+      subject: `sevdesk-Sync: Konflikt bei Angebot ${label} -- manuell prüfen`,
+      body: `${details}\n\nSync-Log: https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=0 (Tab "${SYNC_LOG_TAB}")\n\nDiese Mail kommt nur einmal pro Fall -- sobald der Konflikt in Pipedrive/sevdesk behoben ist, taucht er im Log nicht mehr auf.`
+    });
+  } catch (e) {
+    Logger.log(`⚠️ Konflikt-Mail konnte nicht gesendet werden: ${e.message}`);
+  }
+}
+
 function syncOrderToPipedrive(orderId) {
   let dealId = null;
 
@@ -376,6 +415,7 @@ function syncOrderToPipedrive(orderId) {
         ? match.konflikt
         : `Kandidaten: ${match.candidates.join(', ')} — Angebotsnummer "${order.orderNumber}" im richtigen Deal eintragen`;
       logSyncResult('WARNUNG', null, label, `Mehrere Deals über ${match.matchedBy} gefunden`, details);
+      alarmiereBeiKonflikt(label, details);
       return false;
     }
 
@@ -513,6 +553,19 @@ function syncDirektAufBekannterDeal(dealId, orderId) {
     Logger.log(`✗ Deal ${dealId} / Order ${orderId}: ${e.message}`);
     return false;
   }
+}
+
+/**
+ * Einmal-Fix (26.08.2026): Deal 7138 (Wolfgang Schwaiger, sevdesk-Kundennummer 4062) blieb leer,
+ * weil sevdesk die Angebotsnummer "2026-630-A" DOPPELT vergeben hat -- Deal 7356 (Irene Radmacher,
+ * Kundennummer 4061) hat dieselbe Nummer, aber einen anderen sevdesk-Auftrag. Die Angebotsnummer-
+ * Suche fand deshalb nur Radmachers Deal, die Kundennummer-Gegenprobe hat zu Recht "falscher Deal"
+ * gemeldet und nichts geschrieben (siehe project_sevdesk_pipedrive_sync). Schreibt hier über die
+ * eindeutige sevdesk-Order-ID direkt auf den bekannten Deal -- umgeht die kollidierende
+ * Angebotsnummer komplett, keine Text-Suche nötig.
+ */
+function korrigiereWolfgangSchwaiger7138() {
+  syncDirektAufBekannterDeal(7138, 29997036);
 }
 
 /**
