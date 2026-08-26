@@ -879,11 +879,13 @@ function pruefeKonfiguration() {
 // ============================================================================
 
 /**
- * Einmalig ausführen, um den 15-Min-Trigger für syncPendingOrders() anzulegen -- es gab dafür
+ * Einmalig ausführen, um den 5-Min-Trigger für syncPendingOrders() anzulegen -- es gab dafür
  * bisher keine Setup-Funktion in diesem Projekt. Löscht zuerst eigene bestehende Trigger auf
  * denselben Handler (idempotent, siehe CLAUDE.md-Learning "Trigger-Installation idempotent
  * bauen"), sonst läuft nach einem zweiten Klick alles doppelt.
  * ERST ausführen, wenn pruefeKonfiguration() "Konfiguration OK" meldet.
+ * Takt auf 5 Min verkürzt (Valentin, 26.08.) -- behebt NICHT den eigentlichen Blocker (Status-
+ * 500-Filter, siehe project_sevdesk_pipedrive_sync), war aber explizit gewünscht.
  */
 function SETUP_EINMALIG_createTrigger() {
   ScriptApp.getProjectTriggers()
@@ -892,9 +894,9 @@ function SETUP_EINMALIG_createTrigger() {
 
   ScriptApp.newTrigger('syncPendingOrders')
     .timeBased()
-    .everyMinutes(15)
+    .everyMinutes(5)
     .create();
-  Logger.log('15-Minuten-Trigger für syncPendingOrders() angelegt.');
+  Logger.log('5-Minuten-Trigger für syncPendingOrders() angelegt.');
 }
 
 /** Diagnose: listet alle dauerhaft geparkten Aufträge mit Kundennummer/Angebotsnummer, damit man
