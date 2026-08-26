@@ -60,6 +60,25 @@ function listPipedriveWebhooks() {
   Logger.log(text);
 }
 
+// Gefundener Duplikat-Webhook (2026-08-26): ID 1687275 vom 25.08. existierte schon, bevor die
+// Registrierung von heute (ID 1688108) dazukam -- beide mit identischer subscription_url. Führt
+// dazu, dass jedes Deal-Event doppelt ankommt; der zweite Aufruf wartet bis zu 30s auf den
+// LockService-Lock des ersten, bevor er (idempotent) übersprungen wird -- riskiert bei Pipedrives
+// engem Webhook-Antwortfenster (~10s) wiederholte Fehlschläge. Über registerPipedriveWebhook()
+// selbst kann man Duplikate nicht verhindern (Pipedrive prüft nicht auf bereits vorhandene,
+// identische subscription_urls) -- deshalb dieser explizite Löschweg statt erneuter Registrierung.
+const WEBHOOK_ID_ZUM_LOESCHEN = 1687275;
+
+/** WEBHOOK_ID_ZUM_LOESCHEN oben eintragen (ID aus listPipedriveWebhooks()), dann ausführen. */
+function loescheWebhookMitId() {
+  if (!WEBHOOK_ID_ZUM_LOESCHEN) {
+    throw new Error('WEBHOOK_ID_ZUM_LOESCHEN ist noch 0 -- ID aus listPipedriveWebhooks() eintragen.');
+  }
+  const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/v1/webhooks/${WEBHOOK_ID_ZUM_LOESCHEN}?api_token=${encodeURIComponent(getApiToken())}`;
+  const response = UrlFetchApp.fetch(url, { method: 'delete', muteHttpExceptions: true });
+  Logger.log(`Löschung von Webhook ${WEBHOOK_ID_ZUM_LOESCHEN}: HTTP ${response.getResponseCode()} -- ${response.getContentText()}`);
+}
+
 /** Debug: listet alle Deal-Custom-Fields (field_name + field_code), um KUNDENORDNER_LINK_FIELD_KEY zu finden. */
 function listDealFieldsHelper() {
   const fields = fetchPipedrive('dealFields?limit=500');
