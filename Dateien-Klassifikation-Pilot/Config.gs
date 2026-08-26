@@ -23,8 +23,18 @@ const ZIEL_UNTERORDNER = {
 
 // Claude-Modell für die Klassifikation. Vision-fähig, günstig genug für einen Piloten mit
 // wenigen Dateien -- vor einem Rollout auf alle Deals nochmal gegen Preis/Genauigkeit prüfen.
-const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+// Bewusst die undatierte ID (kein "-20251001"-Suffix) -- die datierte Snapshot-Schreibweise ist
+// bei aktuellen Claude-Modellen nicht die offizielle Model-ID.
+const CLAUDE_MODEL = 'claude-haiku-4-5';
 const ANTHROPIC_API_VERSION = '2023-06-01';
+
+// Preis Claude Haiku 4.5 (Stand 2026-08-26, siehe platform.claude.com/docs -- vor einem
+// Modellwechsel hier aktualisieren). USD/EUR ist ein fixer Näherungswert, keine Live-Kursabfrage --
+// für den Piloten reicht eine Schätzung, für echte Kosten ist die Anthropic-Console-Abrechnung
+// (in USD) die verbindliche Quelle.
+const CLAUDE_PREIS_USD_PRO_1M_INPUT = 1.00;
+const CLAUDE_PREIS_USD_PRO_1M_OUTPUT = 5.00;
+const USD_ZU_EUR = 0.92;
 
 // Wenn true: nichts wird in Drive geschrieben, nur klassifiziert und geloggt was passieren würde.
 const DRY_RUN = true;
@@ -85,7 +95,7 @@ function callPipedriveWithRetry(doFetch, path) {
 // ===== LOGGING =====
 // Gepuffert statt appendRow pro Zeile, gleiches Schema wie Ordnererstellung-bei-Gewonnen/Config.gs.
 
-const LOG_HEADER = ['Zeitstempel', 'Lauf-ID', 'Funktion', 'Modus', 'Deal-ID', 'Dateiname', 'Kategorie', 'Ergebnis', 'Detail'];
+const LOG_HEADER = ['Zeitstempel', 'Lauf-ID', 'Funktion', 'Modus', 'Deal-ID', 'Dateiname', 'Kategorie', 'Ergebnis', 'Tokens-In', 'Tokens-Out', 'Kosten-USD', 'Kosten-EUR', 'Detail'];
 const PROP_LOG_SHEET_ID = 'KLASSIFIKATION_LOG_SHEET_ID';
 
 let _logSheetCache = null;
@@ -120,11 +130,23 @@ function getLogSheet() {
   return _logSheetCache;
 }
 
-function logRow(dealId, dateiname, kategorie, ergebnis, detail) {
+/** usage: optionales {input_tokens, output_tokens} aus der Claude-Antwort. */
+function logRow(dealId, dateiname, kategorie, ergebnis, detail, usage) {
+  const kosten = usage ? berechneKosten(usage) : null;
   _logBuffer.push([
     new Date(), _laufId, _laufFunktion, DRY_RUN ? 'DRY' : 'LIVE',
-    dealId || '', dateiname || '', kategorie || '', ergebnis, detail || ''
+    dealId || '', dateiname || '', kategorie || '', ergebnis,
+    usage ? usage.input_tokens : '', usage ? usage.output_tokens : '',
+    kosten ? kosten.usd.toFixed(4) : '', kosten ? kosten.eur.toFixed(4) : '',
+    detail || ''
   ]);
+}
+
+/** Kosten aus Claude-Token-Usage nach den Preiskonstanten oben in diesem File. */
+function berechneKosten(usage) {
+  const usd = (usage.input_tokens / 1e6) * CLAUDE_PREIS_USD_PRO_1M_INPUT
+    + (usage.output_tokens / 1e6) * CLAUDE_PREIS_USD_PRO_1M_OUTPUT;
+  return { usd, eur: usd * USD_ZU_EUR };
 }
 
 function logLaufEnde(status, summary) {

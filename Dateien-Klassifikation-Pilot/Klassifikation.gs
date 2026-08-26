@@ -71,7 +71,7 @@ function klassifiziereUndVerschiebe(dealId, datei, kundenOrdner) {
   }
 
   const klassifikation = klassifiziereDatei(blob, mimeType, datei.name);
-  logRow(dealId, datei.name, klassifikation.kategorie, klassifikation.kategorie === 'unsicher' ? 'unsicher' : 'klassifiziert', klassifikation.begruendung);
+  logRow(dealId, datei.name, klassifikation.kategorie, klassifikation.kategorie === 'unsicher' ? 'unsicher' : 'klassifiziert', klassifikation.begruendung, klassifikation.usage);
 
   if (klassifikation.kategorie === 'unsicher') return 'unsicher';
 
@@ -188,5 +188,5 @@ function klassifiziereDatei(blob, mimeType, dateiname) {
   if (!toolUse) {
     throw new Error(`Claude hat keinen "klassifikation"-Tool-Call zurückgegeben für "${dateiname}": ${response.getContentText()}`);
   }
-  return toolUse.input;
+  return Object.assign({}, toolUse.input, { usage: data.usage });
 }
