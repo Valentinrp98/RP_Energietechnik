@@ -307,9 +307,25 @@ const SYNC_STATE_MAX_AGE_TAGE = 90;
 // so vielen Fehlversuchen wird ein Auftrag "geparkt" (aus der Warteschlange raus, aber im Log als
 // wartend sichtbar) statt fuer immer einen Platz zu blockieren.
 const MAX_VERSUCHE_VOR_PARKEN = 5;
+// FIX (26.08.2026): "geparkt" hiess bisher fuer immer -- Valentin will lieber 1x/Tag automatisch
+// erneut versuchen (loest sich oft von selbst, wenn jemand nachtraeglich die Kundennummer in
+// Pipedrive eintraegt, siehe Mario Golger) UND danach, wenn 2 Wochen lang gar nichts geht, endgueltig
+// aufgeben (z.B. Metehan Hilal Arac -- 0 sevdesk-Auftraege, taegliches Neuversuchen bringt nie was).
+const PARK_DAUERHAFT_NACH_TAGEN = 14;
 
 function heuteAlsIso() {
   return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+/** Tage zwischen einem yyyy-MM-dd-Datum und heute. */
+function tageSeit(datumIso) {
+  return Math.floor((new Date(heuteAlsIso()) - new Date(datumIso)) / 86400000);
+}
+
+/** true, wenn ein geparkter Auftrag seit PARK_DAUERHAFT_NACH_TAGEN Tagen ohne Erfolg geparkt ist --
+ *  dann keine taeglichen Versuche mehr, nur noch manuell per entparkeAuftraege() reaktivierbar. */
+function istDauerhaftGeparkt(s) {
+  return !!s.geparktSeit && tageSeit(s.geparktSeit) >= PARK_DAUERHAFT_NACH_TAGEN;
 }
 
 function getSyncState() {
@@ -326,6 +342,13 @@ function getSyncState() {
   Object.keys(state).forEach(id => {
     if (typeof state[id] === 'string') {
       state[id] = { ts: state[id], gespeichert: heuteAlsIso(), versuche: 0 };
+    }
+    // Migration (26.08.2026): schon geparkte Alteintraege ohne geparktSeit (vor diesem Fix
+    // angelegt) bekommen HEUTE als Start der 14-Tage-Frist -- nicht das alte "gespeichert"-Datum,
+    // sonst waeren manche der 8 aktuell geparkten Auftraege sofort ueber die Frist und wuerden nie
+    // den neuen taeglichen Retry bekommen, den sie eigentlich zuerst verdienen.
+    if (state[id].geparkt && !state[id].geparktSeit) {
+      state[id].geparktSeit = heuteAlsIso();
     }
   });
   return state;
@@ -988,8 +1011,10 @@ function zeigeGeparkteAuftraege() {
     try {
       const order = fetchOrderFromSevdesk(id);
       const match = findTargetDeal(order);
+      const dauerhaft = istDauerhaftGeparkt(state[id]);
       Logger.log(`Order ${id}: Angebotsnummer="${order.orderNumber}", Kundennummer="${order.customerId}", ` +
-                 `Versuche=${state[id].versuche}, match=${match.matchedBy || 'KEIN TREFFER'}` +
+                 `Versuche=${state[id].versuche}, geparkt seit ${state[id].geparktSeit} (${dauerhaft ? 'DAUERHAFT' : `noch ${PARK_DAUERHAFT_NACH_TAGEN - tageSeit(state[id].geparktSeit)} Tage täglicher Retry`}), ` +
+                 `match=${match.matchedBy || 'KEIN TREFFER'}` +
                  (match.konflikt ? `, KONFLIKT: ${match.konflikt}` : '') +
                  (match.ambiguous ? `, mehrdeutig (Kandidaten: ${match.candidates.join(',')})` : ''));
     } catch (err) {
@@ -1043,13 +1068,12 @@ function syncPendingOrders() {
   // Angebotsnummer wurde nachtraeglich in Pipedrive ergaenzt, wie bei Mario Golger) von selbst,
   // ohne dass das Script je davon erfaehrt. Geparkte Auftraege deshalb 1x/Tag automatisch erneut
   // versuchen (kein Mail-Spam-Risiko: "Kein Deal gefunden" loest keine alarmiereBeiKonflikt()-Mail
-  // aus, nur der seltenere Angebotsnummer-Konflikt tut das). Klappt's, entparkt der normale
-  // Erfolgspfad unten automatisch (state ohne geparkt-Flag). Klappt's nicht, bleibt er bis zum
-  // naechsten Kalendertag geparkt.
+  // aus, nur der seltenere Angebotsnummer-Konflikt tut das) -- aber nur bis PARK_DAUERHAFT_NACH_TAGEN
+  // Tage seit dem ersten Parken vergangen sind, danach endgueltig aufgeben (istDauerhaftGeparkt()).
   const zuSyncen = alleAuftraege.filter(o => {
     const s = state[o.id];
     if (!s) return true;
-    if (s.geparkt) return s.gespeichert < heuteAlsIso();
+    if (s.geparkt) return !istDauerhaftGeparkt(s) && s.gespeichert < heuteAlsIso();
     return s.ts !== (o.update || '');
   });
 
@@ -1093,8 +1117,14 @@ function syncPendingOrders() {
       const bisherigeVersuche = (state[o.id] && state[o.id].versuche) || 0;
       const versuche = bisherigeVersuche + 1;
       if (versuche >= MAX_VERSUCHE_VOR_PARKEN) {
-        state[o.id] = { ts: o.update || '', gespeichert: heuteAlsIso(), versuche, geparkt: true };
-        Logger.log(`⏸️ Order ${o.id} nach ${versuche} Fehlversuchen geparkt -- wartet auf manuelle Zuordnung (Angebotsnummer/Kundennummer pruefen), wird nicht mehr automatisch erneut versucht.`);
+        // geparktSeit bei einem erneuten Fehlschlag NICHT ueberschreiben -- sonst wuerde jeder
+        // taegliche Retry die 14-Tage-Uhr wieder auf null setzen und nie dauerhaft geparkt werden.
+        const geparktSeit = (state[o.id] && state[o.id].geparktSeit) || heuteAlsIso();
+        state[o.id] = { ts: o.update || '', gespeichert: heuteAlsIso(), versuche, geparkt: true, geparktSeit };
+        const dauerhaft = istDauerhaftGeparkt(state[o.id]);
+        Logger.log(dauerhaft
+          ? `⏹️ Order ${o.id} nach ${versuche} Fehlversuchen über ${PARK_DAUERHAFT_NACH_TAGEN} Tage DAUERHAFT geparkt -- nur noch per entparkeAuftraege() reaktivierbar.`
+          : `⏸️ Order ${o.id} nach ${versuche} Fehlversuchen geparkt -- wird 1x täglich automatisch erneut versucht (bis zu ${PARK_DAUERHAFT_NACH_TAGEN} Tage seit ${geparktSeit}).`);
       } else {
         // ts bewusst NICHT auf o.update setzen -- der Auftrag soll beim naechsten Lauf ueber den
         // Filter oben weiterhin als "zu syncen" gelten, bis er entweder klappt oder geparkt wird.
