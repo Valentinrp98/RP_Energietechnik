@@ -47,14 +47,21 @@ function processGewonnenDealUnlocked(dealId) {
   // Voraussetzung für die Ordnererstellung. Prüfung auf person_id passiert in der Funktion selbst.
   schreibeKundendatenSnapshot(dealId, deal);
 
+  // Diese beiden Skips sind seit der Webhook-Robustheits-Änderung (2026-08-26, doPost reagiert auf
+  // JEDE Deal-Änderung bei gewonnenem Deal statt nur den Status-Wechsel) der Normalfall, nicht die
+  // Ausnahme: ein fertiger Deal ohne Montagepartner bekommt bei jeder weiteren Feldänderung erneut
+  // einen Aufruf. Bewusst NUR Logger.log (Debug), NICHT logRow (Sheet) -- exakt der
+  // Montagepartner-Nulllauf-Fall aus dem Automations-Dashboard-Konzept ("nichts passiert gehört
+  // nicht ins Sheet"): 6.246 identische "übersprungen"-Zeilen hätten die echten Fehler unsichtbar
+  // gemacht. Echte Anomalien (FEHLER/WARNUNG unten) bleiben im Sheet.
   if (cf[KUNDENORDNER_LINK_FIELD_KEY]) {
-    logRow(dealId, deal.title, null, 'übersprungen', cf[KUNDENORDNER_LINK_FIELD_KEY], 'Ordner-Link bereits gesetzt');
+    Logger.log(`[${dealId}] übersprungen: Ordner-Link bereits gesetzt (${cf[KUNDENORDNER_LINK_FIELD_KEY]})`);
     return 'übersprungen (Ordner-Link bereits gesetzt)';
   }
 
   const partnerOptionId = cf[MONTAGEPARTNER_FIELD_KEY];
   if (!partnerOptionId) {
-    logRow(dealId, deal.title, null, 'übersprungen', null, 'kein Montagepartner gesetzt');
+    Logger.log(`[${dealId}] übersprungen: kein Montagepartner gesetzt`);
     return 'übersprungen (kein Montagepartner gesetzt)';
   }
   const partner = MONTAGEPARTNER_ID_TO_NAME[partnerOptionId];
@@ -67,12 +74,14 @@ function processGewonnenDealUnlocked(dealId) {
   }
   const parentFolderId = PARTNER_TO_DRIVE_FOLDER_ID[partner];
   if (!parentFolderId || parentFolderId.startsWith('TODO_')) {
-    logRow(dealId, deal.title, partner, 'übersprungen', null, 'keine Drive-Ordner-ID für diesen Partner konfiguriert (Config.gs)');
+    // Gleiche Logik wie oben: wiederholt sich bei jeder weiteren Deal-Änderung, solange die Config
+    // nicht nachgezogen wird -- nur Debug, kein Sheet-Eintrag pro Wiederholung.
+    Logger.log(`[${dealId}] übersprungen: keine Drive-Ordner-ID für "${partner}" konfiguriert (Config.gs)`);
     return `übersprungen (Drive-Ordner-ID für "${partner}" fehlt in Config.gs)`;
   }
 
   if (!deal.person_id) {
-    logRow(dealId, deal.title, partner, 'übersprungen', null, 'Deal hat keine verknüpfte Person');
+    Logger.log(`[${dealId}] übersprungen: Deal hat keine verknüpfte Person`);
     return 'übersprungen (keine verknüpfte Person)';
   }
   const person = fetchPipedrive(`persons/${deal.person_id}`);
@@ -115,7 +124,9 @@ function processGewonnenDealUnlocked(dealId) {
     }
   }
   if (!parentFolder) {
-    logRow(dealId, deal.title, partner, 'übersprungen', null, `Unterordner "${MONTAGE_OFFEN_ORDNERNAME}" fehlt im Partner-Root (auch nicht als Verknüpfung gefunden) -- manuell prüfen`);
+    // Wie oben: Debug statt Sheet, damit wiederholte Webhook-Aufrufe auf denselben blockierten
+    // Deal nicht dieselbe Zeile x-mal ins Log schreiben.
+    Logger.log(`[${dealId}] übersprungen: Unterordner "${MONTAGE_OFFEN_ORDNERNAME}" fehlt im Partner-Root von "${partner}" (auch nicht als Verknüpfung gefunden)`);
     return `übersprungen (Unterordner "${MONTAGE_OFFEN_ORDNERNAME}" fehlt bei "${partner}")`;
   }
 
