@@ -235,6 +235,7 @@ function writeArticleFieldsToDeal(dealId, aggregated) {
   // undefined komplett raus -- der PATCH geht dann mit leerem custom_fields raus, Pipedrive
   // antwortet 200, und das Log meldet faelschlich SUCCESS, obwohl nichts geschrieben wurde.
   customFields[FIELD_KEYS.Module_Anzahl] = aggregated.fields.Module_Anzahl || null;
+  customFields[FIELD_KEYS.Module_Bezeichnung] = aggregated.fields.Module_Bezeichnung || null;
   customFields[FIELD_KEYS.WR_Leistung_kW] = aggregated.fields.WR_Leistung_kW || null;
   customFields[FIELD_KEYS.Speicher_Kapazitaet_kWh] = aggregated.fields.Speicher_Kapazitaet_kWh || null;
 
@@ -536,10 +537,21 @@ function syncEinzelDealOhneStatusFilter(dealId) {
     return false;
   }
   if (treffer.length > 1) {
+    // Mehrfachtreffer auf dieselbe Angebotsnummer sind KEIN sevdesk-Bug, sondern beobachtetes
+    // Verhalten (26.08.2026, Deal 7356/"2026-633-A"): sevdesk vergibt Nummern nicht global eindeutig,
+    // ein Entwurf (status 100) kann zufällig dieselbe Nummer bekommen wie ein längst angenommener
+    // Auftrag. Ein Entwurf kann aber nie der gemeinte Treffer sein -- daher zuerst auf
+    // status=Angenommen einengen, bevor man aufgibt.
+    const angenommen = treffer.filter(o => Number(o.status) === SEVDESK_STATUS_ANGENOMMEN);
+    if (angenommen.length === 1) {
+      Logger.log(`⚠️ Deal ${dealId}: ${treffer.length} Treffer für "${angebotsnummer}", davon 1 mit Status "Angenommen" -- diesen genommen (Order ${angenommen[0].id})`);
+      return syncOrderToPipedrive(angenommen[0].id);
+    }
+
     logSyncResult('WARNUNG', dealId, angebotsnummer,
       `${treffer.length} sevdesk-Aufträge mit derselben Angebotsnummer gefunden`,
-      `Order-IDs: ${treffer.map(o => o.id).join(', ')} -- nichts geschrieben, manuell prüfen`);
-    Logger.log(`⚠️ Deal ${dealId}: ${treffer.length} Treffer für "${angebotsnummer}" -- abgebrochen, keine Ratelogik`);
+      `Order-IDs: ${treffer.map(o => `${o.id} (status ${o.status})`).join(', ')} -- nichts geschrieben, manuell prüfen`);
+    Logger.log(`⚠️ Deal ${dealId}: ${treffer.length} Treffer für "${angebotsnummer}" -- abgebrochen, keine eindeutige Auflösung über Status`);
     return false;
   }
 
@@ -548,9 +560,42 @@ function syncEinzelDealOhneStatusFilter(dealId) {
   return syncOrderToPipedrive(treffer[0].id);
 }
 
+/**
+ * Debug: vergleicht alle sevdesk-Orders mit einer Angebotsnummer nebeneinander, um bei einem
+ * Mehrfachtreffer ("WARNUNG: N sevdesk-Aufträge mit derselben Angebotsnummer") zu klären, ob es
+ * sich um echte Duplikate (gleicher Kunde, gleicher Inhalt) oder wie bei Schwaiger/Radmacher um
+ * zwei unabhängige Kunden mit zufällig gleicher Nummer handelt.
+ */
+function debugDuplikatAngebotsnummer() {
+  const angebotsnummer = '2026-633-A'; // hier bei Bedarf die betroffene Nummer eintragen
+
+  const orderData = sevdeskFetch(`/Order?orderNumber=${encodeURIComponent(angebotsnummer)}`);
+  const treffer = orderData.objects || [];
+  Logger.log(`${treffer.length} sevdesk-Order(s) für "${angebotsnummer}"`);
+
+  treffer.forEach(o => {
+    let customerNumber = null;
+    if (o.contact && o.contact.id) {
+      const contactData = sevdeskFetch(`/Contact/${o.contact.id}`);
+      if (contactData.objects && contactData.objects.length > 0) {
+        customerNumber = contactData.objects[0].customerNumber;
+      }
+    }
+    Logger.log(
+      `--- Order ${o.id} ---\n` +
+      `  addressName: ${o.addressName}\n` +
+      `  contact.id: ${o.contact && o.contact.id} (Kundennummer: ${customerNumber})\n` +
+      `  orderType: ${o.orderType}, status: ${o.status}\n` +
+      `  sumGross: ${o.sumGross}, sumNet: ${o.sumNet}\n` +
+      `  orderDate: ${o.orderDate}, update: ${o.update}, create: ${o.create}\n` +
+      `  header: ${o.header}`
+    );
+  });
+}
+
 /** Für Einzeltests im Editor: Deal-ID unten eintragen (▷-Button ruft ohne Argumente auf). */
 function testEinzelDealOhneStatusFilter() {
-  const dealId = 7253; // hier Deal-ID eintragen
+  const dealId = 7356; // hier Deal-ID eintragen
   const erfolg = syncEinzelDealOhneStatusFilter(dealId);
   Logger.log(erfolg ? '✓ Sync erfolgreich' : '✗ Sync nicht durchgeführt -- siehe Log/Sync-Log-Sheet');
 }
