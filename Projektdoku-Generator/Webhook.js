@@ -80,9 +80,16 @@ function verarbeiteWebhookEvent(e) {
       return;
     }
 
+    // BUGFIX 2026-08-26: hieß bis dahin "meta.entity" -- das Feld existiert im echten Pipedrive-v2-
+    // Payload NICHT, es heißt "meta.object" (per Pipedrive-Doku verifiziert, siehe
+    // https://pipedrive.readme.io/docs/guide-for-webhooks). "meta.entity" war seit dem allerersten
+    // Deploy immer undefined, die Bedingung damit immer wahr -- JEDES Event wurde seit Go-Live
+    // stillschweigend ignoriert. Ist nie aufgefallen, weil doPost() bewusst immer mit 200 antwortet
+    // (siehe Kommentar oben) -- die Webhook-Health-Prüfung vom 25.08. hat nur die Zustellung
+    // (is_active/last_http_status) geprüft, nie die tatsächliche Verarbeitung im Code.
     const meta = payload.meta || {};
-    if (meta.entity !== 'deal' || meta.action !== 'change') {
-      Logger.log(`doPost: Event ${meta.action}.${meta.entity} ignoriert (nur change.deal registriert/erwartet).`);
+    if (meta.object !== 'deal' || meta.action !== 'change') {
+      Logger.log(`doPost: Event ${meta.action}.${meta.object} ignoriert (nur change.deal registriert/erwartet).`);
       return;
     }
 
