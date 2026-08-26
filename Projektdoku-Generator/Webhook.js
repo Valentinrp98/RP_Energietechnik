@@ -108,12 +108,12 @@ function verarbeiteWebhookEvent(e) {
       return;
     }
 
-    // Vorab-Filter auf dem rohen Payload, ohne API-Call -- der weit ueberwiegende Teil aller
-    // change.deal-Events betrifft das Statusfeld gar nicht, und genau das ist der Kostenvorteil
-    // gegenueber dem Vollscan im Tages-Trigger.
-    // Fehlt der custom_fields-Block ganz, wird NICHT still ausgestiegen: dann ist die
-    // Payload-Annahme falsch (wie oben schon einmal) und wir wuerden wieder alles lautlos verwerfen.
-    // Stattdessen einmal frisch nachladen und laut ins Log schreiben.
+    // ===== Vorab-Filter auf dem rohen Payload, ohne API-Call =====
+    // Der weit ueberwiegende Teil aller change.deal-Events betrifft das Statusfeld gar nicht, und
+    // genau das ist der Kostenvorteil gegenueber dem Vollscan im Tages-Trigger.
+    //
+    // Fehlt der custom_fields-Block ganz, wird NICHT still ausgestiegen: dann stimmt die
+    // Payload-Annahme nicht (wie schon zweimal), und wir wuerden wieder alles lautlos verwerfen.
     if (!deal.custom_fields) {
       logRow(deal.id, deal.title, null, 'SOFT_ERROR', null, null,
              '[Webhook] Payload enthaelt keinen custom_fields-Block -- Vorab-Filter nicht moeglich, Deal wird frisch geprueft. Wenn das dauerhaft auftritt: Payload-Format hat sich geaendert.');
@@ -121,15 +121,68 @@ function verarbeiteWebhookEvent(e) {
       return;
     }
 
-    const status = String(deal.custom_fields[DOKU_STATUS_FIELD_KEY]);
+    const statusRoh = deal.custom_fields[DOKU_STATUS_FIELD_KEY];
+    const statusOptionId = leseWebhookOptionId(statusRoh);
+
+    // Wert ist da, laesst sich aber nicht deuten -> die Formatannahme stimmt nicht mehr.
+    // Genau hier lag der Bug (siehe leseWebhookOptionId): still bleiben ist das Schlimmste, was
+    // dieser Zweig tun kann. Also laut ins Log und den Deal trotzdem frisch pruefen.
+    if (statusRoh !== null && statusRoh !== undefined && statusOptionId === undefined) {
+      logRow(deal.id, deal.title, null, 'SOFT_ERROR', null, null,
+             `[Webhook] Statusfeld nicht interpretierbar, Payload-Format vermutlich geaendert -- Deal wird frisch geprueft. Rohwert: ${JSON.stringify(statusRoh)}`);
+      verarbeiteTreffer(deal.id, deal.title);
+      return;
+    }
+
+    const status = String(statusOptionId);
     if (status !== String(DOKU_STATUS_OPTION_TRIGGER) && status !== String(DOKU_STATUS_OPTION_NEU_ERSTELLEN)) {
-      return; // Normalfall: diese Deal-Aenderung betrifft das Statusfeld nicht -- stiller, guenstiger Ausstieg
+      // Normalfall: diese Deal-Aenderung betrifft das Statusfeld nicht, oder es steht auf einem
+      // anderen Wert (z.B. "erstellt und abgelegt", das schreibt dieses Script selbst). Stiller,
+      // guenstiger Ausstieg -- absichtlich ohne Log-Zeile, sonst waechst das Sheet mit jedem
+      // beliebigen Deal-Klick im Unternehmen.
+      return;
     }
 
     verarbeiteTreffer(deal.id, deal.title);
   } finally {
     flushLog();
   }
+}
+
+/**
+ * Options-ID eines Einfachauswahl-Felds aus einem Webhook-v2-PAYLOAD lesen.
+ *
+ * ⚠️ Das Webhook-Payload-Format ist NICHT das REST-API-v2-Format. Genau diese Verwechslung war der
+ * Grund, warum dieser Webhook von Go-Live bis 26.08.2026 nie etwas getan hat:
+ *
+ *   REST v2 (GET /deals):  "custom_fields": { "<hash>": 235 }              -> nackter Wert
+ *   Webhook v2:            "custom_fields": { "<hash>": {id: 235, type: "enum"} }  -> Objekt
+ *
+ * Der Code hat `String(cf[key])` auf das Objekt angewendet -> "[object Object]", das matcht nie
+ * gegen "235", also stiller `return` bei JEDEM Event. Kein Fehler, keine Log-Zeile, Pipedrive bekam
+ * brav 200 zurueck -- die Zustellstatistik sah bis zuletzt gesund aus (is_active=1,
+ * last_http_status=200). Deshalb steckt der Beweis hier im Kommentar und nicht im Gedaechtnis:
+ * https://pipedrive.readme.io/docs/webhooks-v2-migration-guide#custom-fields-format-in-webhooks-v2
+ *
+ * Weitere Typen aus derselben Doku-Sektion, falls hier mal mehr Felder gefiltert werden sollen:
+ *   varchar/text/double/date/phone: {type, value}   monetary: {type, value, currency}
+ *   enum:      {id, type}            set:  {values: [{id}, ...], type}
+ *   people/org/user: {id, type}      address: {type, value, postal_code, locality, ...}
+ * Bei "set" (Mehrfachauswahl) also NICHT diese Funktion nehmen -- die gibt dafuer absichtlich
+ * undefined zurueck, statt eine der IDs zu erraten.
+ *
+ * Gibt bewusst `undefined` zurueck, wenn das Format unbekannt ist. Der Aufrufer macht daraus eine
+ * laute Log-Zeile -- ein weiteres stilles Durchrutschen soll nicht mehr moeglich sein.
+ */
+function leseWebhookOptionId(feld) {
+  if (feld === null || feld === undefined) return undefined;
+  // Nackter Wert: REST-Form. Kommt hier normalerweise nicht an, ist aber der Fall, den der alte
+  // Code angenommen hat -- bleibt akzeptiert, damit derselbe Filter auch mit einer API-Antwort
+  // funktioniert (z.B. wenn jemand die Funktion spaeter im Tages-Trigger wiederverwendet).
+  if (typeof feld !== 'object') return feld;
+  if (feld.id !== undefined && feld.id !== null) return feld.id;      // enum/people/org/user
+  if (feld.value !== undefined && feld.value !== null) return feld.value; // varchar/double/date/...
+  return undefined; // unbekannte Form -> Aufrufer soll das laut melden, nicht raten
 }
 
 /**
