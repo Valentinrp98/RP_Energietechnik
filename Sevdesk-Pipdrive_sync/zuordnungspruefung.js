@@ -38,7 +38,7 @@ const AUDIT_PAARE_GESCHRIEBEN = [
 // --- Gruppe B: Angebotsnummer wurde von setzeBekannteAngebotsnummernUndSync() bereits in den Deal
 //     geschrieben (der PATCH dort läuft ungeachtet DRY_RUN!), die Artikel-Felder aber noch NICHT
 //     (im Sync-Log nur DRY_RUN vom 21.08. 08:58). Vor dem Scharfschalten hier mitprüfen -- eine
-//     falsche Angebotsnummer im Deal ist besonders heikel, weil der 15-Min-Poller sie später als
+//     falsche Angebotsnummer im Deal ist besonders heikel, weil der 5-Min-Poller sie später als
 //     harten Matching-Schlüssel benutzt.
 const AUDIT_PAARE_NUR_ANGEBOTSNUMMER = [
   { deal: 6219, order: '2026-470-A' }, { deal: 7059, order: '2026-536-A' },

@@ -29,7 +29,7 @@
 //      NICHT TEST_ORDER_ID -- das ist eine andere Funktion in SyncEngine.gs) --
 //      prüfen, ob header/headText wirklich die Angebotsnummer enthält
 //   3. DRY_RUN=true, syncZahlungseingaenge() manuell, Sync-Log prüfen
-//   4. DRY_RUN=false, dann erst in den 15-Min-Trigger aufnehmen
+//   4. DRY_RUN=false, dann erst in den 5-Min-Trigger aufnehmen
 // ============================================================================
 
 const ZAHLUNGSEINGANG_DRY_RUN = true; // false = schreibt wirklich in Pipedrive
@@ -266,7 +266,7 @@ function syncZahlungseingangFuerRechnung_(invoice) {
 }
 
 // ============================================================================
-// POLLING — für den 15-Min-Trigger (nach Go-Live neben syncPendingOrders eintragen)
+// POLLING — für den 5-Min-Trigger (nach Go-Live neben syncPendingOrders eintragen)
 // ============================================================================
 
 function syncZahlungseingaenge() {

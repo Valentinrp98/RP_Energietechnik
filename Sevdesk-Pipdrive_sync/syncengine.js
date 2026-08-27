@@ -11,9 +11,9 @@
 // DUPLIKAT-SCHUTZ:
 //   Jeder Auftrag wird nur gesynct, wenn er sich seit dem letzten Sync geändert
 //   hat (Vergleich über sevdesk-"update"-Zeitstempel). Verhindert, dass alle
-//   15 Min sämtliche Altaufträge erneut durchlaufen.
+//   5 Min sämtliche Altaufträge erneut durchlaufen.
 //
-// LIVE-BETRIEB: Zeittrigger auf syncPendingOrders(), alle 15 Minuten.
+// LIVE-BETRIEB: Zeittrigger auf syncPendingOrders(), alle 5 Minuten (seit 26.08.2026, vorher 15).
 // ============================================================================
 
 const SHEET_ID = '1Icpc12eOBEmp2674cdKFVa1PCP7m-AHSRlSwNeiwmeo';
@@ -63,7 +63,7 @@ function pipedriveFetch(path, options) {
 /**
  * FIX V3 (2026-08-13-Review): Retry bei 429/5xx, bis zu 3 Versuche mit steigender Wartezeit
  * (2s, dann 4s), bei 4xx sofort durchreichen -- ein 4xx wird durchs Warten nicht besser. Dieses
- * Script laeuft als einziges der RP-Scripts alle 15 Min per Trigger und war damit als einziges
+ * Script laeuft als einziges der RP-Scripts alle 5 Min per Trigger und war damit als einziges
  * OHNE Retry-Wrapper, obwohl es am ehesten mal in ein Rate Limit laeuft. Gibt wie vorher das
  * geparste JSON zurueck (auch bei 4xx, damit die bestehenden `.success`-Checks der Aufrufer
  * unveraendert funktionieren) -- nur 429/5xx werden hier abgefangen und wiederholt.
@@ -299,7 +299,7 @@ function logSyncResult(status, dealId, orderId, fehler, details) {
 // Eintrag also bei ca. 285 Auftraegen erreicht. setProperty() wirft dann am ENDE von
 // syncPendingOrders(), also NACHDEM schon nach Pipedrive geschrieben wurde -- die Auftraege sind
 // gesynct, gelten aber weiter als "nicht gesynct" und werden beim naechsten Lauf erneut
-// verarbeitet: Endlosschleife im 15-Minuten-Takt mit echten Pipedrive-Writes. Abgeschlossene
+// verarbeitet: Endlosschleife im 5-Minuten-Takt mit echten Pipedrive-Writes. Abgeschlossene
 // Auftraege aendern sich nicht mehr, deshalb reicht Aufraeumen nach Alter.
 const SYNC_STATE_MAX_AGE_TAGE = 90;
 // FIX V2 (2026-08-13-Review): ein Auftrag ohne passenden Pipedrive-Deal schlug bisher JEDES Mal
@@ -368,8 +368,95 @@ function bereinigeSyncState(state) {
   return state;
 }
 
+/**
+ * FIX 27.08.2026 -- diese Funktion durfte nicht mehr still scheitern.
+ *
+ * Der ganze Sync-Stand liegt in EINER Script-Property, und Apps Script begrenzt einen einzelnen
+ * Property-Wert auf 9 KB. Die Rechnung im Kommentar bei SYNC_STATE_MAX_AGE_TAGE war zu optimistisch:
+ * ein Eintrag ist real ~79 Zeichen
+ *   "29997036":{"ts":"2026-08-26 12:31:11","gespeichert":"2026-08-26","versuche":0}
+ * und ~121 Zeichen, wenn er geparkt ist (geparkt + geparktSeit) -> ~115 bzw. ~75 Auftraege, nicht 285.
+ *
+ * Der Fehlerfall war der gefaehrliche Teil: setProperty wirft, ungefangen, und zwar NACH den
+ * Pipedrive-Schreibvorgaengen. Der Stand wird dann nie gespeichert, der naechste Lauf sieht den
+ * alten Stand, verarbeitet dieselben Auftraege erneut, schreibt erneut nach Pipedrive und wirft
+ * erneut. Seit dem 5-Minuten-Takt waeren das 288 solche Runden pro Tag statt 96.
+ *
+ * Deshalb: Fehler fangen, EINMAL taeglich alarmieren (gleiche Dedupe-Mechanik wie beim
+ * Konflikt-Alarm, sonst 288 Mails) und weiterwerfen -- der Lauf soll abbrechen, aber sichtbar.
+ * Bewusst NICHT verschluckt: ein stiller Fehlschlag hier ist genau das Problem.
+ */
 function saveSyncState(state) {
-  PropertiesService.getScriptProperties().setProperty(SYNC_STATE_KEY, JSON.stringify(bereinigeSyncState(state)));
+  const bereinigt = bereinigeSyncState(state);
+  const nutzlast = JSON.stringify(bereinigt);
+  try {
+    PropertiesService.getScriptProperties().setProperty(SYNC_STATE_KEY, nutzlast);
+  } catch (e) {
+    alarmiereEinmalTaeglich(
+      'SYNC_STATE_SPEICHERN',
+      'sevdesk-Sync: Sync-Stand kann NICHT gespeichert werden -- Auftraege werden doppelt verarbeitet',
+      `Der Sync-Stand liess sich nicht speichern: ${e.message}\n\n` +
+      `Groesse: ${nutzlast.length} Zeichen, ${Object.keys(bereinigt).length} Eintraege ` +
+      `(Apps-Script-Limit pro Property: 9216 Zeichen).\n\n` +
+      `WICHTIG: Die Deals sind bereits nach Pipedrive geschrieben, nur der Fortschritt nicht. ` +
+      `Ohne Eingriff verarbeitet der Sync dieselben Auftraege alle 5 Minuten erneut und loest ` +
+      `dabei jedes Mal die Pipedrive-Automations aus.\n\n` +
+      `Naechster Schritt: zeigeSyncStateGroesse() im Editor ausfuehren und den Stand verkleinern ` +
+      `oder auslagern.`
+    );
+    throw e;
+  }
+}
+
+/**
+ * Diagnose vor dem Umbau: wie nah ist der Sync-Stand wirklich am 9-KB-Limit?
+ * Bewusst ohne Parameter, damit sie im Editor per ▷ startbar ist.
+ */
+function zeigeSyncStateGroesse() {
+  const roh = PropertiesService.getScriptProperties().getProperty(SYNC_STATE_KEY) || '{}';
+  const state = JSON.parse(roh);
+  const ids = Object.keys(state);
+  const geparkt = ids.filter(id => state[id].geparkt).length;
+  const LIMIT = 9216; // 9 KB pro Property-Wert
+  const proEintrag = ids.length ? Math.round(roh.length / ids.length) : 0;
+  Logger.log(`Sync-Stand: ${roh.length} von ${LIMIT} Zeichen belegt (${Math.round(roh.length / LIMIT * 100)} %).`);
+  Logger.log(`${ids.length} Eintraege, davon ${geparkt} geparkt, ~${proEintrag} Zeichen pro Eintrag.`);
+  Logger.log(`Rechnerisch noch Platz fuer ~${proEintrag ? Math.floor((LIMIT - roh.length) / proEintrag) : '?'} weitere Eintraege.`);
+  Logger.log('Unter ~4000 Zeichen: entspannt. Ueber ~6000: Stand verkleinern oder in ein Sheet auslagern.');
+  Logger.log('ACHTUNG: SYNC_STATE_MAX_AGE_TAGE zu senken ist NICHT der richtige Hebel -- ' +
+             'faellt der Eintrag eines noch angenommenen Auftrags raus, gilt er wieder als neu ' +
+             '(siehe "if (!s) return true" im Filter) und wird komplett neu nach Pipedrive geschrieben.');
+}
+
+/**
+ * Alarm-Mail, hoechstens einmal pro Schluessel und Kalendertag. Ohne die Drosselung waeren es beim
+ * 5-Minuten-Takt 288 Mails am Tag. Reihenfolge wichtig: erst senden, dann den Dedupe-Marker setzen --
+ * andernfalls ist der Alarm bei einem fehlgeschlagenen Mail-Versand fuer immer verloren.
+ */
+function alarmiereEinmalTaeglich(schluessel, betreff, text) {
+  const props = PropertiesService.getScriptProperties();
+  const KEY = 'ALARM_TAEGLICH';
+  let gesendet = {};
+  try {
+    gesendet = JSON.parse(props.getProperty(KEY) || '{}');
+  } catch (e) {
+    gesendet = {};
+  }
+  const heute = heuteAlsIso();
+  if (gesendet[schluessel] === heute) {
+    Logger.log(`[Alarm heute schon gesendet] ${betreff}`);
+    return;
+  }
+  try {
+    MailApp.sendEmail({ to: 'valentin@rp-energietechnik.at', subject: betreff, body: text });
+  } catch (e) {
+    Logger.log(`⚠️ Alarm-Mail konnte nicht gesendet werden: ${e.message} -- Inhalt: ${text}`);
+    return; // Marker NICHT setzen, damit der naechste Lauf es erneut versucht
+  }
+  const frisch = {};
+  Object.keys(gesendet).forEach(k => { if (gesendet[k] === heute) frisch[k] = gesendet[k]; });
+  frisch[schluessel] = heute;
+  props.setProperty(KEY, JSON.stringify(frisch));
 }
 
 /** Setzt den Duplikat-Schutz zurück — danach werden beim nächsten Lauf alle Aufträge erneut gesynct. */
@@ -1043,11 +1130,11 @@ function pruefeKonfiguration() {
     });
   });
 
-  Logger.log(fehler === 0 ? 'Konfiguration OK.' : `${fehler} Abweichung(en) -- oben korrigieren, BEVOR der 15-Minuten-Trigger scharf gestellt wird.`);
+  Logger.log(fehler === 0 ? 'Konfiguration OK.' : `${fehler} Abweichung(en) -- oben korrigieren, BEVOR der 5-Minuten-Trigger scharf gestellt wird.`);
 }
 
 // ============================================================================
-// POLLING — diese Funktion läuft im Live-Betrieb per Zeittrigger (alle 15 Min)
+// POLLING — diese Funktion läuft im Live-Betrieb per Zeittrigger (alle 5 Min)
 // ============================================================================
 
 /**
@@ -1120,6 +1207,38 @@ function entparkeAuftraege() {
 }
 
 function syncPendingOrders() {
+  // FIX 27.08.2026 -- ueberlappende Laeufe.
+  // Der Trigger steht seit 26.08. auf everyMinutes(5), ein Lauf kann aber laenger dauern: die
+  // sevdesk-Pagination laeuft VOR der Stoppuhr (startZeit wird erst unten gesetzt), und der
+  // Zeitwaechter prueft nur am Schleifenkopf -- ein bei 3:59 gestarteter Auftrag laeuft komplett
+  // durch, inkl. Backoff-Pausen von 2s+4s pro gestoertem HTTP-Call. Bei 15 Min Takt lagen ~11 Min
+  // Luft dazwischen, bei 5 Min sind es ~30 Sekunden.
+  //
+  // Zwei gleichzeitige Laeufe waren echter Schaden, nicht nur unschoen:
+  //   - Beide lesen denselben (veralteten) State und berechnen dieselbe zuSyncen-Liste
+  //     -> dieselben Deals werden ZWEIMAL gePATCHt. API-Schreibvorgaenge loesen Pipedrive-
+  //        Automations genauso aus wie Klicks in der Oberflaeche ("es gibt kein silent update"),
+  //        haengt dort eine Mail-Automation, geht sie doppelt raus.
+  //   - saveSyncState() schreibt den KOMPLETTEN Block aus der Kopie des jeweiligen Laufs. Wer
+  //     zuletzt speichert, gewinnt -- Erfolge und versuche-Zaehler des anderen Laufs sind weg.
+  //     Damit kann die Park-Logik (5 Fehlversuche -> parken) nicht verlaesslich zaehlen.
+  //
+  // tryLock(0): nicht warten, sofort zurueckmelden. Belegt -> Lauf beenden. Das kostet nichts, die
+  // Auftraege bleiben in zuSyncen und der naechste Takt ist in 5 Minuten.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(0)) {
+    Logger.log('⏭️ Ein anderer Lauf ist noch aktiv -- dieser Lauf wird uebersprungen (naechster Takt in 5 Min).');
+    return;
+  }
+  try {
+    syncPendingOrdersUnlocked();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Eigentliche Arbeit. Nur aus syncPendingOrders() aufrufen, damit der Lock immer greift. */
+function syncPendingOrdersUnlocked() {
   const state = getSyncState();
   let offset = 0;
   const limit = 100;
@@ -1211,7 +1330,7 @@ function syncPendingOrders() {
 
   const offen = zuSyncen.length - verarbeitet;
   if (offen > 0) {
-    Logger.log(`ℹ️ ${offen} Aufträge noch offen (neu/geändert oder Fehler) — nächster Lauf in 15 Min`);
+    Logger.log(`ℹ️ ${offen} Aufträge noch offen (neu/geändert oder Fehler) — nächster Lauf in 5 Min`);
   }
 }
 
