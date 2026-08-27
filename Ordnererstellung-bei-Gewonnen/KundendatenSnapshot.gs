@@ -16,13 +16,17 @@
  */
 function schreibeKundendatenSnapshot(dealId, deal) {
   if (!deal.person_id) {
-    logRow(dealId, deal.title, null, 'übersprungen', null, 'Kundendaten-Snapshot: Deal hat keine verknüpfte Person');
+    // Nur Logger, nicht ins Sheet: der Handler laeuft seit 26.08. bei JEDER Deal-Aenderung, ein
+    // Deal ohne Person wuerde also endlos dieselbe Zeile erzeugen (Sheets-Limit 10 Mio Zellen).
+    Logger.log(`Kundendaten-Snapshot Deal ${dealId}: keine verknuepfte Person -- nichts zu tun.`);
     return 'keine Person';
   }
 
   const cf = deal.custom_fields || {};
+  // Billiger Vorab-Ausstieg, wenn alle drei Felder stehen -- spart den Person-Abruf.
+  // Nur Logger, nicht ins Sheet (siehe Kommentar oben, gleicher Grund).
   if (cf[KUNDE_NAME_FIELD_KEY] && cf[KUNDE_TELEFON_FIELD_KEY] && cf[KUNDE_ADRESSE_FIELD_KEY]) {
-    logRow(dealId, deal.title, null, 'übersprungen', null, 'Kundendaten-Snapshot bereits vollständig befüllt');
+    Logger.log(`Kundendaten-Snapshot Deal ${dealId}: bereits vollstaendig befuellt -- nichts zu tun.`);
     return 'übersprungen (bereits befüllt)';
   }
 
@@ -38,7 +42,10 @@ function schreibeKundendatenSnapshot(dealId, deal) {
   // per Google-Maps-Autocomplete angelegt wurde, sonst steht alles in "value".
   const adrObj = person.custom_fields?.[ADRESSE_FIELD_KEY];
   const adresse = adrObj?.formatted_address || adrObj?.value || '';
-  if (!adresse && adrObj !== undefined) {
+  // != null statt !== undefined: ein leeres Adressfeld kommt als null, und "null !== undefined"
+  // ist true -- dadurch gab es fuer JEDE Person ohne Adresse eine WARNUNG-Zeile pro Event, was die
+  // echten Struktur-Warnungen verwaessert hat.
+  if (!adresse && adrObj != null) {
     logRow(dealId, deal.title, null, 'WARNUNG', null, `Kundendaten-Snapshot: Adresse-Feld hat unerwartete Struktur: ${JSON.stringify(adrObj)}`);
   }
 
@@ -48,17 +55,37 @@ function schreibeKundendatenSnapshot(dealId, deal) {
   if (adresse) payload[KUNDE_ADRESSE_FIELD_KEY] = adresse;
 
   if (Object.keys(payload).length === 0) {
-    logRow(dealId, deal.title, null, 'übersprungen', null, 'Kundendaten-Snapshot: Person hat weder Name noch Telefon noch Adresse');
+    Logger.log(`Kundendaten-Snapshot Deal ${dealId}: Person hat weder Name noch Telefon noch Adresse -- nichts zu tun.`);
     return 'übersprungen (Person ohne Daten)';
   }
 
+  // FIX 27.08.2026 -- nicht terminierende Selbst-Trigger-Kette:
+  // Der Vorab-Guard oben verlangt ALLE DREI Felder, geschrieben werden aber nur die nicht-leeren.
+  // Bei einer Person ohne Telefonnummer (oder ohne Adresse) war der Guard damit UNERFUELLBAR:
+  // jeder eintreffende change.deal-Event holte die Person und schickte einen PATCH mit exakt
+  // denselben Werten -- und dieser PATCH ist selbst eine Deal-Aenderung, also kam sofort das
+  // naechste Event. Seit der Umstellung auf "reagiert auf jede Aenderung" (Commit 26480f3) lief
+  // das dauerhaft: 2 GET + 1 PATCH + 1 Sheet-Zeile pro Runde, ohne Abbruchbedingung. Mit dem
+  // Duplikat-Webhook 1687275 verdoppelte sich das pro Runde zusaetzlich.
+  // Richtige Abbruchbedingung ist nicht "alles befuellt", sondern "es aendert sich nichts".
+  const zuSchreiben = {};
+  Object.keys(payload).forEach(key => {
+    if (String(cf[key] === undefined || cf[key] === null ? '' : cf[key]) !== String(payload[key])) {
+      zuSchreiben[key] = payload[key];
+    }
+  });
+  if (Object.keys(zuSchreiben).length === 0) {
+    Logger.log(`Kundendaten-Snapshot Deal ${dealId}: Werte unveraendert -- kein PATCH (bricht die Event-Kette).`);
+    return 'übersprungen (unverändert)';
+  }
+
   if (DRY_RUN) {
-    logRow(dealId, deal.title, null, 'DRY-RUN', null, `Kundendaten-Snapshot würde schreiben: ${JSON.stringify(payload)}`);
+    logRow(dealId, deal.title, null, 'DRY-RUN', null, `Kundendaten-Snapshot würde schreiben: ${JSON.stringify(zuSchreiben)}`);
     return 'DRY-RUN';
   }
 
-  patchPipedrive(`deals/${dealId}`, { custom_fields: payload });
-  logRow(dealId, deal.title, null, 'angelegt', null, `Kundendaten-Snapshot geschrieben: ${JSON.stringify(payload)}`);
+  patchPipedrive(`deals/${dealId}`, { custom_fields: zuSchreiben });
+  logRow(dealId, deal.title, null, 'angelegt', null, `Kundendaten-Snapshot geschrieben: ${JSON.stringify(zuSchreiben)}`);
   return 'geschrieben';
 }
 

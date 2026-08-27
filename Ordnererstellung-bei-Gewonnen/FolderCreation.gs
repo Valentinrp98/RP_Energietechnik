@@ -74,9 +74,13 @@ function processGewonnenDealUnlocked(dealId) {
   }
   const parentFolderId = PARTNER_TO_DRIVE_FOLDER_ID[partner];
   if (!parentFolderId || parentFolderId.startsWith('TODO_')) {
-    // Gleiche Logik wie oben: wiederholt sich bei jeder weiteren Deal-Änderung, solange die Config
-    // nicht nachgezogen wird -- nur Debug, kein Sheet-Eintrag pro Wiederholung.
-    Logger.log(`[${dealId}] übersprungen: keine Drive-Ordner-ID für "${partner}" konfiguriert (Config.gs)`);
+    // FIX 27.08.2026: war nach dem Log-Spam-Fix (658d4ab) nur noch Logger.log -- damit fiel ein
+    // reiner Config-Fehler NIRGENDS mehr auf. Der Deal wird still nie bearbeitet, doPost antwortet
+    // "ok", im Sheet steht nichts. Das ist kein wiederholbarer Normalfall wie "Partner noch nicht
+    // gesetzt", sondern eine Bringschuld in Config.gs. Deshalb ins Sheet, aber gedrosselt:
+    // hoechstens eine Zeile pro Partner und Tag, statt einer pro Event.
+    logRowGedrosselt(`ordnerid:${partner}`, dealId, deal.title, partner, 'FEHLER',
+      `keine Drive-Ordner-ID für "${partner}" konfiguriert (PARTNER_TO_DRIVE_FOLDER_ID in Config.gs) -- Deals dieses Partners bekommen KEINEN Ordner`);
     return `übersprungen (Drive-Ordner-ID für "${partner}" fehlt in Config.gs)`;
   }
 
@@ -88,7 +92,9 @@ function processGewonnenDealUnlocked(dealId) {
   const name = person.name || deal.title || `Deal ${dealId}`;
   const adrObj = person.custom_fields?.[ADRESSE_FIELD_KEY];
   const adresse = adrObj?.formatted_address || adrObj?.value || '';
-  if (!adresse && adrObj !== undefined) {
+  // != null statt !== undefined -- ein leeres Adressfeld kommt als null, und "null !== undefined"
+  // ist true, also gab es fuer jede Person ohne Adresse eine WARNUNG-Zeile pro Event.
+  if (!adresse && adrObj != null) {
     // adrObj existiert, aber weder formatted_address noch value liefern einen String --
     // das Feld hat vermutlich eine andere Struktur als angenommen. Nicht stillschweigend
     // ignorieren, sondern im Log sichtbar machen (mit debugAdressFeld() im Detail prüfbar).
@@ -117,16 +123,27 @@ function processGewonnenDealUnlocked(dealId) {
   if (montageOffenIter.hasNext()) {
     parentFolder = montageOffenIter.next();
   } else {
+    // FIX 27.08.2026: vorher wurde nur der ERSTE Namenstreffer geprueft. Liegt im Partner-Root
+    // noch eine andere Datei namens "Montage offen" (PDF, Sheet, alte Notiz) und kommt sie zuerst,
+    // schlug der mimeType-Check fehl und der tatsaechlich vorhandene Shortcut wurde nie probiert --
+    // der Deal landete im Skip unten. Deshalb den Iterator durchlaufen, bis ein Shortcut da ist.
     const shortcutIter = partnerRoot.getFilesByName(MONTAGE_OFFEN_ORDNERNAME);
-    const shortcut = shortcutIter.hasNext() ? shortcutIter.next() : null;
-    if (shortcut && shortcut.getMimeType() === 'application/vnd.google-apps.shortcut') {
-      parentFolder = loeseShortcutAuf(shortcut.getId());
+    while (!parentFolder && shortcutIter.hasNext()) {
+      const kandidat = shortcutIter.next();
+      if (kandidat.getMimeType() === 'application/vnd.google-apps.shortcut') {
+        parentFolder = loeseShortcutAuf(kandidat.getId());
+      }
     }
   }
   if (!parentFolder) {
-    // Wie oben: Debug statt Sheet, damit wiederholte Webhook-Aufrufe auf denselben blockierten
-    // Deal nicht dieselbe Zeile x-mal ins Log schreiben.
-    Logger.log(`[${dealId}] übersprungen: Unterordner "${MONTAGE_OFFEN_ORDNERNAME}" fehlt im Partner-Root von "${partner}" (auch nicht als Verknüpfung gefunden)`);
+    // FIX 27.08.2026: ebenfalls ein Setup-Fehler, der nach 658d4ab unsichtbar war -- und zwar ein
+    // AKUTER: fuer "Tiroler Partner" und "Vorarlberg Partner" steht in Config.gs ausdruecklich
+    // "Montage offen-Unterordner noch anlegen!", und Montagepartner-aus-Bundesland vergibt genau
+    // diese beiden automatisch fuer Tirol/Vorarlberg. Ein gewonnener Tirol-Deal fiel damit lautlos
+    // durch: kein Ordner, keine Sheet-Zeile, HTTP 200. Gedrosselt ins Sheet, eine Zeile pro
+    // Partner und Tag.
+    logRowGedrosselt(`montageoffen:${partner}`, dealId, deal.title, partner, 'FEHLER',
+      `Unterordner "${MONTAGE_OFFEN_ORDNERNAME}" fehlt im Partner-Root von "${partner}" (auch nicht als Verknüpfung) -- Deals dieses Partners bekommen KEINEN Ordner`);
     return `übersprungen (Unterordner "${MONTAGE_OFFEN_ORDNERNAME}" fehlt bei "${partner}")`;
   }
 

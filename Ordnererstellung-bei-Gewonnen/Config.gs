@@ -158,6 +158,7 @@ function callPipedriveWithRetry(doFetch, path) {
 // sich das unnötig. Die Lauf-ID erlaubt es, aus einer einzelnen FEHLER-Zeile heraus per Filter
 // den kompletten Lauf (Webhook-Aufruf oder manueller Batch) nachzuvollziehen.
 
+const PROP_LOG_DROSSEL = 'ORDNER_LOG_DROSSEL_TAG'; // siehe logRowGedrosselt()
 const LOG_HEADER = ['Zeitstempel', 'Lauf-ID', 'Funktion', 'Modus', 'Deal-ID', 'Deal-Titel', 'Montagepartner', 'Ergebnis', 'Ordner-Link', 'Detail'];
 
 // Neue Property (V2), weil das bestehende Log-Sheet die alte 7-Spalten-Kopfzeile hat. Das alte
@@ -207,6 +208,41 @@ function logRow(dealId, dealTitle, partner, ergebnis, ordnerLink, detail) {
     new Date(), _laufId, _laufFunktion, DRY_RUN ? 'DRY' : 'LIVE',
     dealId || '', dealTitle || '', partner || '', ergebnis, ordnerLink || '', detail || ''
   ]);
+}
+
+/**
+ * Wie logRow(), aber hoechstens EINE Sheet-Zeile pro Schluessel und Kalendertag.
+ *
+ * Entstanden 27.08.2026 aus einem Zielkonflikt: seit der Webhook auf JEDE Deal-Aenderung reagiert
+ * (26480f3), wuerde ein dauerhafter Config-Fehler bei jedem Event eine identische Zeile schreiben --
+ * genau der Log-Spam, den 658d4ab beseitigt hat. Der Fix dort war aber zu grob: er hat auch echte
+ * Setup-Fehler auf Logger.log gesetzt, und die waren damit NIRGENDS sichtbar (kein Sheet, doPost
+ * antwortet trotzdem 200). Ein still nie bearbeiteter gewonnener Deal ist das schlechtere Ergebnis
+ * von beiden.
+ *
+ * Die betroffenen Fehler haengen am PARTNER, nicht am Deal (fehlende Drive-Ordner-ID, fehlender
+ * "Montage offen"-Ordner) -- bei ~7 Partnern also maximal eine Handvoll Zeilen pro Tag statt einer
+ * pro Event. Der Marker liegt in den ScriptProperties und wird bei jedem Schreiben auf den heutigen
+ * Tag zurueckgeschnitten, damit die Property nicht ins 9-KB-Limit waechst.
+ */
+function logRowGedrosselt(schluessel, dealId, dealTitle, partner, ergebnis, detail) {
+  const heute = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const props = PropertiesService.getScriptProperties();
+  let bekannt = {};
+  try {
+    bekannt = JSON.parse(props.getProperty(PROP_LOG_DROSSEL) || '{}');
+  } catch (e) {
+    bekannt = {}; // kaputter Inhalt: lieber einmal zu viel loggen als gar nicht
+  }
+  if (bekannt[schluessel] === heute) {
+    Logger.log(`[gedrosselt, heute schon im Sheet] ${ergebnis}: ${detail}`);
+    return;
+  }
+  const frisch = {};
+  Object.keys(bekannt).forEach(k => { if (bekannt[k] === heute) frisch[k] = bekannt[k]; });
+  frisch[schluessel] = heute;
+  props.setProperty(PROP_LOG_DROSSEL, JSON.stringify(frisch));
+  logRow(dealId, dealTitle, partner, ergebnis, null, detail);
 }
 
 /** Eine Zeile pro Lauf -- praktisch bei processAusgewaehlteDeals() mit mehreren Deal-IDs. */
