@@ -10,6 +10,7 @@ const FIELD_KEYS = {
   sevdesk_kunden_id:          '8926e917db5b38f34fccc43fe74f05a9730e247e',
   Module_Anzahl:               '46e74c317774c91ac843a431780ad24d2e59da03',
   Module_Marke:                '717c4708845a942034c80f4687862714d65c0311',
+  Module_Bezeichnung:          'ba5c7c11d7a26d06d7de9973c25c4042dc21ae2d',
   WR_Leistung_kW:              '75fd8ffb7ba5ae4b3a8a5de1969e0d0f0a9050a0',
   Speicher_Kapazitaet_kWh:     'd8e9435192bb719365e9bc3186dcba540dff26bd',
   Heizstab:                    '9f7b89cfd2364447f5ee4d9bda4cba0a984af10d',
@@ -170,7 +171,7 @@ function classifyPosition(position) {
 
       const value = config.extractValue(name);
 
-      return { category, marke, value, quantity, skipped: false };
+      return { category, marke, value, quantity, skipped: false, rawName: name };
     }
   }
 
@@ -186,6 +187,7 @@ function aggregatePositions(positions) {
   const result = {
     Module_Anzahl: null,
     Module_Marke: null,
+    Module_Bezeichnung: null, // exakter Artikelname, für Pipedrive-Mailvorlagen-Platzhalter
     WR_Leistung_kW: null,
     Speicher_Kapazitaet_kWh: null,
     System_Marke: null,      // aus WR oder Speicher abgeleitet (meist Sigenergy)
@@ -207,7 +209,8 @@ function aggregatePositions(positions) {
         // Mehrere Modul-Positionen (z.B. verschiedene Modelle) werden summiert
         result.Module_Anzahl = (result.Module_Anzahl || 0) + c.quantity;
         result.Module_Marke = c.marke; // letzte gefundene Marke gewinnt (meist eh nur 1 Modell)
-        summaryParts.push(`${c.quantity}x ${c.marke || '?'} Module`);
+        result.Module_Bezeichnung = c.rawName; // letzter gefundener Artikelname gewinnt (meist eh nur 1 Modell)
+        summaryParts.push(`${c.quantity}x ${c.rawName}`); // exakte Modulbezeichnung statt nur Marke
         break;
 
       case 'wechselrichter':

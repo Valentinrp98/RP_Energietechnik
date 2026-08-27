@@ -47,6 +47,28 @@ function createAngebotsnummerField() {
 }
 
 // ============================================================================
+// SETUP: Neues Feld für die exakte Modulbezeichnung anlegen (für Mailvorlagen-Platzhalter)
+// → Diese Funktion EINMAL ausführen, dann den field_code in Datei 2 eintragen.
+// ============================================================================
+
+function createModulBezeichnungField() {
+  const feld = { field_name: 'Modul_Bezeichnung', field_type: 'varchar_auto' };
+
+  const res = pdFetch('/dealFields', {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(feld)
+  });
+
+  if (res.code === 200 || res.code === 201) {
+    Logger.log(`✓ Modul_Bezeichnung angelegt → field_code: ${res.data.data.field_code}`);
+    Logger.log('\n👉 Diesen field_code in Datei 2 unter FIELD_KEYS.Module_Bezeichnung eintragen.');
+  } else {
+    Logger.log(`✗ Fehlgeschlagen (${res.code}): ${res.raw}`);
+  }
+}
+
+// ============================================================================
 // WARTUNG: Bestehende Felder und ihre Options-IDs anzeigen
 // ============================================================================
 
