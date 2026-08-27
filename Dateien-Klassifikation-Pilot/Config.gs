@@ -23,9 +23,15 @@ const ZIEL_UNTERORDNER = {
 
 // Claude-Modell für die Klassifikation. Vision-fähig, günstig genug für einen Piloten mit
 // wenigen Dateien -- vor einem Rollout auf alle Deals nochmal gegen Preis/Genauigkeit prüfen.
-// Bewusst die undatierte ID (kein "-20251001"-Suffix) -- die datierte Snapshot-Schreibweise ist
-// bei aktuellen Claude-Modellen nicht die offizielle Model-ID.
-const CLAUDE_MODEL = 'claude-haiku-4-5';
+// KORREKTUR 27.08.2026: hier stand, die datierte Schreibweise sei "bei aktuellen Claude-Modellen
+// nicht die offizielle Model-ID". Das ist falsch und gefaehrlich als Merksatz -- fuer Haiku 4.5 sind
+// BEIDE gueltig: 'claude-haiku-4-5' (mitwandernder Alias) und 'claude-haiku-4-5-20251001'
+// (gepinnter Snapshot). Ohne Datums-Suffix sind nur die Modelle, die gar keine datierte Variante
+// haben (Opus 5, Sonnet 5, Fable 5). Der Commit ebd. hat also funktional nichts reparieren muessen
+// und dabei einen Pin gegen einen Alias getauscht.
+// Zurueck auf den Pin: solange Genauigkeit UND Kosten pro Dokument hier kalibriert werden, darf das
+// Modell nicht unter der Messung wegwandern. Vor einem Rollout bewusst neu entscheiden.
+const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 const ANTHROPIC_API_VERSION = '2023-06-01';
 
 // Preis Claude Haiku 4.5 (Stand 2026-08-26, siehe platform.claude.com/docs -- vor einem

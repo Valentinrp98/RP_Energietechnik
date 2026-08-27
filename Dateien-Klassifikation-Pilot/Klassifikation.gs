@@ -16,7 +16,12 @@ function processDeal(dealId) {
   const cf = deal.custom_fields || {};
   const kundenOrdnerLink = cf[KUNDENORDNER_LINK_FIELD_KEY];
 
-  if (!kundenOrdnerLink && !DRY_RUN) {
+  // FIX 27.08.2026: stand vorher "&& !DRY_RUN" -- damit war der DRY-Lauf der TEUERE Modus. Ein
+  // Deal ohne Kundenordner-Link wurde im DRY-Lauf nicht uebersprungen, sondern alle Dateien
+  // heruntergeladen und an Claude geschickt (echtes Geld), um dann "wuerde verschieben" zu loggen.
+  // LIVE haette derselbe Deal bei Kosten 0 abgebrochen. Ein DRY-Lauf soll den Echtlauf vorhersagen,
+  // nicht mehr kosten als er.
+  if (!kundenOrdnerLink) {
     logRow(dealId, null, null, 'SOFT_ERROR', 'Kundenordner-Link ist am Deal nicht gesetzt -- Ordnererstellung-bei-Gewonnen muss zuerst gelaufen sein');
     return { verarbeitet: 0, unsicher: 0, fehler: 1 };
   }
@@ -75,7 +80,13 @@ function klassifiziereUndVerschiebe(dealId, datei, kundenOrdner) {
 
   if (klassifikation.kategorie === 'unsicher') return 'unsicher';
 
-  const zielUnterordnerName = ZIEL_UNTERORDNER[klassifikation.kategorie];
+  // hasOwnProperty statt direktem Zugriff: die Kategorie kommt aus einem Claude-Call ueber ein
+  // Dokument, das Fremdinput ist (Prompt Injection in einer Kunden-PDF ist der realistische Vektor).
+  // Ohne diese Pruefung laeuft der Lookup die Prototype-Chain hoch -- kategorie: "constructor"
+  // liefert eine truthy Function, die dann als Ordnername an getFoldersByName() ginge, statt hier
+  // saubere eine FEHLER-Zeile zu erzeugen.
+  const zielBekannt = Object.prototype.hasOwnProperty.call(ZIEL_UNTERORDNER, klassifikation.kategorie);
+  const zielUnterordnerName = zielBekannt ? ZIEL_UNTERORDNER[klassifikation.kategorie] : null;
   if (!zielUnterordnerName) {
     logRow(dealId, datei.name, klassifikation.kategorie, 'FEHLER', `Kategorie "${klassifikation.kategorie}" hat keinen Zielordner in ZIEL_UNTERORDNER (Config.gs)`);
     return 'fehler';

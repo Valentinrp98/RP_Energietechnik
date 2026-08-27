@@ -20,8 +20,16 @@ function checkConfiguration() {
 
   if (probleme.length === 0) {
     try {
-      const dealFields = fetchPipedrive('dealFields');
-      const gefunden = dealFields.some(f => f.key === KUNDENORDNER_LINK_FIELD_KEY);
+      // FIX 27.08.2026, zwei Fehler in zwei Zeilen, beide erzeugten denselben Scheinfehler
+      // ("Feld existiert nicht (mehr)"), obwohl das Feld intakt ist:
+      //   1. Der Identifier heisst in v2 "field_code", nicht "key" (key ist die v1-Schreibweise).
+      //      "name" ist bei Pipedrive-Feldern uebrigens immer undefined, das Label steht in
+      //      "field_name" -- siehe die Schwesterprojekte, die das seit 17.08. richtig machen.
+      //   2. Ohne limit paginiert v2 bei 100 Feldern; RP hat deutlich mehr, das gesuchte Feld lag
+      //      also womoeglich gar nicht in der Antwort.
+      // Da das der EINZIGE Pre-Flight-Check ist, gewoehnt man sich sonst an, ihn zu ignorieren.
+      const dealFields = fetchPipedrive('dealFields?limit=500');
+      const gefunden = dealFields.some(f => f.field_code === KUNDENORDNER_LINK_FIELD_KEY);
       if (!gefunden) {
         probleme.push(`KUNDENORDNER_LINK_FIELD_KEY "${KUNDENORDNER_LINK_FIELD_KEY}" existiert nicht (mehr) in dealFields.`);
       }
@@ -42,25 +50,48 @@ function checkConfiguration() {
 function testEinzelDeal() {
   starteLauf('testEinzelDeal');
   const dealId = PILOT_DEAL_IDS[0];
-  const summary = processDeal(dealId);
-  logLaufEnde('OK', summary);
-  flushLog();
-  Logger.log(`testEinzelDeal (Deal ${dealId}): ${JSON.stringify(summary)}`);
-  return summary;
+  // FIX 27.08.2026: flushLog() lief linear am Ende. Jede Exception davor (kaputter
+  // Kundenordner-Link, Pipedrive-4xx, 6-Min-Limit) hat den kompletten Log-Puffer verworfen --
+  // inklusive der Token-/Kosten-Zeilen fuer Claude-Calls, die bereits abgerechnet waren. Genau das
+  // Muster, das die Schwesterprojekte ueberall als try/finally haben; beim Kopieren fehlte es.
+  try {
+    const summary = processDeal(dealId);
+    logLaufEnde('OK', summary);
+    Logger.log(`testEinzelDeal (Deal ${dealId}): ${JSON.stringify(summary)}`);
+    return summary;
+  } catch (e) {
+    logLaufEnde('HARD_ERROR', { fehler: e.message });
+    throw e;
+  } finally {
+    flushLog();
+  }
 }
 
 /** Iteriert alle Pilot-Deals (siehe PILOT_DEAL_IDS in Config.gs). Respektiert DRY_RUN. */
 function pilotLauf() {
   starteLauf('pilotLauf');
   const summary = { verarbeitet: 0, unsicher: 0, fehler: 0 };
-  PILOT_DEAL_IDS.forEach(dealId => {
-    const ergebnisProDeal = processDeal(dealId);
-    summary.verarbeitet += ergebnisProDeal.verarbeitet;
-    summary.unsicher += ergebnisProDeal.unsicher;
-    summary.fehler += ergebnisProDeal.fehler;
-  });
-  logLaufEnde('OK', summary);
-  flushLog();
-  Logger.log(`pilotLauf: ${JSON.stringify(summary)}`);
-  return summary;
+  // try/finally wie in testEinzelDeal(): ohne das verliert ein Fehler bei Deal 3 die bereits
+  // bezahlten Kosten-Zeilen von Deal 1 und 2. Zusaetzlich wird jeder Deal einzeln gefangen, damit
+  // ein kaputter Deal nicht die restlichen mitnimmt -- der Lauf soll durchlaufen und am Ende sagen,
+  // was schiefging.
+  try {
+    PILOT_DEAL_IDS.forEach(dealId => {
+      try {
+        const ergebnisProDeal = processDeal(dealId);
+        summary.verarbeitet += ergebnisProDeal.verarbeitet;
+        summary.unsicher += ergebnisProDeal.unsicher;
+        summary.fehler += ergebnisProDeal.fehler;
+      } catch (e) {
+        summary.fehler++;
+        logRow(dealId, null, null, 'HARD_ERROR', `Deal abgebrochen: ${e.message}`);
+        Logger.log(`pilotLauf: Deal ${dealId} abgebrochen -- ${e.message}`);
+      }
+    });
+    logLaufEnde(summary.fehler > 0 ? 'HARD_ERROR' : 'OK', summary);
+    Logger.log(`pilotLauf: ${JSON.stringify(summary)}`);
+    return summary;
+  } finally {
+    flushLog();
+  }
 }
