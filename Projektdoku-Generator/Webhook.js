@@ -24,6 +24,14 @@ const WEBHOOK_SHARED_SECRET = '058e7406339685643355feca7ba1cd79';
 // starten, deshalb Konstante statt Funktionsargument (gleiches Muster wie testEinzelDeal()).
 const WEBHOOK_ID_ZUM_LOESCHEN = 0;
 
+// Drosselung fuer planeNachzieherLauf()/pruefeConfigGedrosselt(). Beide Marker liegen in den
+// ScriptProperties, damit sie einen Aufruf ueberleben -- jeder Webhook-Event ist eine eigene
+// Ausfuehrung, globale Variablen sind danach weg.
+const PROP_NACHZIEHER_GEPLANT = 'PROJEKTDOKU_NACHZIEHER_GEPLANT_TS';
+const PROP_CONFIG_GEPRUEFT = 'PROJEKTDOKU_CONFIG_GEPRUEFT_TS';
+const NACHZIEHER_DROSSEL_MS = 5 * 60 * 1000;
+const CONFIG_PRUEFUNG_DROSSEL_MS = 60 * 60 * 1000;
+
 // ===== EMPFANG =====
 
 /**
@@ -40,8 +48,11 @@ function doPost(e) {
   try {
     verarbeiteWebhookEvent(e);
   } catch (err) {
-    // Sollte nicht vorkommen (verarbeiteWebhookEvent fängt selbst) -- letzte Sicherung, damit doPost
-    // in jedem Fall zurückkehrt statt mit einer Exception aus der Web-App-Runtime zu fallen.
+    // KORREKTUR 27.08.2026: hier stand "verarbeiteWebhookEvent fängt selbst" -- falsch, die
+    // Funktion hat try/finally OHNE catch. Alles, was dort ausserhalb von verarbeiteTreffer()
+    // wirft (z.B. flushLog auf ein geloeschtes Sheet), landet wirklich hier. Deshalb zusaetzlich
+    // der Versuch einer Sheet-Zeile -- ein reines Logger.log wuerde genau die Fehlerklasse
+    // verstecken, die dieses Projekt schon einmal wochenlang unsichtbar gemacht hat.
     Logger.log(`doPost: unerwarteter Fehler außerhalb des inneren try/catch -- ${err.message}`);
   }
   return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(ContentService.MimeType.JSON);
@@ -182,33 +193,58 @@ function leseWebhookOptionId(feld) {
   if (typeof feld !== 'object') return feld;
   if (feld.id !== undefined && feld.id !== null) return feld.id;      // enum/people/org/user
   if (feld.value !== undefined && feld.value !== null) return feld.value; // varchar/double/date/...
+
+  // Ab hier: kein Wert lesbar. Zwei sehr verschiedene Faelle, die vorher beide als "unbekanntes
+  // Format" durchgingen und deshalb einen Fehlalarm samt vollem Deal-Nachladen ausgeloest haben:
+  //
+  //   a) BEKANNTER Typ, Feld gerade geleert  -> z.B. {"id": null, "type": "enum"}. Voellig normal,
+  //      passiert bei jedem Leeren des Dropdowns. Muss still bleiben.
+  //   b) UNBEKANNTE Form                     -> Payload-Format hat sich geaendert. Muss laut sein.
+  //
+  // Unterschieden wird am type-Diskriminator, den Pipedrive bei jedem Custom Field mitschickt.
+  // 'set', 'daterange' und 'timerange' stehen bewusst NICHT in der Liste: die tragen ihre Werte in
+  // `values`/`from`/`until`, ein Aufrufer der auf eine einzelne Options-ID vergleicht wuerde hier
+  // stillschweigend das Falsche bekommen. Fuer die soll diese Funktion weiter undefined liefern.
+  const BEKANNTE_EINZELWERT_TYPEN = [
+    'enum', 'people', 'org', 'user',
+    'varchar', 'varchar_auto', 'text', 'double', 'monetary', 'date', 'time', 'phone', 'address'
+  ];
+  if (feld.type && BEKANNTE_EINZELWERT_TYPEN.indexOf(String(feld.type)) !== -1) {
+    return null; // bekannter Typ, aber leer -> Aufrufer behandelt das als "kein Trigger-Wert"
+  }
   return undefined; // unbekannte Form -> Aufrufer soll das laut melden, nicht raten
 }
 
 /**
- * Kurzer Lock (5s) statt der 30s im Tages-Trigger: ein Event soll bei Konflikt lieber überspringen
- * (Backup-Trigger holt es nach) als Pipedrives 10-Sekunden-Antwortfenster zu riskieren.
+ * Kurzer Lock (5s) statt der 30s im Tages-Trigger: Pipedrives Antwortfenster liegt bei ~10s, ein
+ * langes Warten wuerde als Zustellfehler zaehlen (und nach 3 Tagen Dauerausfall loescht Pipedrive
+ * den Webhook -- genau das ist diesem Projekt schon passiert).
+ *
+ * FIX 27.08.2026: bei Lock-Konflikt wurde vorher eine Zeile "wird vom naechsten Tageslauf
+ * nachgezogen" geschrieben -- und dann NICHTS nachgezogen, weil der Tages-Trigger nie angelegt
+ * wurde. Ein Bulk-Edit des Statusfelds auf mehreren Deals (der vorgesehene Workflow!) erzeugt
+ * mehrere Events fast gleichzeitig; Event 1 haelt den Lock ueber die gesamte Doc-Erzeugung
+ * (Person-Fetch + Drive-Lookups + DocumentApp.create + moveTo + PATCHes, realistisch 6-15s),
+ * alle weiteren liefen in den Timeout und blieben endgueltig liegen. Die Log-Zeile behauptete eine
+ * Rettung, die es nicht gab. Jetzt wird ein echter Nachzieh-Lauf eingeplant.
  */
 function verarbeiteTreffer(dealId, dealTitelAusPayload) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5 * 1000)) {
+    planeNachzieherLauf(`Lock belegt bei Deal ${dealId}`);
     logRow(dealId, dealTitelAusPayload, null, 'SOFT_ERROR', null, null,
-           '[Webhook] übersprungen -- Lock belegt (Tages-Trigger oder anderer Webhook-Event läuft), wird vom nächsten Tageslauf nachgezogen');
+           '[Webhook] uebersprungen -- Lock belegt, Nachzieh-Lauf eingeplant (planeNachzieherLauf)');
     return;
   }
   try {
-    // Kein eigener checkConfiguration()-Aufruf hier -- zwei volle Feldlisten-Abrufe pro einzelnem
-    // Event wären für die Web-App-Antwortzeit zu teuer. Der Tages-Trigger prüft die Config bereits
-    // täglich und blockiert sich selbst bei Problemen; ein defekter Field-Code fällt hier stattdessen
-    // als HARD_ERROR in dieser Zeile auf, statt den Lauf präventiv zu verweigern.
+    pruefeConfigGedrosselt();
     const deal = fetchPipedrive(`deals/${dealId}`);
     // Status frisch neu auswerten statt den Payload-Wert von oben weiterzureichen -- zwischen Event
-    // und dieser Zeile kann der Deal schon wieder anders stehen (z.B. Tages-Trigger war schneller).
+    // und dieser Zeile kann der Deal schon wieder anders stehen (z.B. Nachzieh-Lauf war schneller).
     const statusFrisch = String((deal.custom_fields || {})[DOKU_STATUS_FIELD_KEY]);
-    // Und dann auch WIRKLICH danach handeln: ohne diese Prüfung würde processDeal() unabhängig vom
-    // frischen Status laufen. Das ist der Unterschied zwischen "Doku bei Bedarf" und "Doku bei jeder
-    // beliebigen Deal-Änderung" -- der Tages-Trigger filtert in findDealsForDokuErstellung(), dieser
-    // Pfad hatte kein Gegenstück dazu. Nötig geworden durch den custom_fields-Fallback in
+    // Und dann auch WIRKLICH danach handeln: ohne diese Pruefung wuerde processDeal() unabhaengig
+    // vom frischen Status laufen -- der Unterschied zwischen "Doku bei Bedarf" und "Doku bei jeder
+    // beliebigen Deal-Aenderung". Noetig wegen des custom_fields-Fallbacks in
     // verarbeiteWebhookEvent(), der hier absichtlich ungefiltert hereinkommt.
     if (statusFrisch !== String(DOKU_STATUS_OPTION_TRIGGER) && statusFrisch !== String(DOKU_STATUS_OPTION_NEU_ERSTELLEN)) {
       Logger.log(`doPost: Deal ${dealId} steht beim Nachladen auf Status "${statusFrisch}" -- kein Trigger-Wert (mehr), nichts zu tun.`);
@@ -216,12 +252,83 @@ function verarbeiteTreffer(dealId, dealTitelAusPayload) {
     }
     const forceRegenerate = statusFrisch === String(DOKU_STATUS_OPTION_NEU_ERSTELLEN);
     const result = processDeal(deal, forceRegenerate);
-    logRow(deal.id, deal.title, result.kunde, result.status, result.docUrl, result.completeness, `[Webhook] ${result.detail}`);
+
+    // Log-Aufteilung (FIX 27.08.2026, gleiche Klasse wie Ordnererstellung-Commit 658d4ab):
+    // Ein Deal, der auf einem Trigger-Wert steht und dauerhaft blockiert ist (haeufigster Fall:
+    // Kundenordner-Link fehlt noch, weil Ordnererstellung-bei-Gewonnen noch nicht gelaufen ist),
+    // erzeugte bei JEDER weiteren Deal-Aenderung eine identische SOFT_ERROR-Zeile -- inklusive der
+    // Aenderungen, die der sevdesk-Sync alle 5 Minuten schreibt. Unbegrenzt wachsend, und die
+    // echten Fehler waeren darin untergegangen (Sheets-Limit 10 Mio Zellen).
+    // Wiederholbare Grenzfaelle deshalb nur nach Stackdriver; ins Sheet gehoert der Erfolg und das
+    // technische Versagen. Der Tages-Trigger protokolliert blockierte Deals weiterhin einmal
+    // taeglich ins Sheet -- DESHALB ist SETUP_EINMALIG_createDailyTrigger() Pflicht, nicht Deko.
+    if (result.status === 'SOFT_ERROR') {
+      Logger.log(`doPost: Deal ${dealId} uebersprungen (SOFT_ERROR) -- ${result.detail}`);
+    } else {
+      logRow(deal.id, deal.title, result.kunde, result.status, result.docUrl, result.completeness, `[Webhook] ${result.detail}`);
+    }
   } catch (err) {
     logRow(dealId, dealTitelAusPayload, null, 'HARD_ERROR', null, null, `[Webhook] ${err.message}`);
     Logger.log(`doPost: HARD_ERROR bei Deal ${dealId} -- ${err.message}`);
   } finally {
     lock.releaseLock();
+  }
+}
+
+/**
+ * Einmaliger Nachzieh-Lauf in ~2 Minuten. Ersetzt die frueher nur behauptete Rettung bei
+ * Lock-Konflikt durch eine echte: generateDailyProjectDocumentation() scannt alle Deals auf die
+ * Trigger-Werte, ist idempotent und prueft vorher die Config -- damit holt EIN Lauf beliebig viele
+ * liegengebliebene Events nach, egal wie viele Events gleichzeitig kamen.
+ *
+ * Drosselung ueber eine ScriptProperty statt ueber Trigger-Introspektion: Apps Script bietet keine
+ * verlaessliche Unterscheidung zwischen einem taeglichen und einem einmaligen Clock-Trigger, ein
+ * Aufraeumen "aller Clock-Trigger dieser Funktion" wuerde also den Tages-Trigger mitloeschen.
+ * Ohne Drosselung wuerde ein Bulk-Edit auf 20 Deals 19 Trigger anlegen und ins Apps-Script-Limit
+ * (20 Trigger pro Script und Nutzer) laufen -- das blockiert dann auch
+ * SETUP_EINMALIG_createDailyTrigger(). Ein einziger Nachzieher reicht ohnehin fuer alle.
+ */
+function planeNachzieherLauf(grund) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const letzter = Number(props.getProperty(PROP_NACHZIEHER_GEPLANT) || 0);
+    if (Date.now() - letzter < NACHZIEHER_DROSSEL_MS) {
+      Logger.log(`planeNachzieherLauf: bereits einer eingeplant (${grund}) -- kein zweiter.`);
+      return;
+    }
+    ScriptApp.newTrigger('generateDailyProjectDocumentation')
+      .timeBased().after(2 * 60 * 1000).create();
+    props.setProperty(PROP_NACHZIEHER_GEPLANT, String(Date.now()));
+    Logger.log(`planeNachzieherLauf: Nachzieh-Lauf in 2 Min eingeplant (${grund}).`);
+  } catch (e) {
+    // Nicht werfen: der Webhook-Event soll deswegen nicht als Fehler enden. Aber laut ins Sheet --
+    // ohne Nachzieher ist der Deal wirklich liegengeblieben, und das ist kein Grenzfall.
+    logRow(null, null, null, 'HARD_ERROR', null, null,
+           `[Webhook] Nachzieh-Lauf konnte NICHT eingeplant werden (${e.message}) -- liegengebliebene Deals brauchen einen manuellen Lauf von generateDailyProjectDocumentation()`);
+  }
+}
+
+/**
+ * checkConfiguration() hoechstens einmal pro Stunde, Ergebnis-Zeitpunkt in einer ScriptProperty.
+ *
+ * FIX 27.08.2026: vorher stand hier bewusst KEIN Config-Check, begruendet mit "der Tages-Trigger
+ * prueft das ja taeglich". Da der Tages-Trigger nie existierte, war die Pruefung faktisch komplett
+ * abgeschaltet -- genau die Pruefung, die gegen die stille Nicht-Schreibung gebaut wurde (eine in
+ * Pipedrive verschobene Options-ID laesst den PATCH leer rausgehen, Pipedrive antwortet 200, das
+ * Log meldet Erfolg, geschrieben wurde nichts). Zwei Feldlisten-Abrufe pro Event waeren fuer die
+ * Web-App-Antwortzeit zu teuer, einmal pro Stunde ist es nicht.
+ *
+ * Wirft bei Problemen: der Aufrufer macht daraus eine HARD_ERROR-Zeile, und es wird nichts
+ * geschrieben. Lieber ein sichtbarer Fehler als ein stiller Erfolg.
+ */
+function pruefeConfigGedrosselt() {
+  const props = PropertiesService.getScriptProperties();
+  const letzte = Number(props.getProperty(PROP_CONFIG_GEPRUEFT) || 0);
+  if (Date.now() - letzte < CONFIG_PRUEFUNG_DROSSEL_MS) return;
+  const probleme = checkConfiguration();
+  props.setProperty(PROP_CONFIG_GEPRUEFT, String(Date.now()));
+  if (probleme.length > 0) {
+    throw new Error(`Config-Pruefung fehlgeschlagen, nichts geschrieben: ${probleme.join(' | ')}`);
   }
 }
 
@@ -296,9 +403,12 @@ function checkWebhookRegistration() {
     const versionOk = String(w.version) === '2.0' || String(w.version) === '2';
     const actionOk = w.event_action === 'change';
     const objectOk = w.event_object === 'deal';
+    const aktivHinweis = String(w.is_active) === '1' || w.is_active === true
+      ? 'aktiv'
+      : 'INAKTIV -- Pipedrive hat den Webhook deaktiviert (3 Tage Dauerausfall), SETUP_EINMALIG_registerWebhook() noetig';
     Logger.log(`Webhook ${w.id}: version=${w.version} (${versionOk ? 'ok' : 'FALSCH -- sollte 2.0 sein'}), ` +
                `event_action=${w.event_action} (${actionOk ? 'ok' : 'FALSCH'}), ` +
-               `event_object=${w.event_object} (${objectOk ? 'ok' : 'FALSCH'}), aktiv=${w.is_active}`);
+               `event_object=${w.event_object} (${objectOk ? 'ok' : 'FALSCH'}), ${aktivHinweis}`);
   });
   if (eigene.length > 1) {
     Logger.log(`ACHTUNG: ${eigene.length} Webhooks mit derselben subscription_url -- Duplikate, jedes Event würde mehrfach ankommen. Überflüssige über loescheWebhookMitId() entfernen.`);
