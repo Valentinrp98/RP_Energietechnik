@@ -324,28 +324,45 @@ function buildProjectDoc(deal, person, adresse) {
   const untertitel = adresse && adresse !== '(leer)' ? `${kundenName} – ${adresse}` : kundenName;
   body.appendParagraph(untertitel).setHeading(DocumentApp.ParagraphHeading.SUBTITLE);
 
-  body.appendParagraph('1. Projektdetails').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  // FIX 31.08.2026: Sektionsnummern waren hartcodiert (1..11) -- die Nummerierung sprang deshalb,
+  // sobald eine bedingte Sektion fehlte. Zwei Faelle, beide real:
+  //   - Sektion 9 (Montagepartner) erscheint nur, wenn ein Partner gesetzt ist. Ohne Partner ging
+  //     das Doc von 8 direkt auf 10. Das war schon vor den Zusatzdaechern so.
+  //   - Die neuen Zusatzdach-Sektionen erscheinen nur bei Daten. Hat ein Deal nur Dach 3 (weil
+  //     jemand die Felder in der falschen Reihenfolge befuellt), stand dort "11." ohne ein "10."
+  //     darueber.
+  // Der Montagepartner bekommt die Doku ausgedruckt in die Hand -- eine Nummerierung mit Loechern
+  // sieht aus wie eine fehlende Seite und erzeugt genau den Rueckfrage-Anruf, den diese Doku
+  // vermeiden soll. Deshalb ein laufender Zaehler statt fester Zahlen.
+  let sektionNr = 0;
+  const sektion = (titel) => {
+    sektionNr++;
+    body.appendParagraph(`${sektionNr}. ${titel}`).setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  };
+
+  sektion('Projektdetails');
   appendKeyValueTable(body, [
     ['Kunde', kundenName],
     ['Adresse', adresse],
     ['Datum erstellt', Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy')],
-    ['Netzansuchen eigenständig gestellt', resolveEnumLabel(cf[NETZANSUCHEN_FIELD_KEY], NETZANSUCHEN_ID_TO_NAME)]
+    ['Netzansuchen eigenständig gestellt', resolveEnumLabel(cf[NETZANSUCHEN_FIELD_KEY], NETZANSUCHEN_ID_TO_NAME)],
+    ['Ausführungsart', resolveEnumLabel(cf[AUSFUEHRUNGSART_FIELD_KEY], AUSFUEHRUNGSART_ID_TO_NAME)]
   ]);
 
-  body.appendParagraph('2. Kontakt').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  sektion('Kontakt');
   appendKeyValueTable(body, [
     ['E-Mail', person ? getPrimaryContactValue(person.emails) : ''],
     ['Telefonnummer', person ? getPrimaryContactValue(person.phones) : '']
   ]);
 
-  body.appendParagraph('3. Installationsort & Eindeckung').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  sektion('Installationsort & Eindeckung');
   appendKeyValueTable(body, [
     ['Dachform', resolveEnumLabel(cf[DACHFORM_FIELD_KEY], DACHFORM_ID_TO_NAME)],
     ['Eindeckung', resolveEnumLabel(cf[EINDECKUNG_FIELD_KEY], EINDECKUNG_ID_TO_NAME)],
     ['Ausrichtung', resolveSetLabels(cf[AUSRICHTUNG_FIELD_KEY], AUSRICHTUNG_ID_TO_NAME)]
   ]);
 
-  body.appendParagraph('4. Verkabelung, Verteiler & Termine').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  sektion('Verkabelung, Verteiler & Termine');
   appendKeyValueTable(body, [
     ['DC-Verkabelung', formatMeterWert(cf[DC_KABELWEG_FIELD_KEY])],
     ['AC-Verkabelung', formatMeterWert(cf[AC_KABELWEG_FIELD_KEY])],
@@ -355,7 +372,7 @@ function buildProjectDoc(deal, person, adresse) {
     ['Inbetriebnahme-Termin', formatPipedriveDate(cf[IB_TERMIN_FIELD_KEY])]
   ]);
 
-  body.appendParagraph('5. Anlagendetails & Lieferumfang').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  sektion('Anlagendetails & Lieferumfang');
   const anlagendetails = cf[ANLAGENDETAILS_FIELD_KEY];
   if (anlagendetails) {
     // Verkaufte_Artikel_Summary aus dem sevdesk-Sync ist mehrzeilig -- als ein appendParagraph
@@ -368,18 +385,18 @@ function buildProjectDoc(deal, person, adresse) {
     body.appendParagraph('(leer)');
   }
 
-  body.appendParagraph('6. Lieferplanung').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  sektion('Lieferplanung');
   appendKeyValueTable(body, [
     ['Geplante Materiallieferung', formatPipedriveDate(cf[LIEFERTERMIN_FIELD_KEY])]
   ]);
 
-  body.appendParagraph('7. Notizen').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  sektion('Notizen');
   appendKeyValueTable(body, [
     ['Interne Notizen', zeigeWert(cf[NOTIZEN_INTERN_FIELD_KEY])],
     ['Sonstige Mitteilung Kunde', zeigeWert(cf[NOTIZEN_KUNDE_FIELD_KEY])]
   ]);
 
-  body.appendParagraph('8. Elektro- und Kleinmaterial').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  sektion('Elektro- und Kleinmaterial');
   appendKeyValueTable(body, [
     ['Gezahlt von', resolveEnumLabel(cf[ELEKTROMATERIAL_GEZAHLT_FIELD_KEY], ELEKTROMATERIAL_GEZAHLT_ID_TO_NAME)],
     ['Organisiert von', resolveEnumLabel(cf[ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY], ELEKTROMATERIAL_ORGANISIERT_ID_TO_NAME)]
@@ -387,9 +404,12 @@ function buildProjectDoc(deal, person, adresse) {
 
   const partnerId = cf[MONTAGEPARTNER_FIELD_KEY];
   if (partnerId) {
-    body.appendParagraph('9. Montagepartner').setHeading(DocumentApp.ParagraphHeading.HEADING1);
+    sektion('Montagepartner');
     body.appendParagraph(resolveEnumLabel(partnerId, MONTAGEPARTNER_ID_TO_NAME));
   }
+
+  appendZusatzDachSection(body, sektion, 'Zusätzliches Dach 2', cf, DACH2_FIELD_KEYS, DACH2_ID_TO_NAME);
+  appendZusatzDachSection(body, sektion, 'Zusätzliches Dach 3', cf, DACH3_FIELD_KEYS, DACH3_ID_TO_NAME);
 
   // DocumentApp.create() legt das Doc mit einem leeren Absatz an; alles oben wird DAHINTER
   // angehängt. Ohne Entfernen beginnt jede Kundendoku mit einer Leerzeile über dem Titel.
@@ -401,6 +421,34 @@ function buildProjectDoc(deal, person, adresse) {
 
   doc.saveAndClose();
   return doc;
+}
+
+/**
+ * Baut die optionale Sektion für ein Zusatzdach (Dach 2 oder Dach 3, siehe DACH2_/DACH3_FIELD_KEYS
+ * in Config.js). Erscheint NUR, wenn mindestens eines der 11 Felder befüllt ist -- die meisten Deals
+ * haben nur ein Dach, dann bleibt die Sektion komplett weg statt einer Tabelle voller "(leer)".
+ */
+function appendZusatzDachSection(body, sektion, ueberschrift, cf, keys, idToName) {
+  const hatDaten = Object.values(keys).some(key => {
+    const v = cf[key];
+    return v !== null && v !== undefined && v !== '';
+  });
+  if (!hatDaten) return;
+
+  sektion(ueberschrift);
+  appendKeyValueTable(body, [
+    ['Dachform', resolveEnumLabel(cf[keys.Dachform], idToName.Dachform)],
+    ['Eindeckung', resolveEnumLabel(cf[keys.Eindeckung], idToName.Eindeckung)],
+    ['Dachneigung', zeigeWert(cf[keys.Dachneigung])],
+    ['Gebäudehöhe', zeigeWert(cf[keys.Gebaeudehoehe])],
+    ['Unterkonstruktion', resolveEnumLabel(cf[keys.Unterkonstruktion], idToName.Unterkonstruktion)],
+    ['Höhe Sparren/Pfetten', zeigeWert(cf[keys.HoeheSparren])],
+    ['Breite Sparren/Pfetten', zeigeWert(cf[keys.BreiteSparren])],
+    ['DC-Verkabelung', formatMeterWert(cf[keys.KabelwegDC])],
+    ['AC-Verkabelung', formatMeterWert(cf[keys.KabelwegAC])],
+    ['Störflächen am Dach', resolveEnumLabel(cf[keys.Stoerflaechen], idToName.Stoerflaechen)],
+    ['Blitzschutz vorhanden', resolveEnumLabel(cf[keys.Blitzschutz], idToName.Blitzschutz)]
+  ]);
 }
 
 function appendKeyValueTable(body, rows) {

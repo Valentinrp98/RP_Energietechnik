@@ -234,25 +234,29 @@ const SYNC_FIELD_CONFIG = [
     label: 'DC-Termin',
     sheetColumnHeader: COL.dcTermin,
     pipedriveFieldKey: '6e4dc4e9017957ddadebddac3dd622ca3afe8676',
-    direction: 'bidirektional'
+    direction: 'bidirektional',
+    istDatumsfeld: true
   },
   {
     label: 'AC-Termin',
     sheetColumnHeader: COL.acTermin,
     pipedriveFieldKey: '0277ea7463b980044e0062e46467979ccc292127',
-    direction: 'bidirektional'
+    direction: 'bidirektional',
+    istDatumsfeld: true
   },
   {
     label: 'IB-Termin',
     sheetColumnHeader: COL.ibTermin,
     pipedriveFieldKey: 'ba820255728739b29c451287808fbe18f1c94b8e',
-    direction: 'bidirektional'
+    direction: 'bidirektional',
+    istDatumsfeld: true
   },
   {
     label: 'Materiallieferung',
     sheetColumnHeader: COL.materiallieferung,
     pipedriveFieldKey: 'c0a676d8db66f0cb6300e8160e1401355a226990', // Pipedrive-Feld heißt "Liefertermin"
-    direction: 'pipedrive_to_sheet'
+    direction: 'pipedrive_to_sheet',
+    istDatumsfeld: true
   },
   // R1+R2 aus IDEEN-Felder-und-Aktionen.md, die zwei "Anruf-Killer": Checkbox im Sheet, aber in
   // Pipedrive wird ein DATUM gespeichert statt true/false (siehe Abschnitt 1 dort) -- ein Datum
@@ -325,7 +329,11 @@ const SYNC_FIELD_CONFIG = [
 ];
 
 // Wenn true: nichts wird geschrieben, nur geloggt was passieren würde
-const DRY_RUN = true;
+// 2026-08-31 auf false gestellt (Valentins Go): scharf für ALE. Nur begrenztes Risiko, weil
+// bisher NUR der onEdit-Trigger für ALE läuft (installOnEditTriggerFuerEinenPartner()) und die
+// globalen 15-Min-Timer (syncNeueZeilen/syncPipedriveToSheetFields) noch NICHT installiert sind
+// -- die anderen fünf Partner sind also nicht betroffen, bis installTriggers() für alle läuft.
+const DRY_RUN = false;
 
 // ===== HILFSFUNKTIONEN (Pipedrive) =====
 
@@ -550,6 +558,140 @@ function zeigeWert(w) {
 /** Einheitlicher Zeitstempel für alle Zell-Notizen. */
 function notizZeitstempel() {
   return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy HH:mm');
+}
+
+/**
+ * "YYYY-MM-DD" (Pipedrive-Datumsformat) als echtes Date-Objekt für Termin-/Datumsspalten
+ * (DC-/AC-/IB-Termin, Materiallieferung -- istDatumsfeld in SYNC_FIELD_CONFIG). Ohne das landet
+ * ein reiner String in der Zelle, was Sortierung und Nachbearbeitung durch Valentin kaputt macht
+ * -- gleiches Problem/gleicher Fix wie bei Erstellungsdatum im Namensabgleich-Script (2026-08-31).
+ * Bewusst NICHT new Date("2026-07-14"): das parst V8 als UTC-Mitternacht, was in einer Zone
+ * westlich von UTC einen Tag zu früh ergibt. Aus den Teilen gebaut ist es eindeutig.
+ */
+function alsDatum(isoDatum) {
+  const m = String(isoDatum || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+/**
+ * Vergleichbare Form eines Werts für Datumsfelder -- egal ob er als Date-Objekt (Sheet-Zelle)
+ * oder als "YYYY-MM-DD"-String (Pipedrive) reinkommt, liefert 'yyyy-MM-dd'. Ohne das würde der
+ * reine String-Vergleich in syncPipedriveToSheetFields() bei jedem Lauf neu schreiben, sobald die
+ * Zelle einmal ein echtes Date-Objekt enthält (String(Date) != "2026-07-14"), obwohl sich der
+ * Wert nie geändert hat.
+ */
+function vergleichswert(fieldConfig, wert) {
+  if (!fieldConfig.istDatumsfeld) return String(wert);
+  if (wert instanceof Date) return Utilities.formatDate(wert, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const d = alsDatum(wert);
+  return d ? Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(wert);
+}
+
+// ---------- Verzögerte Schreib-Warteschlange (Sheet->Pipedrive), Valentins Vorgabe 2026-08-31 ----------
+const SCHREIB_VERZOEGERUNG_SEK = 60; // 1 Minute Stabilität, bevor eine Zell-Änderung wirklich nach Pipedrive geschrieben wird
+const PENDING_CELL_EDITS_PROPERTY = 'PENDING_CELL_EDITS';
+
+/** Date-Objekte überleben JSON.stringify() nicht als Date -- deshalb explizit markiert serialisieren. */
+function serialisiereZellwert(w) {
+  if (w instanceof Date) return { typ: 'date', wert: w.toISOString() };
+  return { typ: typeof w, wert: w };
+}
+function deserialisiereZellwert(s) {
+  return s.typ === 'date' ? new Date(s.wert) : s.wert;
+}
+
+// Ein einzelner ScriptProperties-WERT ist auf ~9 KB begrenzt (siehe reference_apps_script_limits).
+// Deshalb wird pro Eintrag nur noch gespeichert, was NICHT schon im Schluessel steht: der
+// Schluessel ist "spreadsheetId|gid|row|col", also braucht der Wert diese vier Felder nicht
+// nochmal. Das war vorher doppelt drin und hat einen Eintrag von ~110 auf ~255 Zeichen
+// aufgeblaeht -- also von ~80 auf ~36 gleichzeitig moegliche Zellen.
+const PENDING_MAX_EINTRAEGE = 60; // harte Obergrenze, deutlich unter dem, was in 9 KB passt
+
+function pendingKey(spreadsheetId, gid, row, col) {
+  return spreadsheetId + '|' + gid + '|' + row + '|' + col;
+}
+function pendingKeyTeile(key) {
+  const t = String(key).split('|');
+  return { spreadsheetId: t[0], gid: Number(t[1]), row: Number(t[2]), col: Number(t[3]) };
+}
+
+function ladePendingCellEdits() {
+  const roh = PropertiesService.getScriptProperties().getProperty(PENDING_CELL_EDITS_PROPERTY);
+  if (!roh) return {};
+  try {
+    return JSON.parse(roh);
+  } catch (e) {
+    // Kaputter Inhalt darf den onEdit-Pfad nicht sprengen -- lieber mit leerer Warteschlange
+    // weiterlaufen und laut sein, als jede Zell-Aenderung ins Leere laufen zu lassen.
+    Logger.log('WARNUNG: Warteschlange nicht lesbar (%s) -- wird als leer behandelt.', e.message);
+    return {};
+  }
+}
+
+/**
+ * Gibt true zurueck, wenn gespeichert werden konnte.
+ *
+ * FIX 31.08.2026: setProperty() lief hier ungefangen -- und zwar im onEdit-Pfad, NACH der
+ * Zell-Aenderung. Reicht der Partner eine ganze Spalte ein (der Fall, fuer den die Warteschlange
+ * ausdruecklich gebaut wurde: "eine Spalte mit 30 ZPNs reinkopiert"), sprengt das irgendwann die
+ * 9-KB-Grenze, die Exception fliegt aus handleSheetEdit heraus -- und die Aenderungen sind weder
+ * eingereiht noch geschrieben. Der Partner sieht nichts davon. Deshalb: Fehler fangen, melden,
+ * und der Aufrufer schreibt die Eintraege dann sofort statt sie zu verlieren.
+ */
+function speicherePendingCellEdits(map) {
+  const nutzlast = JSON.stringify(map);
+  try {
+    PropertiesService.getScriptProperties().setProperty(PENDING_CELL_EDITS_PROPERTY, nutzlast);
+    return true;
+  } catch (e) {
+    Logger.log('FEHLER: Warteschlange (%s Eintraege, %s Zeichen) konnte nicht gespeichert werden: %s',
+      Object.keys(map).length, nutzlast.length, e.message);
+    return false;
+  }
+}
+
+/** Diagnose: wie voll ist die Warteschlange? Ohne Parameter, also im Editor per ▷ startbar. */
+function zeigeWarteschlangeGroesse() {
+  const roh = PropertiesService.getScriptProperties().getProperty(PENDING_CELL_EDITS_PROPERTY) || '{}';
+  const anzahl = Object.keys(JSON.parse(roh)).length;
+  Logger.log('Warteschlange: %s Eintraege, %s von ~9216 Zeichen belegt (Obergrenze im Code: %s Eintraege).',
+    anzahl, roh.length, PENDING_MAX_EINTRAEGE);
+}
+
+const PENDING_TRIGGER_GEPLANT_PROPERTY = 'PENDING_TRIGGER_GEPLANT_BIS';
+
+/**
+ * Plant den Verarbeitungs-Trigger, aber nicht mehrfach -- sonst stapelt jeder Tastendruck während
+ * der Wartezeit einen weiteren obendrauf (Apps Script erlaubt 20 Trigger pro Projekt und Nutzer).
+ *
+ * FIX 31.08.2026: die Prüfung lief vorher über ScriptApp.getProjectTriggers() und suchte einen
+ * Trigger mit demselben Handler. Das hat eine Selbstblockade erzeugt: verarbeitePendingCellEdits()
+ * ruft diese Funktion am Ende selbst auf, wenn noch zu frische Einträge übrig sind -- und während
+ * dieser Ausführung kann der eigene, gerade feuernde Einmal-Trigger noch in der Projektliste
+ * stehen. Dann galt "schon geplant", es wurde KEIN Nachfolge-Trigger angelegt, und die
+ * verbliebenen Einträge blieben liegen, bis irgendwann von Hand eine andere Zelle bearbeitet wurde.
+ * Ob Apps Script den Einmal-Trigger vor oder nach der Ausführung aus der Liste nimmt, ist nicht
+ * dokumentiert -- also nicht darauf bauen, sondern selbst Buch führen: Zielzeitpunkt in einer
+ * Property, und nur planen wenn keiner mehr in der Zukunft liegt.
+ */
+function planeVerarbeitungPendingCellEdits() {
+  const props = PropertiesService.getScriptProperties();
+  const geplantBis = Number(props.getProperty(PENDING_TRIGGER_GEPLANT_PROPERTY) || 0);
+  const feuertIn = (SCHREIB_VERZOEGERUNG_SEK + 10) * 1000;
+  if (geplantBis > Date.now()) return; // es steht noch einer aus
+  try {
+    ScriptApp.newTrigger('verarbeitePendingCellEdits').timeBased().after(feuertIn).create();
+    props.setProperty(PENDING_TRIGGER_GEPLANT_PROPERTY, String(Date.now() + feuertIn));
+  } catch (e) {
+    // Trigger-Limit erreicht o.ä. -- laut melden, sonst bleibt die Warteschlange stumm liegen.
+    Logger.log('FEHLER: Verarbeitungs-Trigger konnte nicht geplant werden: %s -- verarbeitePendingCellEdits() ggf. manuell starten.', e.message);
+  }
+}
+
+/** Vom Verarbeitungslauf aufzurufen, sobald er lief -- gibt die Planung wieder frei. */
+function markiereVerarbeitungsTriggerAlsGefeuert() {
+  PropertiesService.getScriptProperties().deleteProperty(PENDING_TRIGGER_GEPLANT_PROPERTY);
 }
 
 /**

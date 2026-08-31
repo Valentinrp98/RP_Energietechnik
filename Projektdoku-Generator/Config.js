@@ -9,6 +9,11 @@ function invertOptionMap(map) {
   return Object.fromEntries(Object.entries(map).map(([name, id]) => [String(id), name]));
 }
 
+/** Wie invertOptionMap, aber für ein verschachteltes {Feldname: {Label: OptionsID}}-Objekt (siehe DACH2_OPTION_IDS/DACH3_OPTION_IDS). */
+function invertNestedOptionMap(nestedMap) {
+  return Object.fromEntries(Object.entries(nestedMap).map(([key, map]) => [key, invertOptionMap(map)]));
+}
+
 // ===== Wiederverwendete Felder aus Ordnererstellung-bei-Gewonnen =====
 // Dasselbe Deal-Feld, das dort den fertig angelegten Kundenordner-Link zurückschreibt. Wird hier
 // NUR gelesen, nie geschrieben -- dieses Script legt keine Kundenordner an, es erwartet, dass
@@ -80,6 +85,10 @@ const NETZANSUCHEN_FIELD_KEY = 'a05dd4431ed0963d2f286db8ee2de46612024a3e'; // "N
 const NETZANSUCHEN_OPTION_IDS = { 'Ja': 210, 'Nein': 211 };
 const NETZANSUCHEN_ID_TO_NAME = invertOptionMap(NETZANSUCHEN_OPTION_IDS);
 
+const AUSFUEHRUNGSART_FIELD_KEY = 'cc80ad5daf0788dba60b3da3931681edd3dd2c87'; // enum
+const AUSFUEHRUNGSART_OPTION_IDS = { 'Full Service': 154, 'Selbstmontage': 155, 'Hybrid': 156 };
+const AUSFUEHRUNGSART_ID_TO_NAME = invertOptionMap(AUSFUEHRUNGSART_OPTION_IDS);
+
 const DACHFORM_FIELD_KEY = '71ee37fc98c338877d435f4d77f409367c013451'; // enum
 const DACHFORM_OPTION_IDS = { 'Satteldach': 88, 'Walmdach': 89, 'Pultdach': 90, 'Flachdach': 91 };
 const DACHFORM_ID_TO_NAME = invertOptionMap(DACHFORM_OPTION_IDS);
@@ -122,11 +131,71 @@ const ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY = '767eb0f43cd9f52d8a06c113294adb2cc
 const ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS = { 'RP': 256, 'Montagepartner': 257, 'Kunde': 258, 'noch offen': 259 };
 const ELEKTROMATERIAL_ORGANISIERT_ID_TO_NAME = invertOptionMap(ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS);
 
+// ===== Zusätzliches Dach 2 / Dach 3 (27.08.2026, siehe FieldSetup2_3.js) =====
+// Eigene Custom Fields pro Zusatzdach (Präfix 2_/3_), NICHT in CONTENT_FIELDS aufgenommen -- die
+// meisten Deals haben nur ein Dach, als Pflicht-/optionale Felder würden sie die "Leere Felder"-
+// Log-Spalte bei praktisch jedem Deal mit denselben 11 harmlosen Einträgen fluten (gleiches
+// Signalverlust-Problem wie bei den Elektromaterial-Feldern oben, nur ~10x größer). Werden nur in
+// buildProjectDoc() gelesen, dort steuert appendZusatzDachSection() selbst, ob die Sektion überhaupt
+// erscheint (nur wenn mindestens eines der 11 Felder befüllt ist).
+const DACH2_FIELD_KEYS = {
+  Dachform: 'c8303d94b203ad1e69d14e1340dd0905b0945527',
+  Eindeckung: 'fd0496d6545d8df09178db81c0d0d5c6dff1e153',
+  Dachneigung: '31fffade4a6027dac532268ef8a8aad95c31a1d3',
+  Gebaeudehoehe: '6570fddca1f813462310ccbb9a0873cf69cd5039',
+  Unterkonstruktion: '5b85ab937d77d0f7aa169c4ec6c08019d117a722',
+  HoeheSparren: '46824bcf0877083c2eb0bdfa9988f21685950a29',
+  BreiteSparren: '314e28a58bc3ccfbb57dba335e545161b2f3a926',
+  KabelwegDC: '047a48b926c41cb7a3db9e115f9a44c9c4795e7a',
+  KabelwegAC: 'e7aa71d41c5e4991443238894a14dc9c911bfafb',
+  Stoerflaechen: '0b8f6c91b386f2887f98d230a7c4d6baa4125a6b',
+  Blitzschutz: '35b6f35f87e2597e00b1b635782cfef69d843c69'
+};
+const DACH2_OPTION_IDS = {
+  Dachform: { 'Satteldach': 260, 'Walmdach': 261, 'Pultdach': 262, 'Flachdach': 263 },
+  Eindeckung: {
+    'Ziegeldach': 268, 'Blechdach Trapez': 269, 'Blechdach Falz': 270, 'Welleternit': 271,
+    'Flachdach (Kies)': 272, 'Flachdach (Beton)': 273, 'Flachdach (begrünt)': 274, 'Flachdach (Folie)': 312,
+    'Zaun': 275, 'Fassade': 276, 'Rhombus Eternit': 277, 'Prefa': 278, 'Sandwichpaneele': 279
+  },
+  Unterkonstruktion: { 'Sparren': 292, 'Pfetten': 293 },
+  Stoerflaechen: { 'Ja': 296, 'Nein': 297 },
+  Blitzschutz: { 'Ja': 300, 'Nein': 301 }
+};
+const DACH2_ID_TO_NAME = invertNestedOptionMap(DACH2_OPTION_IDS);
+
+const DACH3_FIELD_KEYS = {
+  Dachform: '8cb292554b13f9c215c9f88a270ae3557c4888c7',
+  Eindeckung: 'e3a93ba369b28ec74975d39d1ebba07c31a41ef4',
+  Dachneigung: 'a47295a2e9d5c7d123411805b95c043a9f3df410',
+  Gebaeudehoehe: '79b612b911d8adf6e1aee84dea618e863602d4ae',
+  Unterkonstruktion: 'a2f9b2c4116b3c747cdfa7281e83c175dce05ee3',
+  HoeheSparren: '9f2ed5f968541aa09b72d5f70cb3e7dce810431c',
+  BreiteSparren: '1bfd2e69b7eb773b5c1a24d3bc04ab0ffee2c861',
+  KabelwegDC: 'be74cec3f51bb26ef00b18398d01811f316722bc',
+  KabelwegAC: '9fe5d28e685a7419452854a1180acb88147e0567',
+  Stoerflaechen: '6310ac31f713741159d35178ce35ca21f05221a0',
+  Blitzschutz: '0358b3582b05663751d6db40d5261592c80dcc8e'
+};
+const DACH3_OPTION_IDS = {
+  Dachform: { 'Satteldach': 264, 'Walmdach': 265, 'Pultdach': 266, 'Flachdach': 267 },
+  Eindeckung: {
+    'Ziegeldach': 280, 'Blechdach Trapez': 281, 'Blechdach Falz': 282, 'Welleternit': 283,
+    'Flachdach (Kies)': 284, 'Flachdach (Beton)': 285, 'Flachdach (begrünt)': 286, 'Flachdach (Folie)': 313,
+    'Zaun': 287, 'Fassade': 288, 'Rhombus Eternit': 289, 'Prefa': 290, 'Sandwichpaneele': 291
+  },
+  Unterkonstruktion: { 'Sparren': 294, 'Pfetten': 295 },
+  Stoerflaechen: { 'Ja': 298, 'Nein': 299 },
+  Blitzschutz: { 'Ja': 302, 'Nein': 303 }
+};
+const DACH3_ID_TO_NAME = invertNestedOptionMap(DACH3_OPTION_IDS);
+
 // Alle Inhaltsfelder, die im Doc landen -- für den Vollständigkeits-Check im Log (siehe
 // checkFieldCompleteness). Reihenfolge/Label muss NICHT zur Doc-Reihenfolge passen, nur zur
 // Lesbarkeit im Log-Sheet.
 const CONTENT_FIELDS = [
   { key: NETZANSUCHEN_FIELD_KEY, label: 'Netzansuchen' },
+  { key: AUSFUEHRUNGSART_FIELD_KEY, label: 'Ausführungsart', optional: true },
   { key: DACHFORM_FIELD_KEY, label: 'Dachform' },
   { key: EINDECKUNG_FIELD_KEY, label: 'Eindeckung' },
   { key: AUSRICHTUNG_FIELD_KEY, label: 'Ausrichtung' },

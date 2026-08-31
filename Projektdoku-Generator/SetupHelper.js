@@ -333,10 +333,20 @@ function checkConfiguration() {
     });
     if (!byCode[MONTAGEPARTNER_FIELD_KEY]) probleme.push(`MONTAGEPARTNER_FIELD_KEY existiert nicht (mehr) in dealFields`);
 
+    // --- Zusatzdach-Felder (Dach 2/3): nicht in CONTENT_FIELDS (siehe Config.js-Kommentar dort),
+    // deshalb hier eigene Existenz-Prüfung -- sonst zeigt appendZusatzDachSection() bei einem
+    // umbenannten/gelöschten Feld still "(leer)" statt eines Fehlers, und keine andere Stelle merkt es.
+    [['Dach 2', DACH2_FIELD_KEYS], ['Dach 3', DACH3_FIELD_KEYS]].forEach(([dachLabel, keys]) => {
+      Object.entries(keys).forEach(([feldName, code]) => {
+        if (!byCode[code]) probleme.push(`${dachLabel} - ${feldName} (${code}) existiert nicht (mehr) in dealFields`);
+      });
+    });
+
     // --- Alle hartcodierten Options-IDs gegen die echten Optionen abgleichen ---
     // Ohne das zeigt ein umbenanntes/gelöschtes Enum still eine rohe Zahl im Doc statt des Labels.
     const enumChecks = [
       { key: NETZANSUCHEN_FIELD_KEY, map: NETZANSUCHEN_OPTION_IDS, label: 'Netzansuchen' },
+      { key: AUSFUEHRUNGSART_FIELD_KEY, map: AUSFUEHRUNGSART_OPTION_IDS, label: 'Ausführungsart' },
       { key: DACHFORM_FIELD_KEY, map: DACHFORM_OPTION_IDS, label: 'Dachform' },
       { key: EINDECKUNG_FIELD_KEY, map: EINDECKUNG_OPTION_IDS, label: 'Eindeckung' },
       { key: AUSRICHTUNG_FIELD_KEY, map: AUSRICHTUNG_OPTION_IDS, label: 'Ausrichtung' },
@@ -344,6 +354,11 @@ function checkConfiguration() {
       { key: ELEKTROMATERIAL_GEZAHLT_FIELD_KEY, map: ELEKTROMATERIAL_GEZAHLT_OPTION_IDS, label: 'Elektromaterial gezahlt von' },
       { key: ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY, map: ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS, label: 'Elektromaterial organisiert von' }
     ];
+    [['Dach 2', DACH2_FIELD_KEYS, DACH2_OPTION_IDS], ['Dach 3', DACH3_FIELD_KEYS, DACH3_OPTION_IDS]].forEach(([dachLabel, keys, optionMaps]) => {
+      Object.entries(optionMaps).forEach(([feldName, map]) => {
+        enumChecks.push({ key: keys[feldName], map, label: `${dachLabel} - ${feldName}` });
+      });
+    });
     enumChecks.forEach(({ key, map, label }) => {
       const feld = byCode[key];
       if (!feld) return; // schon oben gemeldet

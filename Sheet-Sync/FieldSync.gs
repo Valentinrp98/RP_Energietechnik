@@ -11,6 +11,15 @@
  * Behandelt auch Mehrfach-Zell-Edits (z.B. eine Spalte mit 10 ZPNs reinkopiert) -- e.range kann
  * mehrere Zeilen/Spalten umfassen, nicht nur eine einzelne Zelle.
  */
+/**
+ * FIX 31.08.2026 (Valentins Vorgabe): schreibt NICHT mehr sofort, sondern reiht die Änderung nur
+ * in eine Warteschlange ein -- verarbeitePendingCellEdits() (unten) schreibt sie erst, wenn die
+ * Zelle SCHREIB_VERZOEGERUNG_SEK lang nicht mehr angefasst wurde. Grund: bei schnellem
+ * Nachbessern (Partner tippt Datum, korrigiert es Sekunden später nochmal) hat jede einzelne
+ * Änderung sofort einen PATCH-Call + eine "✓ übermittelt"-Notiz ausgelöst -- nervig und unnötige
+ * Pipedrive-Writes (die wiederum Automations auslösen können). Mit der Verzögerung zählt nur der
+ * letzte Stand.
+ */
 function handleSheetEdit(e) {
   starteLauf('handleSheetEdit');
   try {
@@ -22,12 +31,26 @@ function handleSheetEdit(e) {
 
     const headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     const dealIdCol = findColumnIndexByHeader(sheet, COL.dealId);
+    const spreadsheetId = sheet.getParent().getId();
+    const gid = sheet.getSheetId();
 
-    // Deal-Objekte innerhalb dieses einen Edit-Durchlaufs pro Deal-ID cachen -- sonst würde z.B.
-    // eine Spalte mit 30 reinkopierten Zählpunkten 30 zusätzliche fetchPipedrive()-Calls nur für
-    // die "vorher"-Angabe der Notiz auslösen, obwohl derselbe Deal höchstens einmal pro Zeile
-    // vorkommt.
-    const dealCache = {};
+    // FIX 31.08.2026: fehlt die Deal-ID-Spalte, wurde vorher nur "nicht eingereiht" -- mit dem
+    // Kommentar, handleSingleCellEdit melde den Fehler beim Verarbeiten. Tut es aber nicht: ohne
+    // Eintrag in der Warteschlange wird handleSingleCellEdit nie erreicht, der Fehler landete also
+    // NIRGENDS. Ein Sheet mit umbenannter/fehlender Deal-ID-Spalte hat damit jede Zell-Aenderung
+    // lautlos verworfen. Deshalb hier melden, wo es auffaellt.
+    if (!dealIdCol) {
+      logRow('sheet→pipedrive', '', sheet.getName(), '(Struktur)', 'FEHLER',
+        'Spalte "' + COL.dealId + '" im Tab "' + sheet.getName() + '" nicht gefunden -- Zell-Aenderungen koennen nicht zugeordnet werden und werden verworfen. Kopfzeile pruefen.');
+      return;
+    }
+
+    // Ein Lesevorgang fuer den ganzen bearbeiteten Bereich statt einer getValue()-Abfrage pro
+    // Zelle -- beim Einfuegen einer Spalte mit 30 Werten waren das 30 Roundtrips ins Sheet.
+    const bearbeiteteWerte = e.range.getValues();
+
+    const pending = ladePendingCellEdits();
+    let neueEintraege = 0;
 
     for (let col = firstCol; col <= lastCol; col++) {
       const header = String(headerRow[col - 1]).trim();
@@ -37,7 +60,34 @@ function handleSheetEdit(e) {
       if (!fieldConfig) continue; // diese Spalte ist nicht für Sync konfiguriert
 
       for (let row = Math.max(firstRow, 2); row <= lastRow; row++) {
-        handleSingleCellEdit(sheet, row, col, dealIdCol, fieldConfig, dealCache);
+        const rohWert = bearbeiteteWerte[row - firstRow][col - firstCol];
+        // Wert-Felder bewusst schlank: spreadsheetId/gid/row/col stehen schon im Schluessel.
+        pending[pendingKey(spreadsheetId, gid, row, col)] = {
+          fieldLabel: fieldConfig.label,
+          zeitpunkt: Date.now(),
+          wert: serialisiereZellwert(rohWert)
+        };
+        neueEintraege++;
+      }
+    }
+
+    if (neueEintraege > 0) {
+      // Obergrenze: lieber sofort schreiben als die Warteschlange (und damit den 9-KB-Wert)
+      // ueberlaufen lassen. Betrifft nur sehr grosse Einfuege-Aktionen.
+      const zuVoll = Object.keys(pending).length > PENDING_MAX_EINTRAEGE;
+      const gespeichert = !zuVoll && speicherePendingCellEdits(pending);
+
+      if (gespeichert) {
+        planeVerarbeitungPendingCellEdits();
+        logRow('sheet→pipedrive', '', sheet.getName(), '(Warteschlange)', 'WARTET',
+          neueEintraege + ' Zell-Änderung(en) eingereiht, wird in ' + SCHREIB_VERZOEGERUNG_SEK + 's verarbeitet, falls bis dahin nicht nochmal geändert');
+      } else {
+        // Konnte nicht eingereiht werden (zu viele Eintraege oder Property-Limit). Die Aenderung
+        // darf NICHT verloren gehen -- deshalb sofort verarbeiten, ohne Verzoegerung.
+        logRow('sheet→pipedrive', '', sheet.getName(), '(Warteschlange)', 'WARNUNG',
+          'Warteschlange voll (' + Object.keys(pending).length + ' Eintraege) oder nicht speicherbar -- diese ' +
+          neueEintraege + ' Aenderung(en) werden SOFORT geschrieben, ohne die ' + SCHREIB_VERZOEGERUNG_SEK + 's-Verzoegerung.');
+        verarbeiteSofort(sheet, dealIdCol, headerRow, firstRow, lastRow, firstCol, lastCol, bearbeiteteWerte);
       }
     }
   } finally {
@@ -45,7 +95,111 @@ function handleSheetEdit(e) {
   }
 }
 
-function handleSingleCellEdit(sheet, row, col, dealIdCol, fieldConfig, dealCache) {
+/**
+ * Zeitgesteuert (einmaliger Trigger, sich selbst nachplanend): schreibt alle Warteschlangen-
+ * Einträge, die seit mindestens SCHREIB_VERZOEGERUNG_SEK nicht mehr überschrieben wurden. Frischere
+ * Einträge bleiben liegen, dafür wird am Ende erneut ein Trigger geplant (siehe
+ * planeVerarbeitungPendingCellEdits() -- idempotent, kein Trigger-Aufbau bei Dauerbetrieb).
+ */
+function verarbeitePendingCellEdits() {
+  starteLauf('verarbeitePendingCellEdits');
+  try {
+    markiereVerarbeitungsTriggerAlsGefeuert(); // Planung freigeben, siehe planeVerarbeitungPendingCellEdits()
+    const pending = ladePendingCellEdits();
+    const jetzt = Date.now();
+    const nochOffen = {};
+    const dealCacheProSpreadsheet = {};
+    let verarbeitet = 0;
+
+    Object.keys(pending).forEach(key => {
+      const eintrag = pending[key];
+      if (jetzt - eintrag.zeitpunkt < SCHREIB_VERZOEGERUNG_SEK * 1000) {
+        nochOffen[key] = eintrag;
+        return;
+      }
+
+      try {
+        const ort = pendingKeyTeile(key);
+        const spreadsheet = SpreadsheetApp.openById(ort.spreadsheetId);
+        const sheet = spreadsheet.getSheets().find(s => s.getSheetId() === ort.gid);
+        if (!sheet) throw new Error('Tab (gid ' + ort.gid + ') nicht mehr gefunden.');
+
+        const dealIdCol = findColumnIndexByHeader(sheet, COL.dealId);
+        if (!dealIdCol) throw new Error('Spalte "' + COL.dealId + '" nicht gefunden -- Kopfzeile geaendert?');
+        const fieldConfig = SYNC_FIELD_CONFIG.find(f => f.label === eintrag.fieldLabel);
+        if (!fieldConfig) throw new Error('Feld "' + eintrag.fieldLabel + '" nicht mehr in SYNC_FIELD_CONFIG gefunden.');
+
+        if (!dealCacheProSpreadsheet[ort.spreadsheetId]) dealCacheProSpreadsheet[ort.spreadsheetId] = {};
+        const rohWert = deserialisiereZellwert(eintrag.wert);
+
+        // FIX 31.08.2026: pruefen, ob die Zelle inzwischen von jemand ANDEREM geaendert wurde.
+        // Ein erneuter Edit durch den Partner ueberschreibt den Warteschlangen-Eintrag (gleicher
+        // Schluessel), stimmt also weiter ueberein. Ein Unterschied bedeutet deshalb: die Zelle
+        // wurde ohne onEdit-Ereignis geaendert -- und das ist praktisch immer der
+        // Pipedrive→Sheet-Lauf, denn installierbare onEdit-Trigger feuern NICHT bei Aenderungen
+        // durch das Script selbst. Wuerden wir den alten Wert trotzdem schreiben, machten wir den
+        // frischeren Pipedrive-Stand rueckgaengig. Die Verzoegerung hat dieses Fenster von
+        // ~0 auf SCHREIB_VERZOEGERUNG_SEK Sekunden vergroessert.
+        const aktuell = sheet.getRange(ort.row, ort.col).getValue();
+        if (vergleichswert(fieldConfig, aktuell) !== vergleichswert(fieldConfig, rohWert)) {
+          logRow('sheet→pipedrive', '', sheet.getName(), eintrag.fieldLabel, 'ÜBERSPRUNGEN',
+            'Zeile ' + ort.row + ': Zelle wurde nach dem Einreihen anderweitig geaendert (jetzt "' +
+            aktuell + '", eingereiht war "' + rohWert + '") -- nicht ueberschrieben, der neuere Wert gewinnt.');
+          return;
+        }
+
+        handleSingleCellEdit(sheet, ort.row, ort.col, dealIdCol, fieldConfig,
+          dealCacheProSpreadsheet[ort.spreadsheetId], rohWert);
+        verarbeitet++;
+      } catch (err) {
+        Logger.log('FEHLER beim Verarbeiten des Warteschlangen-Eintrags %s: %s', key, err.message);
+        logRow('sheet→pipedrive', '', '', eintrag.fieldLabel, 'FEHLER',
+          'Warteschlange, Zeile ' + pendingKeyTeile(key).row + ': ' + err.message);
+      }
+    });
+
+    speicherePendingCellEdits(nochOffen);
+    if (Object.keys(nochOffen).length > 0) {
+      planeVerarbeitungPendingCellEdits();
+    }
+    Logger.log('%s Warteschlangen-Eintrag/Einträge verarbeitet, %s noch zu frisch (bleiben liegen).',
+      verarbeitet, Object.keys(nochOffen).length);
+  } finally {
+    flushLog();
+  }
+}
+
+// rohWertUeberschreiben: optional -- wenn gesetzt (auch null/false/''), wird DIESER Wert statt
+// cell.getValue() verwendet. Für den verzögerten Schreib-Pfad (verarbeitePendingCellEdits()),
+// wo zwischen dem eigentlichen Edit und der Verarbeitung Zeit vergangen ist und die Zelle sich
+// zwischenzeitlich nochmal geändert haben könnte -- der gespeicherte Wert vom Zeitpunkt der
+// Warteschlangen-Eintragung soll geschrieben werden, nicht was gerade zufällig in der Zelle steht.
+/**
+ * Notausgang, wenn die Warteschlange nicht aufnahmefaehig ist (siehe handleSheetEdit): schreibt die
+ * gerade bearbeiteten Zellen direkt, ohne Verzoegerung. Lieber ohne Debounce schreiben als die
+ * Aenderung des Partners verlieren.
+ */
+function verarbeiteSofort(sheet, dealIdCol, headerRow, firstRow, lastRow, firstCol, lastCol, werte) {
+  const dealCache = {};
+  for (let col = firstCol; col <= lastCol; col++) {
+    const header = String(headerRow[col - 1]).trim();
+    const fieldConfig = SYNC_FIELD_CONFIG.find(
+      f => (f.direction === 'sheet_to_pipedrive' || f.direction === 'bidirektional') && f.sheetColumnHeader === header
+    );
+    if (!fieldConfig) continue;
+    for (let row = Math.max(firstRow, 2); row <= lastRow; row++) {
+      try {
+        handleSingleCellEdit(sheet, row, col, dealIdCol, fieldConfig, dealCache,
+          werte[row - firstRow][col - firstCol]);
+      } catch (err) {
+        logRow('sheet→pipedrive', '', sheet.getName(), fieldConfig.label, 'FEHLER',
+          'Sofort-Schreibung Zeile ' + row + ': ' + err.message);
+      }
+    }
+  }
+}
+
+function handleSingleCellEdit(sheet, row, col, dealIdCol, fieldConfig, dealCache, rohWertUeberschreiben) {
   const cell = sheet.getRange(row, col);
   let dealId = null; // auch im catch verfügbar, damit Fehler-Logzeilen die Deal-ID haben
   try {
@@ -57,7 +211,7 @@ function handleSingleCellEdit(sheet, row, col, dealIdCol, fieldConfig, dealCache
       throw new Error(`Zeile ${row} hat keine Deal-ID -- übersprungen.`);
     }
 
-    const rohWert = cell.getValue();
+    const rohWert = rohWertUeberschreiben !== undefined ? rohWertUeberschreiben : cell.getValue();
     let neuerWert;
     if (fieldConfig.valueType === 'checkbox_to_date') {
       // Checkbox liefert true/false; Pipedrive bekommt ein DATUM (oder null), kein Boolean --
@@ -284,8 +438,10 @@ function syncPipedriveToSheetFields() {
           // Zeilen-Anlegen genauso heraus.
           if (fieldConfig.combineFrom && pipedriveWert === '') return;
           const aktuellerWert = werte[i][col - 1];
-          // String-Vergleich: Sheets liefert Number/Date, Pipedrive meist String.
-          if (String(pipedriveWert) === String(aktuellerWert)) return;
+          // Datumsfelder (DC-/AC-/IB-Termin, Materiallieferung) über vergleichswert() vergleichen,
+          // nicht über String() direkt -- sonst schreibt jeder Lauf neu, sobald die Zelle einmal
+          // ein echtes Date-Objekt enthält (String(Date) sieht nie aus wie "2026-07-14").
+          if (vergleichswert(fieldConfig, pipedriveWert) === vergleichswert(fieldConfig, aktuellerWert)) return;
 
           if (DRY_RUN) {
             logRow('pipedrive→sheet', dealId, partner, fieldConfig.label, 'DRY-RUN', `würde "${zeigeWert(pipedriveWert)}" ins Sheet schreiben`);
@@ -298,7 +454,13 @@ function syncPipedriveToSheetFields() {
           // Blockschreiben würde alles überschreiben, was der Partner in dieser Zeit eingetippt
           // hat, auch in seinen eigenen Spalten. Änderungen sind pro Lauf ohnehin selten.
           const zelle = sheet.getRange(row, col);
-          zelle.setValue(pipedriveWert);
+          // Datumsfelder als echtes Date-Objekt schreiben (Sortierung/Weiterverarbeitung), nicht
+          // als Roh-String aus Pipedrive -- fällt auf den Roh-String zurück, falls das Format
+          // doch mal nicht "YYYY-MM-DD" ist, statt eine leere Zelle zu riskieren.
+          const wertZumSchreiben = fieldConfig.istDatumsfeld
+            ? (alsDatum(pipedriveWert) || pipedriveWert)
+            : pipedriveWert;
+          zelle.setValue(wertZumSchreiben);
           // Notiz: sonst ändert sich z.B. der DC-Termin still, und der Monteur, der schon
           // disponiert hat, merkt es bestenfalls zufällig.
           zelle.setNote(`↻ Von RP geändert am ${notizZeitstempel()}\n`

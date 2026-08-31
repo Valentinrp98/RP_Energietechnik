@@ -161,6 +161,226 @@ function removeAllTriggers() {
 }
 
 /**
+ * Canary-Rollout (2026-08-31, Valentins Vorgabe): installTriggers() ist alles-oder-nichts --
+ * würde auf einen Schlag den onEdit-Trigger für ALLE sechs Partner-Sheets aktivieren UND die
+ * globalen 15-Minuten-/Tages-Timer, die company-weit über ALLE gewonnenen Deals laufen
+ * (syncNeueZeilen würde z.B. sofort versuchen, für jeden Partner mit gesetztem Kundenordner-Link
+ * neue Sheet-Zeilen anzulegen -- bei Kreuzeder/Berger/Greensky/Tirol/Vorarlberg, die noch nicht
+ * befüllt/bereit sind, unkontrolliert). Aktuell ist nur ALE so weit (Deal-IDs stehen, siehe
+ * project_montage_sheets_migration). Diese Funktion installiert NUR den onEdit-Trigger
+ * (Sheet->Pipedrive) für EINEN Partner, rührt die globalen Timer NICHT an -- die bleiben aus,
+ * bis alle sechs Partner bereit sind und bewusst installTriggers() für alle zusammen läuft.
+ * Idempotent: entfernt vorher nur einen evtl. schon bestehenden eigenen onEdit-Trigger für GENAU
+ * dieses Sheet (nicht die anderer Partner).
+ */
+// Liste statt einzelnem Wert (FIX 31.08.2026): Valentin will Partner nach und nach dazunehmen
+// (ALE zuerst, jetzt Kreuzeder), nicht immer nur einen ersetzen. Neuen Partner einfach ergänzen,
+// sobald der so weit ist (Deal-IDs stehen, siehe project_montage_sheets_migration) -- bestehende
+// Partner in der Liste bleiben unangetastet, siehe Idempotenz-Kommentar unten.
+const CANARY_PARTNERS = ['ALE-Engineering (NÖ, Wien, BGL)', 'Kreuzeder (OÖ, SBG)'];
+
+function installOnEditTriggerFuerEinenPartner() {
+  CANARY_PARTNERS.forEach(partner => {
+    const config = PARTNER_SHEET_CONFIG[partner];
+    if (!config || config.sheetId.startsWith('TODO_')) {
+      Logger.log('WARNUNG: Kein gültiges Sheet für "%s" in PARTNER_SHEET_CONFIG -- übersprungen.', partner);
+      return;
+    }
+
+    ScriptApp.getProjectTriggers().forEach(t => {
+      if (t.getHandlerFunction() === 'handleSheetEdit' && t.getTriggerSourceId && t.getTriggerSourceId() === config.sheetId) {
+        ScriptApp.deleteTrigger(t);
+        Logger.log('Bestehenden onEdit-Trigger für "%s" entfernt (Neuanlage folgt).', partner);
+      }
+    });
+
+    ScriptApp.newTrigger('handleSheetEdit').forSpreadsheet(config.sheetId).onEdit().create();
+    Logger.log('onEdit-Trigger für "%s" (Sheet %s) eingerichtet. Globale 15-Min-/Tages-Timer sind weiterhin AUS -- betrifft nur Sheet->Pipedrive-Edits in diesem Sheet.',
+      partner, config.sheetId);
+  });
+}
+
+/**
+ * Canary-Test für die Gegenrichtung (Pipedrive->Sheet), OHNE den globalen 15-Minuten-Timer
+ * einzuschalten (siehe installOnEditTriggerFuerEinenPartner() oben für die Begründung -- der
+ * globale Timer läuft über alle sechs Partner, nur ALE ist bereit). Gleiche Kernlogik wie
+ * syncPipedriveToSheetFields() in FieldSync.gs, aber hart auf CANARY_PARTNER eingeschränkt statt
+ * über PARTNER_SHEET_CONFIG zu iterieren -- manuell im Editor auslösen (▷-Button), kein Trigger.
+ */
+function testSyncPipedriveToSheetFuerEinenPartner() {
+  starteLauf('testSyncPipedriveToSheetFuerEinenPartner');
+  const summary = { geschrieben: 0, dryRun: 0 };
+  let partnerVerarbeitet = 0;
+
+  const relevanteFelder = SYNC_FIELD_CONFIG.filter(f => {
+    if (f.direction !== 'pipedrive_to_sheet' && f.direction !== 'bidirektional') return false;
+    if (f.combineFrom) return true;
+    return !f.pipedriveFieldKey.startsWith('TODO_');
+  });
+  if (relevanteFelder.length === 0) {
+    Logger.log('Keine Felder mit Richtung "pipedrive_to_sheet"/"bidirektional" konfiguriert -- nichts zu tun.');
+    logLaufEnde('KETTE_BLOCKIERT', { grund: 'keine pipedrive_to_sheet-Felder konfiguriert' });
+    flushLog();
+    return;
+  }
+
+  const dealMap = {};
+  let cursor = null;
+  do {
+    const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals?status=won&limit=100`
+      + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
+    const response = callPipedriveWithRetryRaw(url);
+    (response.data || []).forEach(d => { dealMap[d.id] = d; });
+    cursor = response.additional_data?.next_cursor || null;
+  } while (cursor);
+
+  try {
+    CANARY_PARTNERS.forEach(partner => {
+      let sheet;
+      try {
+        sheet = openPartnerSheet(partner);
+      } catch (err) {
+        Logger.log('Übersprungen: "%s" -- %s', partner, err.message);
+        return;
+      }
+      const dealIdCol = findColumnIndexByHeader(sheet, COL.dealId);
+      if (!dealIdCol) { Logger.log('Keine Deal-ID-Spalte im Sheet "%s" gefunden.', partner); return; }
+
+      const feldSpalten = relevanteFelder
+        .map(fieldConfig => ({ fieldConfig, col: findColumnIndexByHeader(sheet, fieldConfig.sheetColumnHeader) }))
+        .filter(x => x.col);
+      if (feldSpalten.length === 0) { Logger.log('Keine der konfigurierten Spalten im Sheet "%s" gefunden.', partner); return; }
+
+      const anzahlZeilen = Math.max(sheet.getLastRow() - 1, 0);
+      if (anzahlZeilen === 0) { Logger.log('Sheet "%s" hat keine Datenzeilen.', partner); return; }
+      partnerVerarbeitet++;
+
+      const werte = sheet.getRange(2, 1, anzahlZeilen, sheet.getLastColumn()).getValues();
+
+      for (let i = 0; i < werte.length; i++) {
+        const dealId = werte[i][dealIdCol - 1];
+        if (!dealId) continue;
+        const deal = dealMap[dealId];
+        if (!deal) continue;
+        const row = i + 2;
+        const cf = deal.custom_fields || {};
+
+        feldSpalten.forEach(({ fieldConfig, col }) => {
+          const pipedriveWert = fieldConfig.combineFrom
+            ? fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean).join('\n---\n')
+            : cf[fieldConfig.pipedriveFieldKey];
+          if (pipedriveWert === undefined) return;
+          if (fieldConfig.combineFrom && pipedriveWert === '') return;
+          const aktuellerWert = werte[i][col - 1];
+          if (vergleichswert(fieldConfig, pipedriveWert) === vergleichswert(fieldConfig, aktuellerWert)) return;
+
+          if (DRY_RUN) {
+            logRow('pipedrive→sheet (canary)', dealId, partner, fieldConfig.label, 'DRY-RUN', `würde "${zeigeWert(pipedriveWert)}" ins Sheet schreiben`);
+            summary.dryRun++;
+            return;
+          }
+
+          const zelle = sheet.getRange(row, col);
+          const wertZumSchreiben = fieldConfig.istDatumsfeld
+            ? (alsDatum(pipedriveWert) || pipedriveWert)
+            : pipedriveWert;
+          zelle.setValue(wertZumSchreiben);
+          zelle.setNote(`↻ Von RP geändert am ${notizZeitstempel()}\n`
+                      + `vorher: ${zeigeWert(aktuellerWert)}\n`
+                      + `neu:    ${zeigeWert(pipedriveWert)}`);
+          zelle.setBackground('#fff2cc');
+          summary.geschrieben++;
+          logRow('pipedrive→sheet (canary)', dealId, partner, fieldConfig.label, 'geschrieben',
+                 `${zeigeWert(aktuellerWert)} -> ${zeigeWert(pipedriveWert)}`);
+        });
+      }
+    });
+  } finally {
+    logLaufEnde(summary.geschrieben === 0 && summary.dryRun === 0 ? 'KETTE_BLOCKIERT' : 'OK', Object.assign({ partnerVerarbeitet }, summary));
+    flushLog();
+  }
+}
+
+/**
+ * Setzt Datumsformat (nicht nur Wert -- auch das Zellformat) auf die vier istDatumsfeld-Spalten
+ * (DC-/AC-/IB-Termin, Materiallieferung), inkl. Puffer für künftige Zeilen. Reine Formatierung,
+ * kein Pipedrive-Zugriff -- deshalb FIX 31.08.2026 (Valentins Vorgabe) bewusst für ALLE Partner in
+ * PARTNER_SHEET_CONFIG statt nur CANARY_PARTNERS: anders als die Trigger-Funktionen betrifft das
+ * keine Live-Daten, ist also auch für noch nicht befüllte Partner-Sheets unbedenklich. Wichtig
+ * für: (a) Partner tippt "15.05.2026" ein -- ohne Datumsformat könnte die Zelle das als Text
+ * stehen lassen statt zu erkennen, (b) die Sortierung/der Datumsvergleich in vergleichswert()
+ * (Config.gs) setzt ein echtes Date-Objekt in der Zelle voraus, kein Text, der zufällig wie ein
+ * Datum aussieht.
+ */
+function richteDatumsformateEin() {
+  const datumsFelder = SYNC_FIELD_CONFIG.filter(f => f.istDatumsfeld);
+
+  Object.keys(PARTNER_SHEET_CONFIG).forEach(partner => {
+    const config = PARTNER_SHEET_CONFIG[partner];
+    if (!config || config.sheetId.startsWith('TODO_')) {
+      Logger.log('WARNUNG: Kein gültiges Sheet für "%s" -- übersprungen.', partner);
+      return;
+    }
+    const sheet = openPartnerSheet(partner);
+    const letzteZeileMitPuffer = Math.max(sheet.getLastRow(), 2) + 200;
+    let gesetzt = 0;
+    datumsFelder.forEach(fieldConfig => {
+      const col = findColumnIndexByHeader(sheet, fieldConfig.sheetColumnHeader);
+      if (!col) {
+        Logger.log('"%s": Spalte "%s" nicht gefunden -- übersprungen.', partner, fieldConfig.sheetColumnHeader);
+        return;
+      }
+      const bereich = sheet.getRange(2, col, letzteZeileMitPuffer - 1, 1);
+      bereich.setNumberFormat('dd.mm.yyyy');
+      // setNumberFormat allein ändert nur die ANZEIGE -- bei einer leeren Zelle erscheint beim
+      // Anklicken trotzdem kein Kalender-Picker (Valentin hat das getestet, 2026-08-31). Der Picker
+      // kommt erst über eine Datenüberprüfung vom Typ "Datum".
+      const regel = SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(true).build();
+      bereich.setDataValidation(regel);
+      gesetzt++;
+    });
+    Logger.log('"%s": Datumsformat + Datenüberprüfung gesetzt für %s von %s Spalten, Zeile 2 bis %s.',
+      partner, gesetzt, datumsFelder.length, letzteZeileMitPuffer);
+  });
+}
+
+/**
+ * Checkbox-Format für die drei echten Checkbox-Felder (verifiziert aus SYNC_FIELD_CONFIG, nicht
+ * geraten): Netzanmeldung eingereicht (checkbox_to_option), IB erledigt + Fertigmeldung
+ * (checkbox_to_date). DC-/AC-/IB-Termin sind KEINE Checkboxen, siehe istDatumsfeld oben.
+ * FIX 31.08.2026: Duplikat von richteCheckboxenEin() im Montageplanung-Namensabgleich-Projekt --
+ * dort mit fest hartcodierten Spaltennummern (COL.NETZANMELDUNG=3 etc.), hier stattdessen über
+ * findColumnIndexByHeader() wie der Rest von Sheet-Sync, damit man für Checkboxen+Datum nicht
+ * zwischen zwei Apps-Script-Projekten wechseln muss. Für ALLE Partner, reine Formatierung.
+ */
+function richteCheckboxenEin() {
+  const checkboxFelder = SYNC_FIELD_CONFIG.filter(f =>
+    f.valueType === 'checkbox_to_date' || f.valueType === 'checkbox_to_option');
+
+  Object.keys(PARTNER_SHEET_CONFIG).forEach(partner => {
+    const config = PARTNER_SHEET_CONFIG[partner];
+    if (!config || config.sheetId.startsWith('TODO_')) {
+      Logger.log('WARNUNG: Kein gültiges Sheet für "%s" -- übersprungen.', partner);
+      return;
+    }
+    const sheet = openPartnerSheet(partner);
+    const letzteZeileMitPuffer = Math.max(sheet.getLastRow(), 2) + 200;
+    let gesetzt = 0;
+    checkboxFelder.forEach(fieldConfig => {
+      const col = findColumnIndexByHeader(sheet, fieldConfig.sheetColumnHeader);
+      if (!col) {
+        Logger.log('"%s": Spalte "%s" nicht gefunden -- übersprungen.', partner, fieldConfig.sheetColumnHeader);
+        return;
+      }
+      sheet.getRange(2, col, letzteZeileMitPuffer - 1, 1).insertCheckboxes();
+      gesetzt++;
+    });
+    Logger.log('"%s": Checkboxen gesetzt für %s von %s Feldern, Zeile 2 bis %s.',
+      partner, gesetzt, checkboxFelder.length, letzteZeileMitPuffer);
+  });
+}
+
+/**
  * Schützt die Deal-ID-Spalte UND alle pipedrive_to_sheet-Spalten (DC-/AC-/IB-Termin,
  * Materiallieferung, ...) in allen konfigurierten Partner-Sheets vor Bearbeitung durch die
  * Partner -- nur der Script-Ausführer (Owner) darf reinschreiben. Grund für die Erweiterung über
@@ -283,15 +503,21 @@ function listDealFieldsHelper() {
   });
 }
 
-/** Für Einzeltests: Zeilen-Erstellung für einen bekannten Deal. */
+// FIX 31.08.2026: generalisiert -- statt einer fest verdrahteten Test-Deal-ID (7455, Michael
+// Siedler) jetzt eine Liste. Valentin will gezielt einzelne neue Deals (z.B. 2 frisch gewonnene)
+// reinziehen, ohne den globalen syncNeueZeilen() company-weit laufen zu lassen.
+// createSheetRowForDeal() akzeptiert schon eine Deal-ID direkt (lädt den Deal nach), kein Umbau
+// dort nötig. DRY_RUN gilt hier genauso wie überall -- erst prüfen, dann DRY_RUN=false.
+const NEUE_DEALS_ZUM_ANLEGEN = [7345, 7189]; // Deal-IDs hier eintragen, die eine Sheet-Zeile bekommen sollen
+
+/** Für Einzeltests/gezieltes Nachziehen einzelner Deals: Zeilen-Erstellung ohne den globalen Timer. */
 function testCreateSheetRow() {
   starteLauf('testCreateSheetRow');
   try {
-    // Michael Siedler (7455): echter Deal, Kundenordner-Link existiert -- Test fuer eines der
-    // 5 neuen Montageplanung-RP-Sheets (Berger/Greensky/Kreuzeder/Tirol/Vorarlberg), je nachdem
-    // welcher Montagepartner am Deal gesetzt ist.
-    const result = createSheetRowForDeal(7455); // Test-Deal-ID, ggf. anpassen
-    Logger.log(result);
+    NEUE_DEALS_ZUM_ANLEGEN.forEach(dealId => {
+      const result = createSheetRowForDeal(dealId);
+      Logger.log('%s: %s', dealId, result);
+    });
   } finally {
     flushLog();
   }
