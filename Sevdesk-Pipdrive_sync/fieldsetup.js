@@ -69,6 +69,36 @@ function createModulBezeichnungField() {
 }
 
 // ============================================================================
+// SETUP: 3 neue Felder für Montage/Elektro-Pauschalen (nur bei FS-Angeboten befüllt)
+// → Diese Funktion EINMAL ausführen, dann die 3 field_codes in Datei 2 eintragen.
+// Feldtyp 'double' (reine Zahl, kein Currency-Objekt nötig wie bei 'monetary').
+// ============================================================================
+
+function createMontageElektroFelder() {
+  const felder = [
+    { field_name: 'Montage_Pauschale_EUR', field_type: 'double' },
+    { field_name: 'Elektroinstallation_Pauschale_EUR', field_type: 'double' },
+    { field_name: 'Elektromaterial_Pauschale_EUR', field_type: 'double' }
+  ];
+
+  felder.forEach(feld => {
+    const res = pdFetch('/dealFields', {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(feld)
+    });
+
+    if (res.code === 200 || res.code === 201) {
+      Logger.log(`✓ ${feld.field_name} angelegt → field_code: ${res.data.data.field_code}`);
+    } else {
+      Logger.log(`✗ ${feld.field_name} fehlgeschlagen (${res.code}): ${res.raw}`);
+    }
+  });
+
+  Logger.log('\n👉 Alle 3 field_codes in Datei 2 unter FIELD_KEYS eintragen (Montage_Pauschale_EUR, Elektroinstallation_Pauschale_EUR, Elektromaterial_Pauschale_EUR).');
+}
+
+// ============================================================================
 // WARTUNG: Bestehende Felder und ihre Options-IDs anzeigen
 // ============================================================================
 

@@ -103,9 +103,14 @@ function fetchOrderFromSevdesk(orderId) {
 
   // 2. Positionen über eigenen Endpoint
   const posData = sevdeskFetch(`/OrderPos?order[id]=${orderId}&order[objectName]=Order`);
+  // UNGETESTET (31.08.2026): `p.price` als sevdesk-OrderPos-Feld für den Netto-Einzelpreis ist aus
+  // der gängigen sevdesk-API-Struktur abgeleitet (analog InvoicePos), aber NICHT live verifiziert --
+  // vor dem ersten echten Einsatz mit debugOrderPosPreisFelder(orderId) gegen eine echte FS-Order
+  // gegenchecken. Falls `price` nicht stimmt: rohe Positionsdaten dort einsehen und Feldnamen korrigieren.
   const positions = (posData.objects || []).map(p => ({
     name: p.name || (p.part && p.part.name) || 'Unbekannt',
-    quantity: Number(p.quantity) || 1
+    quantity: Number(p.quantity) || 1,
+    einzelpreisNetto: (p.price !== undefined && p.price !== null) ? Number(p.price) : null
   }));
 
   // 3. Sichtbare Kundennummer (nicht die interne Kontakt-ID!) über Contact-Endpoint
@@ -245,6 +250,13 @@ function writeArticleFieldsToDeal(dealId, aggregated) {
   addEnumFieldIfSet(customFields, 'Wallbox_Typ', aggregated.fields.Wallbox_Typ);
   addEnumFieldIfSet(customFields, 'Heizstab', aggregated.fields.Heizstab);
 
+  // Montage/Elektro-Pauschalen (31.08.2026) -- setFieldIfConfigured() überspringt PLACEHOLDER-
+  // Felder komplett, bis die echten field_codes eingetragen sind (siehe FIELD_KEYS).
+  setFieldIfConfigured(customFields, 'Montage_Pauschale_EUR', aggregated.fields.Montage_Pauschale_EUR);
+  setFieldIfConfigured(customFields, 'Elektroinstallation_Pauschale_EUR', aggregated.fields.Elektroinstallation_Pauschale_EUR);
+  setFieldIfConfigured(customFields, 'Elektromaterial_Pauschale_EUR', aggregated.fields.Elektromaterial_Pauschale_EUR);
+  addEnumFieldIfSet(customFields, 'SM_FS_Typ', aggregated.fields.SM_FS_Typ);
+
   customFields[FIELD_KEYS.Verkaufte_Artikel_Summary] = aggregated.summary;
 
   const result = pipedriveFetch(`/deals/${dealId}`, {
@@ -259,10 +271,28 @@ function writeArticleFieldsToDeal(dealId, aggregated) {
   return true;
 }
 
+/**
+ * Setzt ein einfaches Feld (Text/Zahl), aber NUR wenn der field_code schon konfiguriert ist --
+ * sonst würde ein "PLACEHOLDER_..."-Platzhalter als echter custom_fields-Key an Pipedrive gesendet.
+ * Gleiche Schutzlogik wie searchDealsByField()/getDealCustomFieldValue() weiter oben, nur für's
+ * Schreiben statt Lesen. (31.08.2026, Montage/Elektro-Pauschalen)
+ */
+function setFieldIfConfigured(customFields, fieldName, value) {
+  const fieldKey = FIELD_KEYS[fieldName];
+  if (!fieldKey || fieldKey.indexOf('PLACEHOLDER') === 0) return;
+  customFields[fieldKey] = (value !== undefined && value !== null) ? value : null;
+}
+
 /** Setzt ein Dropdown-Feld auf die passende Options-ID (Groß-/Kleinschreibung egal) oder leert es. */
 function addEnumFieldIfSet(customFields, fieldName, textValue) {
+  const fieldKey = FIELD_KEYS[fieldName];
+  // Gleicher PLACEHOLDER-Schutz wie setFieldIfConfigured() -- betrifft aktuell nur SM_FS_Typ, bis
+  // der field_code eingetragen ist. Bestehende Felder (Module_Marke etc.) sind nie PLACEHOLDER,
+  // Verhalten für die bleibt unverändert.
+  if (!fieldKey || fieldKey.indexOf('PLACEHOLDER') === 0) return;
+
   if (!textValue) {
-    customFields[FIELD_KEYS[fieldName]] = null;
+    customFields[fieldKey] = null;
     return;
   }
   const options = ENUM_OPTION_IDS[fieldName] || {};
@@ -482,7 +512,11 @@ function formatiereErkannteFelder(aggregated) {
     `Speicher: ${f.Speicher_Kapazitaet_kWh || '-'}`,
     `Notstrom: ${f.Notstrom_Typ}`,
     `Wallbox: ${f.Wallbox_Typ}`,
-    `Heizstab: ${f.Heizstab}`
+    `Heizstab: ${f.Heizstab}`,
+    `SM/FS: ${f.SM_FS_Typ}`,
+    `Montage: ${f.Montage_Pauschale_EUR !== null ? f.Montage_Pauschale_EUR + ' €' : '-'}`,
+    `Elektroinstallation: ${f.Elektroinstallation_Pauschale_EUR !== null ? f.Elektroinstallation_Pauschale_EUR + ' €' : '-'}`,
+    `Elektromaterial: ${f.Elektromaterial_Pauschale_EUR !== null ? f.Elektromaterial_Pauschale_EUR + ' €' : '-'}`
   ];
   const zeile = teile.join(' | ');
   return aggregated.summary ? `${zeile} || Rohpositionen: ${aggregated.summary}` : zeile;
@@ -645,6 +679,23 @@ function syncEinzelDealOhneStatusFilter(dealId) {
   // Genau 1 Treffer -- weiter über die bestehende, bereits getestete Sync-Logik (gleicher Weg wie
   // syncPendingOrders, nur ohne den Status-Filter davor).
   return syncOrderToPipedrive(treffer[0].id);
+}
+
+/**
+ * Debug (31.08.2026): zeigt ALLE Rohfelder jeder OrderPos einer Order -- nötig, um vor dem
+ * Live-Schalten der Montage/Elektro-Pauschalen zu verifizieren, wie das sevdesk-Preisfeld wirklich
+ * heißt (`fetchOrderFromSevdesk` nimmt aktuell `p.price` an, UNGETESTET, siehe Kommentar dort).
+ * Am besten mit einer bekannten FS-Order aufrufen (z.B. 2026-633-A, Order-ID 26886490 laut Memory).
+ * Prüfen: gibt's ein Feld mit dem tatsächlichen Netto-Einzelpreis der Position? Falls `price` nicht
+ * passt, den echten Feldnamen in `fetchOrderFromSevdesk()` (einzelpreisNetto-Zeile) eintragen.
+ */
+function debugOrderPosPreisFelder(orderId) {
+  const posData = sevdeskFetch(`/OrderPos?order[id]=${orderId}&order[objectName]=Order`);
+  const positionen = posData.objects || [];
+  Logger.log(`${positionen.length} Position(en) für Order ${orderId}:`);
+  positionen.forEach((p, i) => {
+    Logger.log(`--- Position ${i + 1}: "${p.name}" ---\n${JSON.stringify(p, null, 2)}`);
+  });
 }
 
 /**

@@ -21,7 +21,17 @@ const FIELD_KEYS = {
 
   // --- Zahlungseingang-Feature (siehe ZahlungseingangSync.gs) ---
   // Per checkExistingFields() ermittelt (26.08.2026), Typ enum.
-  zahlungseingang_erhalten:    'ddbfed2a1cdc25c2be460b9a825e056cca2d0284'
+  zahlungseingang_erhalten:    'ddbfed2a1cdc25c2be460b9a825e056cca2d0284',
+
+  // --- Montage/Elektro-Pauschalen (für Montagepartner, z.B. Christof), Stand 31.08.2026 ---
+  // PLACEHOLDER: createMontageElektroFelder() in FieldSetup.gs einmal ausführen, dann hier eintragen.
+  Montage_Pauschale_EUR:            'PLACEHOLDER_MONTAGE_PAUSCHALE',
+  Elektroinstallation_Pauschale_EUR: 'PLACEHOLDER_ELEKTROINSTALLATION_PAUSCHALE',
+  Elektromaterial_Pauschale_EUR:     'PLACEHOLDER_ELEKTROMATERIAL_PAUSCHALE',
+  // PLACEHOLDER: Feld existiert laut Valentin schon in Pipedrive (manuell angelegt) -- field_code
+  // per checkExistingFields() (FieldSetup.gs) nachschlagen und hier eintragen. Typ/Optionen unbekannt,
+  // siehe ENUM_OPTION_IDS.SM_FS_Typ unten.
+  SM_FS_Typ:                        'PLACEHOLDER_SM_FS_TYP'
 };
 
 const ENUM_OPTION_IDS = {
@@ -32,7 +42,11 @@ const ENUM_OPTION_IDS = {
   Wallbox_Typ:     { '11kW': 135, '22kW': 136, 'Nein': 137 },
   // Live gegen Pipedrive verifiziert (26.08.2026, pruefeZahlungseingangKonfiguration()):
   // Label heißt "Erhalten", nicht "Ja" -- gleiches Namensmuster wie bei "AR versendet".
-  Zahlungseingang_erhalten: { 'Erhalten': 207 }
+  Zahlungseingang_erhalten: { 'Erhalten': 207 },
+  // PLACEHOLDER (31.08.2026): Options-IDs unbekannt -- showFieldOptions() (FIELDNAME auf 'SM_FS_Typ'
+  // stellen) einmal ausführen und die echten Label/ID-Paare hier eintragen. Labels 'SM'/'FS' sind nur
+  // eine Annahme, ggf. an die echten Pipedrive-Optionen anpassen.
+  SM_FS_Typ: { 'SM': null, 'FS': null }
 };
 
 // ============================================================================
@@ -45,7 +59,22 @@ const ARTICLE_PATTERNS = {
   // fälschlich Zubehörteile, die zufällig ein Schlagwort enthalten (z.B. "Battery Controller BC"
   // enthält "Batter(y)" und würde sonst als Speicher-Position durchgehen).
   zubehoer: {
-    match: /Smart Meter|Power Sensor|Controller BC|Communication Modul|SparSmart|MPPT|Optimierer|Moduloptimierung|Fernwartung|Montageset|Bodenmontageset|Wandmontageset|Modulhalterung|Transportkosten|Planung der PV|Anmeldung EVU|EVU Abnahme|Elektroinstallation|Montagearbeiten|Projektbetreuung|Messpauschale|Landesförderung|Garantie|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Energiemanager/i
+    // Montagearbeiten/Elektroinstallation(smaterial) bewusst NICHT hier -- eigene Kategorien weiter
+    // unten (31.08.2026), damit die Pauschalbeträge nicht mehr stillschweigend übersprungen werden.
+    match: /Smart Meter|Power Sensor|Controller BC|Communication Modul|SparSmart|MPPT|Optimierer|Moduloptimierung|Fernwartung|Montageset|Bodenmontageset|Wandmontageset|Modulhalterung|Transportkosten|Planung der PV|Anmeldung EVU|EVU Abnahme|Projektbetreuung|Messpauschale|Landesförderung|Garantie|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Energiemanager/i
+  },
+  montage: {
+    // Deckt "MONTAGEARBEITEN (PAUSCHAL)", "(PAUSCHAL PRO KW)" und "(REGIE)" gleichermaßen ab --
+    // welche Preisbasis tatsächlich verrechnet wurde, steht im gelesenen Positionspreis, nicht im Namen.
+    match: /Montagearbeiten/i
+  },
+  elektroinstallation: {
+    // Negative Lookahead schließt "Elektroinstallationsmaterial" aus (eigene Kategorie, siehe unten) --
+    // sonst würden beide Positionen hier landen, weil "Elektroinstallation" ein Teilstring ist.
+    match: /Elektroinstallation(?!smaterial)/i
+  },
+  elektromaterial: {
+    match: /Elektroinstallationsmaterial/i
   },
   wechselrichter: {
     match: /Wechselrichter|Energy Controller|WR-SUN|WR-HYD|SUN2000|PRIMO|SYMO|TAURO|MOD\s*\d+KTL|X3-ULTRA|X3-HYBRID|KTLX|HYD\s*\d+KTL/i,
@@ -140,23 +169,35 @@ const ARTICLE_PATTERNS = {
   }
 };
 
+// Kategorien ohne Marken-Logik -- haben stattdessen einen Pauschalbetrag (siehe unten, 31.08.2026).
+const BETRAG_KATEGORIEN = ['montage', 'elektroinstallation', 'elektromaterial'];
+
 /**
  * Analysiert eine einzelne sevdesk-Position und ordnet sie einer Kategorie zu.
- * @param {{name: string, quantity: number}} position
- * @returns {{category: string, marke: string|null, value: string|null, quantity: number, skipped: boolean}}
+ * @param {{name: string, quantity: number, einzelpreisNetto: number|null}} position
+ * @returns {{category: string, marke: string|null, value: string|null, quantity: number, skipped: boolean, betrag: number|null}}
  */
 function classifyPosition(position) {
   // Deutsches Komma als Dezimaltrenner normalisieren (z.B. "8,06 kWh" → "8.06 kWh"),
   // sonst greift die Regex nur die Nachkommastellen ab
   const name = (position.name || '').replace(/(\d),(\d)/g, '$1.$2');
   const quantity = position.quantity || 1;
+  // Gesamtbetrag der Position (Einzelpreis x Menge) -- null wenn der Preis nicht gelesen werden
+  // konnte (siehe UNGETESTET-Hinweis bei fetchOrderFromSevdesk in SyncEngine.gs).
+  const betrag = (position.einzelpreisNetto !== null && position.einzelpreisNetto !== undefined)
+    ? Math.round(position.einzelpreisNetto * quantity * 100) / 100
+    : null;
 
   for (const [category, config] of Object.entries(ARTICLE_PATTERNS)) {
     if (config.match.test(name)) {
       if (category === 'zubehoer') {
-        return { category, marke: null, value: null, quantity, skipped: true };
+        return { category, marke: null, value: null, quantity, skipped: true, betrag: null };
       }
-      
+
+      if (BETRAG_KATEGORIEN.indexOf(category) !== -1) {
+        return { category, marke: null, value: null, quantity, skipped: false, rawName: name, betrag };
+      }
+
       const markeMatch = config.marken.find(m => m.pattern.test(name));
       let marke = markeMatch ? markeMatch.marke : null;
 
@@ -171,11 +212,11 @@ function classifyPosition(position) {
 
       const value = config.extractValue(name);
 
-      return { category, marke, value, quantity, skipped: false, rawName: name };
+      return { category, marke, value, quantity, skipped: false, rawName: name, betrag: null };
     }
   }
 
-  return { category: 'unknown', marke: null, value: null, quantity, skipped: false, rawName: name };
+  return { category: 'unknown', marke: null, value: null, quantity, skipped: false, rawName: name, betrag: null };
 }
 
 /**
@@ -193,7 +234,16 @@ function aggregatePositions(positions) {
     System_Marke: null,      // aus WR oder Speicher abgeleitet (meist Sigenergy)
     Notstrom_Typ: 'Nein',    // Automatisch / Händisch / Nein
     Wallbox_Typ: 'Nein',     // 11kW / 22kW / Nein
-    Heizstab: 'Nein'
+    Heizstab: 'Nein',
+    // --- Montage/Elektro-Pauschalen (31.08.2026) ---
+    Montage_Pauschale_EUR: null,
+    Elektroinstallation_Pauschale_EUR: null,
+    Elektromaterial_Pauschale_EUR: null,
+    // SM (Selbstmontage) vs. FS (Fullservice) -- ABGELEITET, nicht aus Freitext geparst: sobald
+    // irgendeine der 3 Montage/Elektro-Positionen im Auftrag vorkommt, ist es ein FS-Angebot (siehe
+    // project_sevdesk_pipedrive_sync: "PV SM" vs. "PV FS" sind zwei echte sevdesk-Produktvorlagen,
+    // FS hat diese Positionen, SM nicht). Robuster als der Auftragstitel/-header zu parsen.
+    SM_FS_Typ: 'SM'
   };
 
   let speicherKwhTotal = 0; // Menge x Modellwert je Position, dann aufsummiert
@@ -244,6 +294,24 @@ function aggregatePositions(positions) {
       case 'heizstab':
         result.Heizstab = 'Ja';
         summaryParts.push(`Heizstab`);
+        break;
+
+      case 'montage':
+        result.Montage_Pauschale_EUR = c.betrag;
+        result.SM_FS_Typ = 'FS';
+        summaryParts.push(`Montage: ${c.betrag !== null ? c.betrag + ' €' : '? (Preis nicht lesbar)'}`);
+        break;
+
+      case 'elektroinstallation':
+        result.Elektroinstallation_Pauschale_EUR = c.betrag;
+        result.SM_FS_Typ = 'FS';
+        summaryParts.push(`Elektroinstallation: ${c.betrag !== null ? c.betrag + ' €' : '? (Preis nicht lesbar)'}`);
+        break;
+
+      case 'elektromaterial':
+        result.Elektromaterial_Pauschale_EUR = c.betrag;
+        result.SM_FS_Typ = 'FS';
+        summaryParts.push(`Elektromaterial: ${c.betrag !== null ? c.betrag + ' €' : '? (Preis nicht lesbar)'}`);
         break;
 
       case 'unknown':
