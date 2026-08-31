@@ -95,17 +95,44 @@ function ermittleWonDeal(personId) {
   const result = fetchPipedrive('/deals?person_id=' + personId + '&status=won&limit=5');
   const deals = result.data || [];
   if (deals.length === 1) {
-    // add_time kommt als volles Datetime von Pipedrive (z.B. "2026-07-14 09:32:10") -- als
-    // reines Datum ins Sheet schreiben, Uhrzeit interessiert für die Sortierung nicht.
-    // add_time kommt als "YYYY-MM-DD HH:MM:SS". Nur der Datumsteil interessiert.
-    const addTime = deals[0].add_time ? deals[0].add_time.split(' ')[0] : '';
-    return { gefunden: true, dealId: deals[0].id, dealTitel: deals[0].title, addTime: addTime };
+    // won_time IST am 31.08.2026 gegen die v2-Doku verifiziert (Standardfeld der Deal-Antwort,
+    // kein include_fields noetig) -- der frueher hier stehende Unsicherheits-Vorbehalt ist damit
+    // erledigt. Zusaetzlich liefert v2 "local_won_date" bereits als reines Datum in der
+    // Firmen-Zeitzone; das ist die bessere Quelle als selbst aus UTC umzurechnen, deshalb Vorrang.
+    const addTime = pipedriveDatumTeil(deals[0].add_time);
+    const wonTime = pipedriveDatumTeil(deals[0].local_won_date || deals[0].won_time);
+    return { gefunden: true, dealId: deals[0].id, dealTitel: deals[0].title, addTime: addTime, wonTime: wonTime };
   }
   if (deals.length > 1) {
     return { gefunden: false, hinweis: deals.length + ' won-Deals bei dieser Person — manuell auswählen: '
       + deals.map(d => d.id + ':' + d.title).join(' | ') };
   }
   return { gefunden: false, hinweis: 'Kein won-Deal bei dieser Person gefunden (evtl. noch offen, verloren, oder zu Lead konvertiert)' };
+}
+
+// ---------- Anreicherung für bereits bekannte (z.B. manuell eingetragene) Deal-ID ----------
+// Für Zeilen, wo Valentin die Deal-ID selbst gesetzt hat (z.B. nach einer MEHRDEUTIG/UNKLAR-
+// Entscheidung im Chat) -- Namenssuche komplett übersprungen, direkt der Deal abgerufen.
+function ermittleDatenFuerDeal(dealId) {
+  const result = fetchPipedrive('/deals/' + dealId);
+  const deal = result.data;
+  if (!deal) return null;
+
+  // v2 liefert person_id als blanken Integer (in v1 war es ein Objekt) -- am 31.08.2026 gegen die
+  // Doku verifiziert: "person_id": 1, // No longer an object. Die frueher hier stehende
+  // Abwehrkette (.value || .id || ...) ist damit nicht mehr noetig; das verschachtelte Objekt kam
+  // aus itemSearch, das ist eine andere Antwortform als /deals/{id}.
+  const personId = deal.person_id || null;
+  const daten = personId ? ermittlePersonDaten(personId) : { telefon: '', plz: '', adresse: '' };
+
+  return {
+    dealTitel: deal.title || '',
+    adresse: daten.adresse,
+    plz: daten.plz,
+    telefon: daten.telefon,
+    erstellungsdatum: pipedriveDatumTeil(deal.add_time),
+    gewonnenAm: pipedriveDatumTeil(deal.local_won_date || deal.won_time)
+  };
 }
 
 // ---------- Kernbewertung pro Name ----------
@@ -136,6 +163,7 @@ function bewerteName(name) {
         dealId: treffer.wonDeal.dealId,
         dealTitel: treffer.wonDeal.dealTitel,
         erstellungsdatum: treffer.wonDeal.addTime,
+        gewonnenAm: treffer.wonDeal.wonTime,
         personId: treffer.person.id,
         telefon: daten.telefon,
         plz: daten.plz,
@@ -169,6 +197,7 @@ function bewerteName(name) {
     dealId: wonDeal.dealId,
     dealTitel: wonDeal.dealTitel,
     erstellungsdatum: wonDeal.addTime,
+    gewonnenAm: wonDeal.wonTime,
     personId: person.id,
     telefon: daten.telefon,
     plz: daten.plz,
@@ -202,6 +231,57 @@ function alsDatum(isoDatum) {
   const m = String(isoDatum || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return '';
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+/**
+ * Pipedrive-v2-Zeitstempel -> "YYYY-MM-DD" in Script-Zeitzone.
+ *
+ * FIX 31.08.2026 (kritisch): der Code hat `add_time.split(' ')[0]` gemacht, also das v1-Format
+ * "2026-07-14 09:32:10" angenommen. **v2 liefert ISO/TZ**: "2026-07-14T09:32:10Z" -- da ist kein
+ * Leerzeichen drin, split(' ')[0] gibt den GANZEN String zurueck. Der alsDatum()-Regex greift
+ * darauf nicht, also wurde das Erstellungsdatum gar nicht geschrieben und die Notiz haette
+ * "Deal gewonnen am 2026-07-14T09:32:10Z" gelautet. Damit war auch
+ * sortiereNachErstellungsdatum() wirkungslos -- es gab nichts zu sortieren.
+ * Belegt: https://pipedrive.readme.io/docs/pipedrive-api-v2-migration-guide#deal-object
+ * ("add_time": "2024-07-01T05:46:33Z", // In TZ format now)
+ *
+ * Umrechnung bewusst ueber ein echtes Date + formatDate in Script-Zeitzone, nicht per String-
+ * Abschneiden: ein Deal, der um 23:30 UTC angelegt wurde, gehoert in Wien schon zum naechsten Tag.
+ * Das "Z" macht den String eindeutig, deshalb ist new Date() hier - anders als bei einem nackten
+ * "2026-07-14" - unproblematisch.
+ * Das alte v1-Format mit Leerzeichen wird weiter akzeptiert, damit ein Format-Rueckschritt nicht
+ * still zu leeren Datumsfeldern fuehrt.
+ */
+function pipedriveDatumTeil(zeitstempel) {
+  const roh = String(zeitstempel || '').trim();
+  if (!roh) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(roh)) return roh; // schon ein reines Datum (z.B. local_won_date)
+  if (/^\d{4}-\d{2}-\d{2}[T ]/.test(roh)) {
+    const alsInstant = new Date(roh.indexOf('T') !== -1 ? roh : roh.replace(' ', 'T') + 'Z');
+    if (!isNaN(alsInstant.getTime())) {
+      return Utilities.formatDate(alsInstant, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    }
+  }
+  Logger.log('WARNUNG: Zeitstempel "%s" nicht interpretierbar -- Datum bleibt leer.', roh);
+  return '';
+}
+
+/**
+ * Setzt die "Deal gewonnen am"-Notiz an der Deal-ID-Zelle, OHNE eine vorhandene Notiz zu zerstoeren.
+ *
+ * FIX 31.08.2026: vorher ein blankes setNote(), das den Zellinhalt komplett ersetzt. Laut Kommentar
+ * im Code werden Notizen an derselben Zelle aber auch fuer manuelle Vermerke benutzt ("unsichere
+ * manuelle Zuordnung") -- ein Lauf haette solche Vermerke stillschweigend geloescht, und niemand
+ * haette gemerkt, dass da mal etwas stand.
+ */
+function setzeGewonnenNotiz(zelle, gewonnenAm) {
+  const zeile = 'Deal gewonnen am ' + gewonnenAm;
+  const bestehend = (zelle.getNote() || '').trim();
+  if (!bestehend) { zelle.setNote(zeile); return; }
+  if (bestehend.indexOf(zeile) !== -1) return; // schon drin, nichts zu tun
+  // Frueheres "Deal gewonnen am ..." ersetzen, alles andere behalten.
+  const ohneAlteZeile = bestehend.split('\n').filter(z => z.indexOf('Deal gewonnen am ') !== 0);
+  zelle.setNote(ohneAlteZeile.concat(zeile).join('\n').trim());
 }
 
 function starteAbgleich() {
@@ -238,7 +318,57 @@ function starteAbgleich() {
       const bestehendeDealId = (zeile[COL.DEAL_ID - 1] || '').toString().trim();
 
       if (!kunde) { uebersprungenLeer++; continue; }
-      if (bestehendeDealId && !FORCE_OVERWRITE) { uebersprungenSchonGesetzt++; continue; }
+
+      if (bestehendeDealId && !FORCE_OVERWRITE) {
+        // Namenssuche überspringen (die Deal-ID steht schon fest, z.B. weil Valentin eine
+        // MEHRDEUTIG/UNKLAR-Zeile manuell im Chat aufgelöst hat) -- aber Adresse/PLZ/Telefon/
+        // Erstellungsdatum/Gewonnen-Notiz trotzdem nachziehen, wenn sie noch leer sind. Sonst
+        // müsste Valentin die nach jeder manuellen Deal-ID von Hand nachtragen.
+        uebersprungenSchonGesetzt++;
+        if (!DRY_RUN) {
+          const zn = i + 2;
+          // FIX 31.08.2026 (N+1): hier standen zwei zusaetzliche getValues()/getValue()-Aufrufe pro
+          // Zeile -- obwohl "bereich" oben schon die KOMPLETTE Datenmatrix im Speicher haelt. Bei
+          // Kreuzeder (~82 Zeilen, ueberwiegend mit Deal-ID) waren das ~164 unnoetige Roundtrips
+          // ins Sheet pro Lauf. CLAUDE.md: "Verknuepfte Entitaeten einmal vorladen statt pro
+          // Datensatz einzeln abzurufen."
+          const lBisNBestehend = [
+            zeile[COL.ADRESSE - 1], zeile[COL.PLZ - 1], zeile[COL.TELEFON - 1]
+          ];
+          const erstellungsdatumBestehend = zeile[COL.ERSTELLUNGSDATUM - 1];
+          // FIX 31.08.2026 (unerfuellbarer Guard): die Bedingung hing auch an Adresse/PLZ/Telefon.
+          // Hat eine Person in Pipedrive gar keine Telefonnummer, bleibt die Spalte zwangslaeufig
+          // leer -- und dann wurde die Zeile bei JEDEM Lauf erneut angereichert (2 API-Calls, ohne
+          // dass sich je etwas aendert). Dieselbe Fehlerklasse wie die Selbst-Trigger-Kette in
+          // Ordnererstellung: die Abbruchbedingung muss erreichbar sein.
+          // add_time existiert bei jedem echten Deal, das Erstellungsdatum ist also der zuverlaessige
+          // Marker "diese Zeile wurde schon angereichert". Nachtraeglich in Pipedrive ergaenzte
+          // Adressen holt man bei Bedarf mit FORCE_OVERWRITE.
+          if (!erstellungsdatumBestehend) {
+            try {
+              const angereichert = ermittleDatenFuerDeal(bestehendeDealId);
+              if (angereichert) {
+                tab.getRange(zn, COL.ADRESSE, 1, 3).setValues([[
+                  lBisNBestehend[0] || angereichert.adresse || '',
+                  lBisNBestehend[1] || angereichert.plz || '',
+                  lBisNBestehend[2] || angereichert.telefon || ''
+                ]]);
+                if (!erstellungsdatumBestehend) {
+                  const datum = alsDatum(angereichert.erstellungsdatum);
+                  if (datum) tab.getRange(zn, COL.ERSTELLUNGSDATUM).setValue(datum);
+                }
+                if (angereichert.gewonnenAm) {
+                  setzeGewonnenNotiz(tab.getRange(zn, COL.DEAL_ID), angereichert.gewonnenAm);
+                }
+                logZeilen.push([new Date(), zn, kunde, 'ANGEREICHERT', bestehendeDealId, angereichert.dealTitel, 'Deal-ID war schon gesetzt -- Adresse/PLZ/Telefon/Datum nachgezogen']);
+              }
+            } catch (e) {
+              logZeilen.push([new Date(), zn, kunde, 'ANREICHERUNG_FEHLER', bestehendeDealId, '', e.message]);
+            }
+          }
+        }
+        continue;
+      }
 
       if (!DRY_RUN && verarbeitet >= LIMIT_PRO_LAUF) {
         Logger.log('LIMIT_PRO_LAUF (%s) erreicht — Rest bleibt für den nächsten Lauf offen.', LIMIT_PRO_LAUF);
@@ -284,7 +414,15 @@ function starteAbgleich() {
         }
         const datum = alsDatum(bewertung.erstellungsdatum);
         if (datum) tab.getRange(zeilenNr, COL.ERSTELLUNGSDATUM).setValue(datum);
-        tab.getRange(zeilenNr, COL.DEAL_ID).setValue(bewertung.dealId); // zuletzt, siehe a)
+
+        const dealIdZelle = tab.getRange(zeilenNr, COL.DEAL_ID);
+        dealIdZelle.setValue(bewertung.dealId); // zuletzt, siehe a)
+        // Gewonnen-Datum ist bewusst KEINE eigene Sheet-Spalte (Kopfzeile ist fix, siehe
+        // project_montage_sheets_migration) -- nur intern relevant, deshalb als Zellen-Notiz an
+        // der Deal-ID, gleiche Konvention wie bei unsicheren manuellen Zuordnungen (2026-08-31).
+        if (bewertung.gewonnenAm) {
+          setzeGewonnenNotiz(dealIdZelle, bewertung.gewonnenAm);
+        }
       }
 
       verarbeitet++;

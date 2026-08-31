@@ -66,7 +66,7 @@ const TARGET_SHEETS = {
 
 // Vor jedem Lauf bewusst setzen — nie automatisch "alle Partner", damit ein Fehlgriff
 // nicht gleich über sechs Sheets gleichzeitig passiert.
-const AKTUELLER_PARTNER = 'ALE';
+const AKTUELLER_PARTNER = 'TIROL';
 
 const TARGET_SHEET_ID = TARGET_SHEETS[AKTUELLER_PARTNER];
 
@@ -83,17 +83,21 @@ const TARGET_TAB_GID = {
   VORARLBERG: 402568831
 };
 
-// Öffnet den tatsächlichen Daten-Tab für AKTUELLER_PARTNER — per gid, wenn bekannt.
-function getTargetTab(spreadsheet) {
-  const gid = TARGET_TAB_GID[AKTUELLER_PARTNER];
+// Öffnet den tatsächlichen Daten-Tab für einen Partner — per gid, wenn bekannt. partner optional,
+// Default AKTUELLER_PARTNER (bestehende Aufrufer wie pruefeKonfiguration()/starteAbgleich() bleiben
+// unverändert); explizit übergeben für Funktionen, die über mehrere Partner loopen (FIX 31.08.2026,
+// z.B. richteCheckboxenEin() für alle sechs statt nur AKTUELLER_PARTNER).
+function getTargetTab(spreadsheet, partner) {
+  const p = partner || AKTUELLER_PARTNER;
+  const gid = TARGET_TAB_GID[p];
   if (gid) {
     const tab = spreadsheet.getSheets().find(s => s.getSheetId() === gid);
     if (!tab) {
-      throw new Error('gid ' + gid + ' für "' + AKTUELLER_PARTNER + '" nicht gefunden — TARGET_TAB_GID prüfen.');
+      throw new Error('gid ' + gid + ' für "' + p + '" nicht gefunden — TARGET_TAB_GID prüfen.');
     }
     return tab;
   }
-  Logger.log('WARNUNG: kein gid für "%s" in TARGET_TAB_GID hinterlegt — nehme getSheets()[0]. Bitte gid aus der Sheet-URL nachtragen.', AKTUELLER_PARTNER);
+  Logger.log('WARNUNG: kein gid für "%s" in TARGET_TAB_GID hinterlegt — nehme getSheets()[0]. Bitte gid aus der Sheet-URL nachtragen.', p);
   return spreadsheet.getSheets()[0];
 }
 

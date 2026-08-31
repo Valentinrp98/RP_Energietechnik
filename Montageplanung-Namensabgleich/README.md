@@ -36,6 +36,10 @@ Schreibt NIE in Pipedrive selbst — nur ins Google Sheet, und auch das nur bei 
 6. `LIMIT_PRO_LAUF` hochsetzen oder entfernen, `starteAbgleich()` für den Rest. Bereits gesetzte
    Deal-ID-Zeilen werden automatisch übersprungen (idempotent) — mehrfacher Start ist gefahrlos,
    solange `FORCE_OVERWRITE` auf `false` bleibt.
+   - Gilt auch für **manuell** eingetragene Deal-IDs (z.B. nach einer im Chat aufgelösten
+     MEHRDEUTIG/UNKLAR-Zeile): die Namenssuche wird übersprungen, aber Adresse/PLZ/Telefon/
+     Erstellungsdatum/Gewonnen-Notiz werden trotzdem nachgezogen, wenn sie noch leer sind
+     (Kategorie `ANGEREICHERT` im Log) — muss nicht von Hand nachgetragen werden.
 7. `sortiereNachErstellungsdatum()` — EINMAL manuell aufrufen, nachdem die Deal-IDs (und damit
    Erstellungsdaten) für einen Partner durch sind. Sortiert die Datenzeilen fix nach Spalte Q
    (Erstellungsdatum, aus `deal.add_time`), Zeilen ohne Datum landen am Ende. Bewusst KEIN
