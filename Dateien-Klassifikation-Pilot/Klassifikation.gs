@@ -35,19 +35,67 @@ function processDeal(dealId) {
   const kundenOrdner = kundenOrdnerLink ? oeffneOrdnerAusLink(kundenOrdnerLink) : null;
 
   let verarbeitet = 0, unsicher = 0, fehler = 0;
+  const erkannteKategorien = new Set();
   dateien.forEach(datei => {
     try {
-      const ergebnis = klassifiziereUndVerschiebe(dealId, datei, kundenOrdner);
-      if (ergebnis === 'unsicher') unsicher++;
-      else if (ergebnis === 'fehler') fehler++;
-      else verarbeitet++;
+      const { status, kategorie } = klassifiziereUndVerschiebe(dealId, datei, kundenOrdner);
+      if (status === 'unsicher') unsicher++;
+      else if (status === 'fehler') fehler++;
+      else {
+        verarbeitet++;
+        if (kategorie) erkannteKategorien.add(kategorie);
+      }
     } catch (e) {
       fehler++;
       logRow(dealId, datei.name, null, 'FEHLER', String(e));
     }
   });
 
+  // Ein PATCH pro Deal statt pro Datei -- vermeidet Race/Overwrite zwischen mehreren Dateien
+  // desselben Laufs und reduziert API-Calls. Nur bei LIVE und wenn das Feld konfiguriert ist
+  // (siehe Config.gs) -- solange DOKUMENTE_ERKANNT_FIELD_KEY null ist, kein Fehler, einfach Skip.
+  if (!DRY_RUN && DOKUMENTE_ERKANNT_FIELD_KEY && erkannteKategorien.size > 0) {
+    try {
+      schreibeDokumenteErkannt(dealId, deal, erkannteKategorien);
+    } catch (e) {
+      logRow(dealId, null, null, 'FEHLER', `Dokumente-erkannt-Feld schreiben: ${e}`);
+    }
+  }
+
   return { verarbeitet, unsicher, fehler };
+}
+
+/**
+ * Schreibt die erkannten Kategorien als Optionen ins Pipedrive-Mehrfachauswahl-Feld
+ * "Dokumente erkannt" -- gemerged mit bereits vorhandenen Optionen. Ein PATCH mit nur den neuen
+ * IDs würde frühere Läufe überschreiben (siehe CLAUDE.md "Es gibt kein silent update" -- gilt
+ * genauso fürs versehentliche Löschen bestehender Werte wie fürs Nicht-Schreiben).
+ * ACHTUNG: Response-Schema für Mehrfachauswahl-Felder in v2 (Array numerischer Options-IDs) ist
+ * aus der Doku abgeleitet, nicht live verifiziert -- beim ersten LIVE-Lauf gegenprüfen.
+ */
+function schreibeDokumenteErkannt(dealId, deal, erkannteKategorien) {
+  const bestehendeIds = deal.custom_fields && Array.isArray(deal.custom_fields[DOKUMENTE_ERKANNT_FIELD_KEY])
+    ? deal.custom_fields[DOKUMENTE_ERKANNT_FIELD_KEY]
+    : [];
+  const neueIds = Array.from(erkannteKategorien)
+    .map(k => DOKUMENTE_ERKANNT_OPTION_IDS[k])
+    .filter(id => id !== undefined);
+  const zusammengefasst = Array.from(new Set([...bestehendeIds, ...neueIds]));
+  if (zusammengefasst.length === bestehendeIds.length) return; // nichts Neues zu schreiben
+
+  const response = UrlFetchApp.fetch(`https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals/${dealId}`, {
+    method: 'patch',
+    contentType: 'application/json',
+    payload: JSON.stringify({ custom_fields: { [DOKUMENTE_ERKANNT_FIELD_KEY]: zusammengefasst } }),
+    headers: { 'x-api-token': getApiToken() },
+    muteHttpExceptions: true
+  });
+  const code = response.getResponseCode();
+  if (code !== 200) {
+    logRow(dealId, null, null, 'FEHLER', `Dokumente-erkannt-Feld PATCH fehlgeschlagen: HTTP ${code} ${response.getContentText()}`);
+    return;
+  }
+  logRow(dealId, null, null, 'OK', `Dokumente-erkannt-Feld aktualisiert: ${JSON.stringify(zusammengefasst)}`);
 }
 
 /** Holt alle Datei-Metadaten für einen Deal. Files-API existiert nur in v1 (siehe Plan). */
@@ -65,20 +113,21 @@ function oeffneOrdnerAusLink(link) {
 
 /**
  * Lädt eine einzelne Datei herunter, klassifiziert sie per Claude und verschiebt sie bei
- * eindeutigem Ergebnis in den passenden Unterordner. Rückgabe: 'verschoben' | 'unsicher' | 'fehler'.
+ * eindeutigem Ergebnis in den passenden Unterordner.
+ * Rückgabe: { status: 'verschoben' | 'unsicher' | 'fehler', kategorie: string|null }.
  */
 function klassifiziereUndVerschiebe(dealId, datei, kundenOrdner) {
   const blob = downloadPipedriveFile(datei.id, datei.name);
   const mimeType = blob.getContentType();
   if (!UNTERSTUETZTE_MIME_TYPEN.includes(mimeType)) {
     logRow(dealId, datei.name, null, 'unsicher', `MIME-Typ "${mimeType}" nicht unterstützt (kein Bild/PDF) -- nicht klassifiziert`);
-    return 'unsicher';
+    return { status: 'unsicher', kategorie: null };
   }
 
   const klassifikation = klassifiziereDatei(blob, mimeType, datei.name);
   logRow(dealId, datei.name, klassifikation.kategorie, klassifikation.kategorie === 'unsicher' ? 'unsicher' : 'klassifiziert', klassifikation.begruendung, klassifikation.usage);
 
-  if (klassifikation.kategorie === 'unsicher') return 'unsicher';
+  if (klassifikation.kategorie === 'unsicher') return { status: 'unsicher', kategorie: null };
 
   // hasOwnProperty statt direktem Zugriff: die Kategorie kommt aus einem Claude-Call ueber ein
   // Dokument, das Fremdinput ist (Prompt Injection in einer Kunden-PDF ist der realistische Vektor).
@@ -89,18 +138,18 @@ function klassifiziereUndVerschiebe(dealId, datei, kundenOrdner) {
   const zielUnterordnerName = zielBekannt ? ZIEL_UNTERORDNER[klassifikation.kategorie] : null;
   if (!zielUnterordnerName) {
     logRow(dealId, datei.name, klassifikation.kategorie, 'FEHLER', `Kategorie "${klassifikation.kategorie}" hat keinen Zielordner in ZIEL_UNTERORDNER (Config.gs)`);
-    return 'fehler';
+    return { status: 'fehler', kategorie: klassifikation.kategorie };
   }
 
   if (DRY_RUN || !kundenOrdner) {
     logRow(dealId, datei.name, klassifikation.kategorie, 'DRY-RUN', `würde nach "${zielUnterordnerName}" verschieben`);
-    return 'verschoben';
+    return { status: 'verschoben', kategorie: klassifikation.kategorie };
   }
 
   const zielOrdnerIter = kundenOrdner.getFoldersByName(zielUnterordnerName);
   if (!zielOrdnerIter.hasNext()) {
     logRow(dealId, datei.name, klassifikation.kategorie, 'FEHLER', `Zielunterordner "${zielUnterordnerName}" fehlt im Kundenordner`);
-    return 'fehler';
+    return { status: 'fehler', kategorie: klassifikation.kategorie };
   }
   const zielOrdner = zielOrdnerIter.next();
 
@@ -111,7 +160,7 @@ function klassifiziereUndVerschiebe(dealId, datei, kundenOrdner) {
   zielOrdner.createFile(blob);
 
   logRow(dealId, datei.name, klassifikation.kategorie, 'verschoben', `nach "${zielUnterordnerName}"`);
-  return 'verschoben';
+  return { status: 'verschoben', kategorie: klassifikation.kategorie };
 }
 
 /**

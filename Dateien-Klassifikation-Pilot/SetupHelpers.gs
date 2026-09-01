@@ -46,6 +46,36 @@ function checkConfiguration() {
   return probleme;
 }
 
+/**
+ * Einmalig NACH Anlage des Pipedrive-Felds "Dokumente erkannt" (Mehrfachauswahl, Optionen
+ * Stromrechnung/Dachfoto/Zählerpunkt) ausführen: sucht das Feld per Label und druckt field_code +
+ * Options-IDs ins Log, zum manuellen Eintragen in Config.gs (DOKUMENTE_ERKANNT_FIELD_KEY /
+ * DOKUMENTE_ERKANNT_OPTION_IDS). Options-Label-Abgleich case-insensitiv, siehe CLAUDE.md
+ * "Enum-Options-Check muss case-insensitiv vergleichen" -- Schreibweise in Pipedrive muss nicht
+ * exakt "stromrechnung" sein.
+ */
+function findeDokumenteFeldKonfiguration() {
+  const dealFields = fetchPipedrive('dealFields?limit=500');
+  const feld = dealFields.find(f => (f.field_name || '').toLowerCase() === 'dokumente erkannt');
+  if (!feld) {
+    Logger.log('Feld "Dokumente erkannt" nicht gefunden -- erst in Pipedrive anlegen (Mehrfachauswahl, Optionen Stromrechnung/Dachfoto/Zählerpunkt), dann nochmal ausführen.');
+    return;
+  }
+  const gesuchteLabels = { stromrechnung: 'stromrechnung', dachfoto: 'dachfoto', zaehlerpunkt: 'zählerpunkt' };
+  const optionIds = {};
+  const fehlend = [];
+  Object.keys(gesuchteLabels).forEach(kategorie => {
+    const option = (feld.options || []).find(o => (o.label || '').toLowerCase() === gesuchteLabels[kategorie]);
+    if (option) optionIds[kategorie] = option.id;
+    else fehlend.push(gesuchteLabels[kategorie]);
+  });
+  Logger.log(`field_code: ${feld.field_code}`);
+  Logger.log(`Zum Eintragen in Config.gs:\nconst DOKUMENTE_ERKANNT_FIELD_KEY = '${feld.field_code}';\nconst DOKUMENTE_ERKANNT_OPTION_IDS = ${JSON.stringify(optionIds)};`);
+  if (fehlend.length > 0) {
+    Logger.log(`Achtung, Optionen nicht gefunden: ${fehlend.join(', ')} -- Label in Pipedrive prüfen.`);
+  }
+}
+
 /** Manueller Testlauf für einen einzelnen Deal (siehe PILOT_DEAL_IDS in Config.gs). */
 function testEinzelDeal() {
   starteLauf('testEinzelDeal');

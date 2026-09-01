@@ -21,6 +21,17 @@ const ZIEL_UNTERORDNER = {
   zaehlerpunkt: '4_Fotos'
 };
 
+// Pipedrive-Feld "Dokumente erkannt" (Mehrfachauswahl/Set, 3 Optionen: Stromrechnung/Dachfoto/
+// Zählerpunkt) -- gibt dem Team auf einen Blick, was schon erkannt wurde und was fehlt. Muss EINMAL
+// manuell in Pipedrive angelegt werden (Einstellungen -> Datenfelder -> Deal -> Mehrfachauswahl),
+// danach findeDokumenteFeldKonfiguration() in SetupHelpers.gs laufen lassen und die beiden Werte
+// unten eintragen. Solange FIELD_KEY null ist, überspringt das Script die Rückschreibung
+// ersatzlos (kein Fehler) -- die Kern-Klassifikation/Ablage läuft unabhängig davon.
+const DOKUMENTE_ERKANNT_FIELD_KEY = null; // z.B. 'abc123...' -- aus findeDokumenteFeldKonfiguration()
+const DOKUMENTE_ERKANNT_OPTION_IDS = {
+  // stromrechnung: 123, dachfoto: 124, zaehlerpunkt: 125 -- aus findeDokumenteFeldKonfiguration()
+};
+
 // Claude-Modell für die Klassifikation. Vision-fähig, günstig genug für einen Piloten mit
 // wenigen Dateien -- vor einem Rollout auf alle Deals nochmal gegen Preis/Genauigkeit prüfen.
 // KORREKTUR 27.08.2026: hier stand, die datierte Schreibweise sei "bei aktuellen Claude-Modellen
