@@ -258,7 +258,20 @@ function writeArticleFieldsToDeal(dealId, aggregated) {
   setFieldIfConfigured(customFields, 'Technische_Projektierung_Pauschale_EUR', aggregated.fields.Technische_Projektierung_Pauschale_EUR);
   addEnumFieldIfSet(customFields, 'SM_FS_Typ', aggregated.fields.SM_FS_Typ);
 
-  customFields[FIELD_KEYS.Verkaufte_Artikel_Summary] = aggregated.summary;
+  // Pipedrive-Limit für autocomplete-Felder: 255 Zeichen. Bei vielen Positionen (z.B. große
+  // Gewerbe-Anlagen) überschreitet der zusammengesetzte Summary-String das -- ohne Kappung
+  // scheitert der GESAMTE PATCH (auch alle anderen Felder in diesem Call), siehe Order 30092157.
+  const summary = aggregated.summary.length > 255
+    ? aggregated.summary.substring(0, 252) + '...'
+    : aggregated.summary;
+  customFields[FIELD_KEYS.Verkaufte_Artikel_Summary] = summary;
+
+  // Separate Montage/Elektro/Projektierung-Summary (01.09.2026), gleiches 255-Zeichen-Limit wie oben
+  // -- in der Praxis viel kürzer (max. 4 Positionen), aber der Cap kostet nichts und schützt gleich mit.
+  const montageSummary = aggregated.montageSummary.length > 255
+    ? aggregated.montageSummary.substring(0, 252) + '...'
+    : aggregated.montageSummary;
+  setFieldIfConfigured(customFields, 'Montage_Elektro_Summary', montageSummary);
 
   const result = pipedriveFetch(`/deals/${dealId}`, {
     method: 'patch',
@@ -520,8 +533,10 @@ function formatiereErkannteFelder(aggregated) {
     `Elektromaterial: ${f.Elektromaterial_Pauschale_EUR !== null ? f.Elektromaterial_Pauschale_EUR + ' €' : '-'}`,
     `Techn. Projektierung: ${f.Technische_Projektierung_Pauschale_EUR !== null ? f.Technische_Projektierung_Pauschale_EUR + ' €' : '-'}`
   ];
-  const zeile = teile.join(' | ');
-  return aggregated.summary ? `${zeile} || Rohpositionen: ${aggregated.summary}` : zeile;
+  let zeile = teile.join(' | ');
+  if (aggregated.summary) zeile += ` || Rohpositionen: ${aggregated.summary}`;
+  if (aggregated.montageSummary) zeile += ` || Montage/Elektro-Summary: ${aggregated.montageSummary}`;
+  return zeile;
 }
 
 /**
@@ -634,23 +649,28 @@ function syncOrderToPipedrive(orderId) {
 
 /**
  * Holt Artikel-Daten für EINEN Pipedrive-Deal direkt aus sevdesk, unabhängig vom Auftragsstatus.
- * Voraussetzung: der Deal hat schon eine Angebotsnummer eingetragen (FIELD_KEYS.sevdesk_angebotsnummer).
- * Bei genau 1 Treffer: normaler Sync (writeArticleFieldsToDeal). Bei 0 oder >1 Treffern: nur loggen,
- * NICHTS schreiben.
+ * Primär über Angebotsnummer (FIELD_KEYS.sevdesk_angebotsnummer). Steht die nicht am Deal, Fallback
+ * über Kundennummer (FIELD_KEYS.sevdesk_kunden_id) -- praktisch für Deals, wo (noch) nur die
+ * Kundennummer gepflegt ist. Bei genau 1 Treffer: normaler Sync (writeArticleFieldsToDeal).
+ * Bei 0 oder >1 nicht eindeutig auflösbaren Treffern: nur loggen, NICHTS schreiben.
  */
 function syncEinzelDealOhneStatusFilter(dealId) {
-  const dealData = pipedriveFetch(`/deals/${dealId}?custom_fields=${FIELD_KEYS.sevdesk_angebotsnummer}`, { method: 'get' });
-  if (!dealData.success || !dealData.data) {
-    logSyncResult('ERROR', dealId, null, 'Deal nicht gefunden/lesbar', JSON.stringify(dealData).substring(0, 200));
-    return false;
-  }
-  const angebotsnummer = (dealData.data.custom_fields || {})[FIELD_KEYS.sevdesk_angebotsnummer];
-  if (!angebotsnummer) {
-    logSyncResult('ERROR', dealId, null, 'Keine Angebotsnummer am Deal hinterlegt',
-      'Ohne Angebotsnummer kann sevdesk nicht sicher durchsucht werden -- manuell eintragen, dann erneut versuchen');
-    return false;
+  const angebotsnummer = getDealCustomFieldValue(dealId, FIELD_KEYS.sevdesk_angebotsnummer);
+  if (angebotsnummer) {
+    return syncEinzelDealUeberAngebotsnummer_(dealId, angebotsnummer);
   }
 
+  const kundennummer = getDealCustomFieldValue(dealId, FIELD_KEYS.sevdesk_kunden_id);
+  if (kundennummer) {
+    return syncEinzelDealUeberKundennummer_(dealId, kundennummer);
+  }
+
+  logSyncResult('ERROR', dealId, null, 'Weder Angebotsnummer noch Kundennummer am Deal hinterlegt',
+    'Mindestens eines der beiden Felder manuell eintragen, dann erneut versuchen');
+  return false;
+}
+
+function syncEinzelDealUeberAngebotsnummer_(dealId, angebotsnummer) {
   const orderData = sevdeskFetch(`/Order?orderNumber=${encodeURIComponent(angebotsnummer)}`);
   const treffer = orderData.objects || [];
 
@@ -681,6 +701,72 @@ function syncEinzelDealOhneStatusFilter(dealId) {
   // Genau 1 Treffer -- weiter über die bestehende, bereits getestete Sync-Logik (gleicher Weg wie
   // syncPendingOrders, nur ohne den Status-Filter davor).
   return syncOrderToPipedrive(treffer[0].id);
+}
+
+/**
+ * Fallback-Route über Kundennummer statt Angebotsnummer (01.09.2026, auf Valentins Wunsch).
+ * Gleiches Disambiguierungs-Muster wie bei der Angebotsnummer: hat der Kunde mehrere Aufträge,
+ * gewinnt der eine mit Status "Angenommen", falls es GENAU einen gibt -- sonst nichts schreiben.
+ *
+ * UNGETESTET (01.09.2026): `/Contact?customerNumber=X` und `/Order?contact[id]=X&contact[objectName]=
+ * Contact` sind aus dem bestehenden Bracket-Notation-Muster dieses Projekts abgeleitet (siehe
+ * `/OrderPos?order[id]=X&order[objectName]=Order`), aber noch nicht live gegen sevdesk verifiziert --
+ * vor dem ersten echten Einsatz mit einem bekannten Testfall gegenchecken (Logger.log zeigt die rohe
+ * sevdesk-Antwort, falls `objects` leer bleibt obwohl Kontakt/Aufträge existieren).
+ */
+function syncEinzelDealUeberKundennummer_(dealId, kundennummer) {
+  const contactData = sevdeskFetch(`/Contact?customerNumber=${encodeURIComponent(kundennummer)}`);
+  const kontakte = contactData.objects || [];
+
+  if (kontakte.length === 0) {
+    logSyncResult('ERROR', dealId, kundennummer, 'Kein sevdesk-Kontakt mit dieser Kundennummer gefunden', '');
+    Logger.log(`✗ Deal ${dealId}: kein sevdesk-Kontakt zu Kundennummer "${kundennummer}"`);
+    return false;
+  }
+  if (kontakte.length > 1) {
+    logSyncResult('WARNUNG', dealId, kundennummer, `${kontakte.length} sevdesk-Kontakte mit derselben Kundennummer gefunden`, '');
+    Logger.log(`⚠️ Deal ${dealId}: ${kontakte.length} Kontakte für Kundennummer "${kundennummer}" -- abgebrochen`);
+    return false;
+  }
+
+  const contactId = kontakte[0].id;
+  const orderData = sevdeskFetch(`/Order?contact[id]=${contactId}&contact[objectName]=Contact`);
+  const treffer = orderData.objects || [];
+
+  if (treffer.length === 0) {
+    logSyncResult('ERROR', dealId, kundennummer, 'Keine sevdesk-Aufträge für diesen Kontakt gefunden', '');
+    Logger.log(`✗ Deal ${dealId}: keine Aufträge für Kundennummer "${kundennummer}" (Contact ${contactId})`);
+    return false;
+  }
+  if (treffer.length > 1) {
+    const angenommen = treffer.filter(o => Number(o.status) === SEVDESK_STATUS_ANGENOMMEN);
+    if (angenommen.length === 1) {
+      Logger.log(`⚠️ Deal ${dealId}: ${treffer.length} Aufträge für Kundennummer "${kundennummer}", davon 1 mit Status "Angenommen" -- diesen genommen (Order ${angenommen[0].id})`);
+      return syncOrderToPipedrive(angenommen[0].id);
+    }
+
+    logSyncResult('WARNUNG', dealId, kundennummer,
+      `${treffer.length} sevdesk-Aufträge für diesen Kunden gefunden, keiner eindeutig über Status "Angenommen" auflösbar`,
+      `Order-IDs: ${treffer.map(o => `${o.id} (status ${o.status}, Nr. ${o.orderNumber})`).join(', ')} -- nichts geschrieben, Angebotsnummer manuell eintragen und darüber erneut versuchen`);
+    Logger.log(`⚠️ Deal ${dealId}: ${treffer.length} Aufträge für Kundennummer "${kundennummer}" -- abgebrochen, keine eindeutige Auflösung über Status`);
+    return false;
+  }
+
+  // Auch beim EINZIGEN Treffer "Angenommen" verlangen (Fix 1.9.2026). Vorher war die Regel
+  // asymmetrisch: bei mehreren Aufträgen musste einer "Angenommen" sein, beim einzigen wurde jeder
+  // Status akzeptiert. Anders als die Angebotsnummer ist die Kundennummer aber keine Zuordnung zu
+  // einem bestimmten Auftrag, sondern nur zum Kunden -- ein einzelner Entwurf oder ein verworfenes
+  // Angebot hätte damit Artikel-Felder in den Deal geschrieben.
+  const einziger = treffer[0];
+  if (Number(einziger.status) !== SEVDESK_STATUS_ANGENOMMEN) {
+    logSyncResult('WARNUNG', dealId, kundennummer,
+      `Einziger sevdesk-Auftrag des Kunden hat Status ${einziger.status}, nicht "Angenommen"`,
+      `Order ${einziger.id} (Nr. ${einziger.orderNumber}) -- nichts geschrieben. Wenn das trotzdem der richtige Auftrag ist: Angebotsnummer am Deal eintragen, die Route prüft den Status nicht.`);
+    Logger.log(`⚠️ Deal ${dealId}: einziger Auftrag zu Kundennummer "${kundennummer}" ist nicht "Angenommen" (status ${einziger.status}) -- abgebrochen`);
+    return false;
+  }
+
+  return syncOrderToPipedrive(einziger.id);
 }
 
 /**

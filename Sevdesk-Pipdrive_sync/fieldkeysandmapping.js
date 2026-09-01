@@ -23,18 +23,21 @@ const FIELD_KEYS = {
   // Per checkExistingFields() ermittelt (26.08.2026), Typ enum.
   zahlungseingang_erhalten:    'ddbfed2a1cdc25c2be460b9a825e056cca2d0284',
 
-  // --- Montage/Elektro-Pauschalen (für Montagepartner, z.B. Christof), Stand 31.08.2026 ---
-  // PLACEHOLDER: createMontageElektroFelder() in FieldSetup.gs einmal ausführen, dann hier eintragen.
-  Montage_Pauschale_EUR:            'PLACEHOLDER_MONTAGE_PAUSCHALE',
-  Elektroinstallation_Pauschale_EUR: 'PLACEHOLDER_ELEKTROINSTALLATION_PAUSCHALE',
-  Elektromaterial_Pauschale_EUR:     'PLACEHOLDER_ELEKTROMATERIAL_PAUSCHALE',
-  // Nachgetragen (01.09.2026): war in Valentins ursprünglicher Anforderung dabei ("Technische
-  // Projektierung Pauschale"), beim ersten Bau übersehen. Kommt in BEIDEN Varianten vor (SM UND FS,
-  // siehe Angebot 2026-644-A "Opt. TECHNISCHE PROJEKTIERUNG") -- setzt SM_FS_Typ deshalb NICHT.
-  Technische_Projektierung_Pauschale_EUR: 'PLACEHOLDER_PROJEKTIERUNG_PAUSCHALE',
-  // PLACEHOLDER: Feld existiert laut Valentin schon in Pipedrive (manuell angelegt) -- field_code
-  // per checkExistingFields() (FieldSetup.gs) nachschlagen und hier eintragen. Typ/Optionen unbekannt,
-  // siehe ENUM_OPTION_IDS.SM_FS_Typ unten.
+  // --- Montage/Elektro-Pauschalen (für Montagepartner, z.B. Christof) ---
+  // Live angelegt per createMontageElektroFelder() (01.09.2026).
+  Montage_Pauschale_EUR:            '126ce0b31fc718cfb05a8356f891684a8f7196c1',
+  Elektroinstallation_Pauschale_EUR: '13892f466a82621f0c3ee7020b61f208724dcd6b',
+  Elektromaterial_Pauschale_EUR:     '83713577892e7c77de66f55690c4299d14b47097',
+  Technische_Projektierung_Pauschale_EUR: '61f65b794a6bac1d9160374f7ff1c4d78f3533f5',
+  // Zweite, getrennte Summary NUR für Montage/Elektro/Projektierung -- auf Valentins Wunsch (01.09.2026),
+  // damit Verkaufte_Artikel_Summary sauber bei der Hardware bleibt und Christof eine eigene,
+  // fokussierte Zusammenfassung bekommt statt in der langen Hardware-Summary suchen zu müssen.
+  // PLACEHOLDER: createMontageElektroSummaryFeld() in FieldSetup.gs einmal ausführen, dann eintragen.
+  Montage_Elektro_Summary:          'PLACEHOLDER_MONTAGE_ELEKTRO_SUMMARY',
+  // PLACEHOLDER -- NOCH NICHT BESTÄTIGT: "Ausführungsart" (enum) ist der stärkste Kandidat aus
+  // checkExistingFields() (01.09.2026), passt inhaltlich zu SM/Fullservice, aber Valentin muss das
+  // noch bestätigen, bevor der echte field_code hier steht. Sobald bestätigt: field_code eintragen
+  // UND showFieldOptions() (FELDNAME='Ausführungsart') für die Options-IDs unten ausführen.
   SM_FS_Typ:                        'PLACEHOLDER_SM_FS_TYP'
 };
 
@@ -143,7 +146,22 @@ const ARTICLE_PATTERNS = {
       { pattern: /^DAS-/i, marke: 'DAS' },
       { pattern: /TRINASOLAR/i, marke: 'TRINASOLAR' }
     ],
-    extractValue: () => null
+    // Nur für die kompakte Verkaufte_Artikel_Summary (255-Zeichen-Limit) -- die exakte
+    // Modulbezeichnung steht ohnehin vollständig in Module_Bezeichnung (siehe c.rawName).
+    extractValue: (name) => {
+      // 1) Wattzahl mit Einheit: "440 Wp", "440Wp", "445W".
+      const mitEinheit = name.match(/(\d{3,4})\s*W(?:P|ATT)?\b/i);
+      if (mitEinheit) return `${mitEinheit[1]}Wp`;
+      // 2) Fallback ohne Einheit: bei vielen Modulnamen steckt die Wattzahl nur im Modellcode
+      // ("JAM54D41-440/LB"). Ohne diesen Fallback bliebe die Summary bei "20x JASOLAR" stehen und
+      // wäre weniger wert als vorher, wo der exakte Name drinstand. Bewusst nur DREIstellige Zahlen
+      // im plausiblen Modulbereich -- vierstellige sind in der Praxis Maße (1722x1134) oder
+      // Artikelnummern, und Modellcode-Fragmente wie "54"/"41" fallen durch die Längenprüfung.
+      const wattKandidat = (name.match(/\d+/g) || [])
+        .map(Number)
+        .find(n => String(n).length === 3 && n >= 250 && n <= 900);
+      return wattKandidat ? `${wattKandidat}Wp` : null;
+    }
   },
   wallbox: {
     match: /WALLBOX|EV.?CHARGER|EVAC|EVDC|Wattpilot|EVC-/i,
@@ -259,6 +277,9 @@ function aggregatePositions(positions) {
 
   let speicherKwhTotal = 0; // Menge x Modellwert je Position, dann aufsummiert
   const summaryParts = [];
+  // Getrennt von summaryParts (01.09.2026, auf Wunsch): Montage/Elektro/Projektierung bekommen eine
+  // eigene, kurze Zusammenfassung statt in der Hardware-Summary mitzulaufen.
+  const montageSummaryParts = [];
   const unknownArticles = [];
 
   positions.forEach(pos => {
@@ -271,7 +292,9 @@ function aggregatePositions(positions) {
         result.Module_Anzahl = (result.Module_Anzahl || 0) + c.quantity;
         result.Module_Marke = c.marke; // letzte gefundene Marke gewinnt (meist eh nur 1 Modell)
         result.Module_Bezeichnung = c.rawName; // letzter gefundener Artikelname gewinnt (meist eh nur 1 Modell)
-        summaryParts.push(`${c.quantity}x ${c.rawName}`); // exakte Modulbezeichnung statt nur Marke
+        // Kompakt für die Summary (255-Zeichen-Limit) -- exakter Name steht komplett in
+        // Module_Bezeichnung, hier reicht Marke + Wp.
+        summaryParts.push(`${c.quantity}x ${c.marke || '?'}${c.value ? ' ' + c.value : ''}`.trim());
         break;
 
       case 'wechselrichter':
@@ -286,7 +309,10 @@ function aggregatePositions(positions) {
         const lineTotal = modelValue * c.quantity;
         speicherKwhTotal += lineTotal;
         if (!result.System_Marke && c.marke) result.System_Marke = c.marke; // nur falls WR die Marke nicht schon gesetzt hat
-        summaryParts.push(`${c.quantity}x ${c.marke || '?'} Speicher ${c.value || ''} (=${lineTotal.toFixed(1)} kWh)`.trim());
+        // "(=X kWh)" nur zeigen, wenn Menge>1 -- bei Menge 1 ist die Summe identisch zum Modellwert
+        // und war reine Doppelung ("12.60 kWh (=12.6 kWh)").
+        const summeSuffix = c.quantity > 1 ? ` (Σ${lineTotal.toFixed(1)}kWh)` : '';
+        summaryParts.push(`${c.quantity}x ${c.marke || '?'} Speicher ${c.value || ''}${summeSuffix}`.trim());
         break;
       }
 
@@ -310,26 +336,26 @@ function aggregatePositions(positions) {
       case 'montage':
         result.Montage_Pauschale_EUR = c.betrag;
         result.SM_FS_Typ = 'FS';
-        summaryParts.push(`Montage: ${c.betrag !== null ? c.betrag + ' €' : '? (Preis nicht lesbar)'}`);
+        montageSummaryParts.push(`Montage ${c.betrag !== null ? c.betrag + '€' : '?'}`);
         break;
 
       case 'elektroinstallation':
         result.Elektroinstallation_Pauschale_EUR = c.betrag;
         result.SM_FS_Typ = 'FS';
-        summaryParts.push(`Elektroinstallation: ${c.betrag !== null ? c.betrag + ' €' : '? (Preis nicht lesbar)'}`);
+        montageSummaryParts.push(`E-Install ${c.betrag !== null ? c.betrag + '€' : '?'}`);
         break;
 
       case 'elektromaterial':
         result.Elektromaterial_Pauschale_EUR = c.betrag;
         result.SM_FS_Typ = 'FS';
-        summaryParts.push(`Elektromaterial: ${c.betrag !== null ? c.betrag + ' €' : '? (Preis nicht lesbar)'}`);
+        montageSummaryParts.push(`E-Material ${c.betrag !== null ? c.betrag + '€' : '?'}`);
         break;
 
       case 'projektierung':
         // Setzt SM_FS_Typ bewusst NICHT -- kommt bei SM (2026-644-A, optional) UND FS vor,
         // taugt anders als Montage/Elektro nicht als Unterscheidungsmerkmal.
         result.Technische_Projektierung_Pauschale_EUR = c.betrag;
-        summaryParts.push(`Techn. Projektierung: ${c.betrag !== null ? c.betrag + ' €' : '? (Preis nicht lesbar)'}`);
+        montageSummaryParts.push(`Projekt. ${c.betrag !== null ? c.betrag + '€' : '?'}`);
         break;
 
       case 'unknown':
@@ -346,6 +372,7 @@ function aggregatePositions(positions) {
   return {
     fields: result,
     summary: summaryParts.join(' | '),
+    montageSummary: montageSummaryParts.join(' | '), // "", nicht null, wenn nichts gefunden -- konsistent mit summary
     unknownArticles
   };
 }

@@ -69,36 +69,26 @@ function createModulBezeichnungField() {
 }
 
 // ============================================================================
-// SETUP: 4 neue Felder für Montage/Elektro/Projektierung-Pauschalen (für Montagepartner-Übergabe)
-// → Diese Funktion EINMAL ausführen, dann die 4 field_codes in Datei 2 eintragen.
-// Feldtyp 'double' (reine Zahl, kein Currency-Objekt nötig wie bei 'monetary').
-// Technische_Projektierung_Pauschale_EUR nachgetragen (01.09.2026) -- war in der ursprünglichen
-// Anforderung dabei, beim ersten Bau übersehen.
+// SETUP: neues Feld für die separate Montage/Elektro/Projektierung-Summary (für Christof)
+// → Diese Funktion EINMAL ausführen, dann den field_code in Datei 2 eintragen.
+// Getrennt von Verkaufte_Artikel_Summary (Hardware), auf Wunsch (01.09.2026).
 // ============================================================================
 
-function createMontageElektroFelder() {
-  const felder = [
-    { field_name: 'Montage_Pauschale_EUR', field_type: 'double' },
-    { field_name: 'Elektroinstallation_Pauschale_EUR', field_type: 'double' },
-    { field_name: 'Elektromaterial_Pauschale_EUR', field_type: 'double' },
-    { field_name: 'Technische_Projektierung_Pauschale_EUR', field_type: 'double' }
-  ];
+function createMontageElektroSummaryFeld() {
+  const feld = { field_name: 'Montage_Elektro_Summary', field_type: 'varchar_auto' };
 
-  felder.forEach(feld => {
-    const res = pdFetch('/dealFields', {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(feld)
-    });
-
-    if (res.code === 200 || res.code === 201) {
-      Logger.log(`✓ ${feld.field_name} angelegt → field_code: ${res.data.data.field_code}`);
-    } else {
-      Logger.log(`✗ ${feld.field_name} fehlgeschlagen (${res.code}): ${res.raw}`);
-    }
+  const res = pdFetch('/dealFields', {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(feld)
   });
 
-  Logger.log('\n👉 Alle 4 field_codes in Datei 2 unter FIELD_KEYS eintragen (Montage_Pauschale_EUR, Elektroinstallation_Pauschale_EUR, Elektromaterial_Pauschale_EUR, Technische_Projektierung_Pauschale_EUR).');
+  if (res.code === 200 || res.code === 201) {
+    Logger.log(`✓ Montage_Elektro_Summary angelegt → field_code: ${res.data.data.field_code}`);
+    Logger.log('\n👉 Diesen field_code in Datei 2 unter FIELD_KEYS.Montage_Elektro_Summary eintragen.');
+  } else {
+    Logger.log(`✗ Fehlgeschlagen (${res.code}): ${res.raw}`);
+  }
 }
 
 // ============================================================================
@@ -153,4 +143,14 @@ function ARCHIV_createArticleFields() {
  */
 function ARCHIV_migrateToSimplifiedFields() {
   throw new Error('Diese Funktion wurde bereits ausgeführt. Erneutes Starten würde befüllte Felder löschen.');
+}
+
+/**
+ * ⚠️ BEREITS AUSGEFÜHRT am 01.09.2026 — nicht erneut starten!
+ * Legte die 4 Montage/Elektro/Projektierung-Pauschale-Felder an (Montage_Pauschale_EUR,
+ * Elektroinstallation_Pauschale_EUR, Elektromaterial_Pauschale_EUR,
+ * Technische_Projektierung_Pauschale_EUR) — alle 4 field_codes stehen in FIELD_KEYS.
+ */
+function ARCHIV_createMontageElektroFelder() {
+  throw new Error('Diese Funktion wurde bereits ausgeführt. Erneutes Starten würde doppelte Felder anlegen.');
 }
