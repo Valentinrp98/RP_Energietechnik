@@ -50,9 +50,9 @@ function checkConfiguration() {
  * Einmalig NACH Anlage des Pipedrive-Felds "Dokumente erkannt" (Mehrfachauswahl, Optionen
  * Stromrechnung/Dachfoto/Zählerpunkt) ausführen: sucht das Feld per Label und druckt field_code +
  * Options-IDs ins Log, zum manuellen Eintragen in Config.gs (DOKUMENTE_ERKANNT_FIELD_KEY /
- * DOKUMENTE_ERKANNT_OPTION_IDS). Options-Label-Abgleich case-insensitiv, siehe CLAUDE.md
- * "Enum-Options-Check muss case-insensitiv vergleichen" -- Schreibweise in Pipedrive muss nicht
- * exakt "stromrechnung" sein.
+ * DOKUMENTE_ERKANNT_OPTION_IDS). Options-Label-Abgleich case-insensitiv UND per Substring, siehe
+ * CLAUDE.md "Enum-Options-Check muss case-insensitiv vergleichen" -- Schreibweise in Pipedrive muss
+ * nicht exakt "stromrechnung" sein, Labels dürfen ein Präfix-Symbol haben (z.B. "☐ Stromrechnung").
  */
 function findeDokumenteFeldKonfiguration() {
   const dealFields = fetchPipedrive('dealFields?limit=500');
@@ -65,7 +65,7 @@ function findeDokumenteFeldKonfiguration() {
   const optionIds = {};
   const fehlend = [];
   Object.keys(gesuchteLabels).forEach(kategorie => {
-    const option = (feld.options || []).find(o => (o.label || '').toLowerCase() === gesuchteLabels[kategorie]);
+    const option = (feld.options || []).find(o => (o.label || '').toLowerCase().includes(gesuchteLabels[kategorie]));
     if (option) optionIds[kategorie] = option.id;
     else fehlend.push(gesuchteLabels[kategorie]);
   });
