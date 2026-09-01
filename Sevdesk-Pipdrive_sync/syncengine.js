@@ -255,6 +255,7 @@ function writeArticleFieldsToDeal(dealId, aggregated) {
   setFieldIfConfigured(customFields, 'Montage_Pauschale_EUR', aggregated.fields.Montage_Pauschale_EUR);
   setFieldIfConfigured(customFields, 'Elektroinstallation_Pauschale_EUR', aggregated.fields.Elektroinstallation_Pauschale_EUR);
   setFieldIfConfigured(customFields, 'Elektromaterial_Pauschale_EUR', aggregated.fields.Elektromaterial_Pauschale_EUR);
+  setFieldIfConfigured(customFields, 'Technische_Projektierung_Pauschale_EUR', aggregated.fields.Technische_Projektierung_Pauschale_EUR);
   addEnumFieldIfSet(customFields, 'SM_FS_Typ', aggregated.fields.SM_FS_Typ);
 
   customFields[FIELD_KEYS.Verkaufte_Artikel_Summary] = aggregated.summary;
@@ -516,7 +517,8 @@ function formatiereErkannteFelder(aggregated) {
     `SM/FS: ${f.SM_FS_Typ}`,
     `Montage: ${f.Montage_Pauschale_EUR !== null ? f.Montage_Pauschale_EUR + ' €' : '-'}`,
     `Elektroinstallation: ${f.Elektroinstallation_Pauschale_EUR !== null ? f.Elektroinstallation_Pauschale_EUR + ' €' : '-'}`,
-    `Elektromaterial: ${f.Elektromaterial_Pauschale_EUR !== null ? f.Elektromaterial_Pauschale_EUR + ' €' : '-'}`
+    `Elektromaterial: ${f.Elektromaterial_Pauschale_EUR !== null ? f.Elektromaterial_Pauschale_EUR + ' €' : '-'}`,
+    `Techn. Projektierung: ${f.Technische_Projektierung_Pauschale_EUR !== null ? f.Technische_Projektierung_Pauschale_EUR + ' €' : '-'}`
   ];
   const zeile = teile.join(' | ');
   return aggregated.summary ? `${zeile} || Rohpositionen: ${aggregated.summary}` : zeile;

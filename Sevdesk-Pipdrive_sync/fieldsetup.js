@@ -69,16 +69,19 @@ function createModulBezeichnungField() {
 }
 
 // ============================================================================
-// SETUP: 3 neue Felder für Montage/Elektro-Pauschalen (nur bei FS-Angeboten befüllt)
-// → Diese Funktion EINMAL ausführen, dann die 3 field_codes in Datei 2 eintragen.
+// SETUP: 4 neue Felder für Montage/Elektro/Projektierung-Pauschalen (für Montagepartner-Übergabe)
+// → Diese Funktion EINMAL ausführen, dann die 4 field_codes in Datei 2 eintragen.
 // Feldtyp 'double' (reine Zahl, kein Currency-Objekt nötig wie bei 'monetary').
+// Technische_Projektierung_Pauschale_EUR nachgetragen (01.09.2026) -- war in der ursprünglichen
+// Anforderung dabei, beim ersten Bau übersehen.
 // ============================================================================
 
 function createMontageElektroFelder() {
   const felder = [
     { field_name: 'Montage_Pauschale_EUR', field_type: 'double' },
     { field_name: 'Elektroinstallation_Pauschale_EUR', field_type: 'double' },
-    { field_name: 'Elektromaterial_Pauschale_EUR', field_type: 'double' }
+    { field_name: 'Elektromaterial_Pauschale_EUR', field_type: 'double' },
+    { field_name: 'Technische_Projektierung_Pauschale_EUR', field_type: 'double' }
   ];
 
   felder.forEach(feld => {
@@ -95,7 +98,7 @@ function createMontageElektroFelder() {
     }
   });
 
-  Logger.log('\n👉 Alle 3 field_codes in Datei 2 unter FIELD_KEYS eintragen (Montage_Pauschale_EUR, Elektroinstallation_Pauschale_EUR, Elektromaterial_Pauschale_EUR).');
+  Logger.log('\n👉 Alle 4 field_codes in Datei 2 unter FIELD_KEYS eintragen (Montage_Pauschale_EUR, Elektroinstallation_Pauschale_EUR, Elektromaterial_Pauschale_EUR, Technische_Projektierung_Pauschale_EUR).');
 }
 
 // ============================================================================

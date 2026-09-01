@@ -28,6 +28,10 @@ const FIELD_KEYS = {
   Montage_Pauschale_EUR:            'PLACEHOLDER_MONTAGE_PAUSCHALE',
   Elektroinstallation_Pauschale_EUR: 'PLACEHOLDER_ELEKTROINSTALLATION_PAUSCHALE',
   Elektromaterial_Pauschale_EUR:     'PLACEHOLDER_ELEKTROMATERIAL_PAUSCHALE',
+  // Nachgetragen (01.09.2026): war in Valentins ursprünglicher Anforderung dabei ("Technische
+  // Projektierung Pauschale"), beim ersten Bau übersehen. Kommt in BEIDEN Varianten vor (SM UND FS,
+  // siehe Angebot 2026-644-A "Opt. TECHNISCHE PROJEKTIERUNG") -- setzt SM_FS_Typ deshalb NICHT.
+  Technische_Projektierung_Pauschale_EUR: 'PLACEHOLDER_PROJEKTIERUNG_PAUSCHALE',
   // PLACEHOLDER: Feld existiert laut Valentin schon in Pipedrive (manuell angelegt) -- field_code
   // per checkExistingFields() (FieldSetup.gs) nachschlagen und hier eintragen. Typ/Optionen unbekannt,
   // siehe ENUM_OPTION_IDS.SM_FS_Typ unten.
@@ -61,7 +65,8 @@ const ARTICLE_PATTERNS = {
   zubehoer: {
     // Montagearbeiten/Elektroinstallation(smaterial) bewusst NICHT hier -- eigene Kategorien weiter
     // unten (31.08.2026), damit die Pauschalbeträge nicht mehr stillschweigend übersprungen werden.
-    match: /Smart Meter|Power Sensor|Controller BC|Communication Modul|SparSmart|MPPT|Optimierer|Moduloptimierung|Fernwartung|Montageset|Bodenmontageset|Wandmontageset|Modulhalterung|Transportkosten|Planung der PV|Anmeldung EVU|EVU Abnahme|Projektbetreuung|Messpauschale|Landesförderung|Garantie|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Energiemanager/i
+    // Projektbetreuung/Projektierung bewusst NICHT hier -- eigene Kategorie weiter unten (01.09.2026).
+    match: /Smart Meter|Power Sensor|Controller BC|Communication Modul|SparSmart|MPPT|Optimierer|Moduloptimierung|Fernwartung|Montageset|Bodenmontageset|Wandmontageset|Modulhalterung|Transportkosten|Planung der PV|Anmeldung EVU|EVU Abnahme|Messpauschale|Landesförderung|Garantie|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Energiemanager/i
   },
   montage: {
     // Deckt "MONTAGEARBEITEN (PAUSCHAL)", "(PAUSCHAL PRO KW)" und "(REGIE)" gleichermaßen ab --
@@ -75,6 +80,11 @@ const ARTICLE_PATTERNS = {
   },
   elektromaterial: {
     match: /Elektroinstallationsmaterial/i
+  },
+  projektierung: {
+    // Katalog-Artikel heißt "TECHNISCHE PROJEKTBETREUUNG" (1121), im Angebots-PDF steht aber
+    // "TECHNISCHE PROJEKTIERUNG" (2026-644-A) -- beide Schreibweisen abdecken, nicht nur eine raten.
+    match: /Projekt(betreuung|ierung)/i
   },
   wechselrichter: {
     match: /Wechselrichter|Energy Controller|WR-SUN|WR-HYD|SUN2000|PRIMO|SYMO|TAURO|MOD\s*\d+KTL|X3-ULTRA|X3-HYBRID|KTLX|HYD\s*\d+KTL/i,
@@ -169,8 +179,8 @@ const ARTICLE_PATTERNS = {
   }
 };
 
-// Kategorien ohne Marken-Logik -- haben stattdessen einen Pauschalbetrag (siehe unten, 31.08.2026).
-const BETRAG_KATEGORIEN = ['montage', 'elektroinstallation', 'elektromaterial'];
+// Kategorien ohne Marken-Logik -- haben stattdessen einen Pauschalbetrag (siehe unten, 31.08.2026/01.09.2026).
+const BETRAG_KATEGORIEN = ['montage', 'elektroinstallation', 'elektromaterial', 'projektierung'];
 
 /**
  * Analysiert eine einzelne sevdesk-Position und ordnet sie einer Kategorie zu.
@@ -239,6 +249,7 @@ function aggregatePositions(positions) {
     Montage_Pauschale_EUR: null,
     Elektroinstallation_Pauschale_EUR: null,
     Elektromaterial_Pauschale_EUR: null,
+    Technische_Projektierung_Pauschale_EUR: null, // kommt bei SM UND FS vor -- siehe SM_FS_Typ unten
     // SM (Selbstmontage) vs. FS (Fullservice) -- ABGELEITET, nicht aus Freitext geparst: sobald
     // irgendeine der 3 Montage/Elektro-Positionen im Auftrag vorkommt, ist es ein FS-Angebot (siehe
     // project_sevdesk_pipedrive_sync: "PV SM" vs. "PV FS" sind zwei echte sevdesk-Produktvorlagen,
@@ -312,6 +323,13 @@ function aggregatePositions(positions) {
         result.Elektromaterial_Pauschale_EUR = c.betrag;
         result.SM_FS_Typ = 'FS';
         summaryParts.push(`Elektromaterial: ${c.betrag !== null ? c.betrag + ' €' : '? (Preis nicht lesbar)'}`);
+        break;
+
+      case 'projektierung':
+        // Setzt SM_FS_Typ bewusst NICHT -- kommt bei SM (2026-644-A, optional) UND FS vor,
+        // taugt anders als Montage/Elektro nicht als Unterscheidungsmerkmal.
+        result.Technische_Projektierung_Pauschale_EUR = c.betrag;
+        summaryParts.push(`Techn. Projektierung: ${c.betrag !== null ? c.betrag + ' €' : '? (Preis nicht lesbar)'}`);
         break;
 
       case 'unknown':
