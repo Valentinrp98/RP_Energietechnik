@@ -1,0 +1,123 @@
+// ============================================================
+// KONFIGURATION — Geburtstagskalender-Sync
+// ============================================================
+// Zweck: Geburtstage aus einem Slack Custom Profile Field ("Geburtstag") lesen
+// und als jährlich wiederkehrende Ganztags-Events in EINEN gemeinsamen Google-
+// Kalender ("RP Geburtstage") schreiben. Kein Schreiben in individuelle
+// Mitarbeiter-Kalender — alle abonnieren/sehen denselben Kalender.
+//
+// Ablauf:
+//   1. pruefeKonfiguration() — legt den Kalender beim ersten Lauf selbst an
+//      (falls CALENDAR_ID leer), prüft Slack-Token + Feld-ID.
+//   2. ermittleGeburtstagsFeldId() — einmalig, falls SLACK_BIRTHDAY_FIELD_ID
+//      noch leer ist (siehe SlackClient.gs).
+//   3. syncGeburtstage() — Kernlogik (siehe CalendarSync.gs), täglich per
+//      richteTaeglichenTriggerEin() (siehe Setup.gs).
+//
+// Voraussetzungen (siehe README.md) — nur Valentin/Slack-Admin kann das:
+//   - Slack Custom Profile Field "Geburtstag" (Typ Datum) angelegt
+//   - Slack App + Bot Token (Scopes: users:read, users.profile:read) installiert
+//   - Dieses Apps-Script-Projekt im Editor erstellt und an dieses Repo gebunden
+//     (.clasp.json mit echter scriptId, siehe RP-Google-Scripts/.claude/skills/gs-deploy)
+
+const SLACK_API_BASE = 'https://slack.com/api';
+
+// Tokens/Secrets liegen in Script Properties, nicht hier im Code — siehe D4 im
+// RP-Google-Scripts-CLAUDE.md (Klartext-Secrets-Falle).
+function getSlackToken() {
+  const token = PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
+  if (!token) {
+    throw new Error('SLACK_BOT_TOKEN fehlt in den Script Properties. Slack App unter api.slack.com/apps anlegen, im RP-Workspace installieren, Bot Token hier eintragen.');
+  }
+  return token;
+}
+
+// IDs sind nicht geheim — analog ERGEBNIS_SHEET_ID in Telefon-Qualifizierung/Config.gs
+// als Konstante im Code, nicht in Script Properties.
+
+// Leer lassen, bis pruefeKonfiguration() den Kalender einmal selbst angelegt hat
+// und die ID geloggt hat — dann hier eintragen.
+const CALENDAR_ID = '';
+const CALENDAR_NAME = 'RP Geburtstage';
+const WORKSPACE_DOMAIN = 'rp-energietechnik.at'; // für domainweite Kalenderfreigabe
+
+// Slack Custom-Field-ID für "Geburtstag" (Format "Xf0XXXXXXXX") — einmalig über
+// ermittleGeburtstagsFeldId() ermitteln (siehe SlackClient.gs) und hier eintragen.
+const SLACK_BIRTHDAY_FIELD_ID = '';
+
+const EVENT_TITEL_PRAEFIX = '🎂 ';
+
+// true = Simulation: es wird nur geloggt, was angelegt/geändert/gelöscht WÜRDE.
+// AUF true LASSEN, bis Valentin explizit sagt "ja, live in den Kalender schreiben"
+// (Arbeitsregel "Nie ungefragt schreiben" gilt hier genauso wie für Pipedrive).
+// Deckt die Events ab -- NICHT das einmalige Anlegen des Kalenders selbst, das passiert
+// nur auf ausdrücklichen Zuruf über legeKalenderAnUndZeigeId() (Setup.gs).
+const DRY_RUN = true;
+
+// Weicher Ausstieg vor dem 6-Min-Ausführungslimit — bei größerer Belegschaft kann
+// die Schleife über users.profile.get + Calendar.Events.list sonst mittendrin
+// abbrechen. Nächster Tages-Trigger macht dort weiter (kein Datenverlust, nur
+// verzögert), siehe gleiches Muster in Telefon-Qualifizierung/Config.gs.
+const MAX_LAUFZEIT_MS = 4.5 * 60 * 1000;
+
+// Vor jedem Lauf einmal ausführen — prüft Token, Feld-ID und Kalender. Legt selbst NICHTS an.
+// Rückgabe: true = vollständig konfiguriert, der Sync darf laufen.
+//
+// ⚠️ Bis 05.09.2026 hat diese Funktion den Kalender selbst angelegt, wenn CALENDAR_ID leer war
+// — und syncGeburtstage() ruft sie bei JEDEM Trigger-Lauf auf. Wäre die geloggte ID nicht
+// sofort eingetragen worden, hätte der Tages-Trigger jeden Tag einen weiteren Kalender
+// "RP Geburtstage" angelegt und domainweit freigegeben. DRY_RUN hätte das nicht verhindert,
+// weil das Anlegen am Schalter vorbeilief. Anlegen geht jetzt nur noch auf ausdrücklichen
+// Zuruf: legeKalenderAnUndZeigeId() in Setup.gs.
+function pruefeKonfiguration() {
+  getSlackToken();
+  Logger.log('Slack-Bot-Token vorhanden.');
+
+  if (!SLACK_BIRTHDAY_FIELD_ID) {
+    Logger.log('SLACK_BIRTHDAY_FIELD_ID ist leer — ermittleGeburtstagsFeldId() ausführen und Ergebnis hier eintragen.');
+    return false;
+  }
+
+  if (!CALENDAR_ID) {
+    Logger.log('CALENDAR_ID ist leer — einmalig legeKalenderAnUndZeigeId() (Setup.gs) ausführen und die geloggte ID hier eintragen.');
+    return false;
+  }
+
+  const kalender = CalendarApp.getCalendarById(CALENDAR_ID);
+  if (!kalender) {
+    throw new Error('CALENDAR_ID gesetzt, aber Kalender nicht gefunden/kein Zugriff: ' + CALENDAR_ID);
+  }
+  Logger.log('Ziel-Kalender: %s (%s)', kalender.getName(), CALENDAR_ID);
+  Logger.log('OK — Konfiguration passt. DRY_RUN=%s', DRY_RUN);
+  return true;
+}
+
+// ---------- gemeinsamer Slack-HTTP-Helper mit Retry (respektiert Retry-After bei Rate-Limit) ----------
+function fetchSlackJson(method, params) {
+  const url = SLACK_API_BASE + '/' + method + (params ? '?' + toQueryString(params) : '');
+  for (let versuch = 1; versuch <= 3; versuch++) {
+    const response = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: { Authorization: 'Bearer ' + getSlackToken() },
+      muteHttpExceptions: true
+    });
+    const code = response.getResponseCode();
+    if (code === 429) {
+      const retryAfter = Number(response.getHeaders()['Retry-After'] || response.getHeaders()['retry-after'] || 2);
+      if (versuch === 3) throw new Error('Slack-Rate-Limit (' + method + ') nach 3 Versuchen weiter aktiv.');
+      Utilities.sleep(retryAfter * 1000);
+      continue;
+    }
+    const json = JSON.parse(response.getContentText());
+    if (!json.ok) {
+      throw new Error('Slack-API-Fehler bei ' + method + ': ' + json.error);
+    }
+    return json;
+  }
+}
+
+function toQueryString(params) {
+  return Object.keys(params)
+    .map(function (key) { return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]); })
+    .join('&');
+}
