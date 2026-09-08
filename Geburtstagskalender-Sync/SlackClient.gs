@@ -33,10 +33,21 @@ function holeMitarbeiterGeburtstage() {
       break;
     }
     const mitglied = mitglieder[i];
+    // Pro Mitglied abschirmen: ein einzelner Slack-Fehler (z.B. user_not_found, Gast ohne
+    // Profilzugriff) darf nicht den ganzen Lauf und damit alle übrigen Kollegen mitreißen.
+    // Ein übersprungenes Mitglied wird bewusst NICHT als "kein Geburtstag" behandelt --
+    // sonst würde der Löschzweig sein Event entfernen.
+    let geburtstag;
+    try {
+      geburtstag = holeGeburtstagFuerUser(mitglied.id);
+    } catch (fehler) {
+      Logger.log('Übersprungen: %s (%s) — Slack-Fehler: %s', mitglied.real_name || mitglied.name, mitglied.id, fehler.message);
+      continue;
+    }
     ergebnis.push({
       userId: mitglied.id,
       name: mitglied.real_name || mitglied.name,
-      geburtstag: holeGeburtstagFuerUser(mitglied.id)
+      geburtstag: geburtstag
     });
   }
   return ergebnis;
