@@ -39,6 +39,15 @@ function syncGeburtstage() {
   // String() um die Zähler, sonst loggt Apps Script Ganzzahlen als "1.0".
   Logger.log('Sync fertig (DRY_RUN=%s): %s angelegt, %s aktualisiert, %s gelöscht, %s unverändert.',
     DRY_RUN, String(angelegt), String(aktualisiert), String(geloescht), String(uebersprungen));
+
+  // Übersicht-Sheet mitziehen. Bekommt die schon geladenen Daten übergeben, damit die
+  // Slack-Abfrage nicht ein zweites Mal läuft. Ein Fehler hier darf den Sync nicht
+  // nachträglich als fehlgeschlagen dastehen lassen -- der Kalender ist zu dem Zeitpunkt fertig.
+  try {
+    aktualisiereUebersicht(mitarbeiter);
+  } catch (fehler) {
+    Logger.log('Übersicht-Sheet konnte nicht aktualisiert werden: %s', fehler.message);
+  }
 }
 
 function findeExistierendesEvent(userId) {

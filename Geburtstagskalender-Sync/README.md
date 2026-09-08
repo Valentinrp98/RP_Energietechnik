@@ -85,6 +85,26 @@ gespeichert. Ein Fehler mitten im Lauf führt
 also nicht dazu, dass beim nächsten Lauf schon Gratulierte erneut gepostet werden. `DRY_RUN`
 gilt auch hier: bei `true` wird nur geloggt, was gepostet würde.
 
+## Übersicht-Sheet (`Uebersicht.gs`)
+
+Ein Blick auf alle Geburtstage statt Profil-für-Profil-Klicken. Spalten: Name, Slack-ID,
+Geburtstag (TT.MM.), **Erstmals erfasst**, Zuletzt gesehen, Status (`✓ eingetragen` /
+`— fehlt noch`). Sortiert nach Monat/Tag, wer nichts eingetragen hat rutscht nach unten —
+damit ist die Liste direkt die Nachfass-Liste.
+
+Einrichtung: `legeUebersichtSheetAn()` einmal ausführen, geloggte ID in
+`UEBERSICHT_SHEET_ID` eintragen. Danach zieht `syncGeburtstage()` das Sheet bei jedem Lauf
+automatisch mit; `aktualisiereUebersicht()` geht auch jederzeit von Hand.
+
+**„Erstmals erfasst" kommt nicht von Slack.** Slack liefert keinen Zeitstempel, wann ein
+Profilfeld gefüllt wurde. Der Wert ist der Tag, an dem dieses Skript das Datum zum ersten
+Mal gesehen hat, und wird danach nie überschrieben — auch nicht, wenn jemand sein Datum
+später korrigiert.
+
+Das Sheet legt sich **nicht** selbst an, wenn die ID fehlt (es wird nur geloggt und
+übersprungen). Grund: `aktualisiereUebersicht()` läuft täglich mit, Selbst-Anlage hätte
+jeden Tag ein neues Sheet erzeugt — derselbe Fehler wie beim Kalender am 05.09.2026.
+
 ## Not-Aus gegen Massenlöschung
 
 Liefert Slack für **keinen einzigen** Mitarbeiter einen Geburtstag, bricht der Lauf ab, statt
