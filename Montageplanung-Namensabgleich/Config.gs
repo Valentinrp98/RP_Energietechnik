@@ -66,7 +66,7 @@ const TARGET_SHEETS = {
 
 // Vor jedem Lauf bewusst setzen — nie automatisch "alle Partner", damit ein Fehlgriff
 // nicht gleich über sechs Sheets gleichzeitig passiert.
-const AKTUELLER_PARTNER = 'TIROL';
+const AKTUELLER_PARTNER = 'GREENSKY';
 
 const TARGET_SHEET_ID = TARGET_SHEETS[AKTUELLER_PARTNER];
 
