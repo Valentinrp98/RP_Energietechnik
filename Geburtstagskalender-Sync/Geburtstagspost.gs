@@ -26,29 +26,35 @@ function postGeburtstagsGruesse() {
   }
 
   geburtstagskinder.forEach(function (person) {
-    // Doppelpost-Schutz: pro Tag und Person nur einmal. Der Status wird nach JEDEM
-    // erfolgreichen Post gespeichert, damit ein Fehler mitten im Lauf nicht dazu führt,
-    // dass beim nächsten Lauf schon Gratulierte erneut gepostet werden.
-    if (status.userIds.indexOf(person.userId) !== -1) {
-      Logger.log('Schon gratuliert heute: %s', person.name);
-      return;
-    }
-
     const text = '🎂 Heute hat <@' + person.userId + '> Geburtstag — alles Gute!';
 
-    if (DRY_RUN) {
-      Logger.log('[DRY_RUN] Würde posten in %s: %s', BIRTHDAY_CHANNEL_ID, text);
-      return;
-    }
+    BIRTHDAY_CHANNEL_IDS.forEach(function (channelId) {
+      // Doppelpost-Schutz pro Tag, Person UND Channel. Der Status wird nach JEDEM
+      // erfolgreichen Post gespeichert -- sonst würde ein Fehler im zweiten Channel
+      // beim nächsten Lauf einen erneuten Post im ersten auslösen.
+      const schluessel = channelId + ':' + person.userId;
+      if (status.posted.indexOf(schluessel) !== -1) {
+        Logger.log('Schon gratuliert heute in %s: %s', channelId, person.name);
+        return;
+      }
 
-    fetchSlackJson('chat.postMessage', null, {
-      channel: BIRTHDAY_CHANNEL_ID,
-      text: text
+      if (DRY_RUN) {
+        Logger.log('[DRY_RUN] Würde posten in %s: %s', channelId, text);
+        return;
+      }
+
+      // Ein Channel, in dem der Bot fehlt, darf die übrigen nicht mitreißen.
+      try {
+        fetchSlackJson('chat.postMessage', null, { channel: channelId, text: text });
+      } catch (fehler) {
+        Logger.log('Post in %s fehlgeschlagen für %s: %s — Bot dort eingeladen?', channelId, person.name, fehler.message);
+        return;
+      }
+      Logger.log('Gratulation gepostet für %s in %s', person.name, channelId);
+
+      status.posted.push(schluessel);
+      speicherePostStatus(status);
     });
-    Logger.log('Gratulation gepostet für %s', person.name);
-
-    status.userIds.push(person.userId);
-    speicherePostStatus(status);
   });
 }
 
@@ -56,9 +62,9 @@ function ladePostStatus(heuteKey) {
   const roh = PropertiesService.getScriptProperties().getProperty(POST_STATUS_PROPERTY);
   if (roh) {
     const gespeichert = JSON.parse(roh);
-    if (gespeichert.tag === heuteKey) return gespeichert;
+    if (gespeichert.tag === heuteKey && gespeichert.posted) return gespeichert;
   }
-  return { tag: heuteKey, userIds: [] };
+  return { tag: heuteKey, posted: [] };
 }
 
 function speicherePostStatus(status) {

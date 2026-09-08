@@ -67,9 +67,11 @@ Slack-Feld geleert oder der Mitarbeiter deaktiviert, wird das Event gelöscht.
 ## Gratulations-Post im Slack-Channel (`Geburtstagspost.gs`)
 
 Zweiter, unabhängiger Teil: `postGeburtstagsGruesse()` prüft morgens, wer heute Geburtstag
-hat, und postet `🎂 Heute hat @Name Geburtstag — alles Gute!` in den Channel
-`BIRTHDAY_CHANNEL_ID` (`C0C063H2VT5`, eigener Geburtstags-Channel). Eigener Trigger um 08:00
-via `richteGeburtstagsPostTriggerEin()`, unabhängig vom Kalender-Sync um 04:00.
+hat, und postet `🎂 Heute hat @Name Geburtstag — alles Gute!` in alle Channels aus
+`BIRTHDAY_CHANNEL_IDS` (`C0C063H2VT5` = eigener Geburtstags-Channel, `C070PAA2VDE` =
+#allgemein). Eigener Trigger um 08:00 via `richteGeburtstagsPostTriggerEin()`, unabhängig
+vom Kalender-Sync um 04:00. Ein Channel, in dem der Bot fehlt, wird geloggt und
+übersprungen — die übrigen laufen durch.
 
 Voraussetzungen dafür:
 1. Bot-Scope **`chat:write`** in der App ergänzen → App neu installieren (Bot Token bleibt gleich)
@@ -77,8 +79,9 @@ Voraussetzungen dafür:
 3. `pruefeSlackRechte()` ausführen — loggt Workspace, Bot und alle erteilten Scopes und sagt
    explizit, ob `chat:write` angekommen ist. Braucht selbst keinen Scope, postet nichts.
 
-**Doppelpost-Schutz:** die Script-Property `LETZTER_GRATULATIONS_POST` hält `{tag, userIds}`
-und wird nach jedem einzelnen erfolgreichen Post gespeichert. Ein Fehler mitten im Lauf führt
+**Doppelpost-Schutz:** die Script-Property `LETZTER_GRATULATIONS_POST` hält
+`{tag, posted: ["<channelId>:<userId>", …]}` und wird nach jedem einzelnen erfolgreichen Post
+gespeichert. Ein Fehler mitten im Lauf führt
 also nicht dazu, dass beim nächsten Lauf schon Gratulierte erneut gepostet werden. `DRY_RUN`
 gilt auch hier: bei `true` wird nur geloggt, was gepostet würde.
 

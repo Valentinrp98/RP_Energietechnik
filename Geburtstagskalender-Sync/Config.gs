@@ -51,10 +51,14 @@ const SLACK_BIRTHDAY_FIELD_ID = 'Xf0BV2CREFUP';
 
 const EVENT_TITEL_PRAEFIX = '🎂 ';
 
-// Slack-Channel für die Gratulations-Posts (eigener Geburtstags-Channel, 08.09.2026).
-// Der Bot muss dort Mitglied sein (/invite @Geburtstagsapp RP), sonst antwortet Slack
-// mit "not_in_channel". Braucht zusätzlich den Bot-Scope chat:write.
-const BIRTHDAY_CHANNEL_ID = 'C0C063H2VT5';
+// Slack-Channels für die Gratulations-Posts. Der Bot muss in JEDEM davon Mitglied sein
+// (/invite @Geburtstagsapp RP), sonst antwortet Slack für den betroffenen Channel mit
+// "not_in_channel" -- die anderen Channels laufen dann trotzdem durch.
+// Einen Channel entfernen/ergänzen = Zeile aus der Liste nehmen bzw. hinzufügen.
+const BIRTHDAY_CHANNEL_IDS = [
+  'C0C063H2VT5', // eigener Geburtstags-Channel
+  'C070PAA2VDE'  // #allgemein / general
+];
 
 // true = Simulation: es wird nur geloggt, was angelegt/geändert/gelöscht WÜRDE.
 // AUF true LASSEN, bis Valentin explizit sagt "ja, live in den Kalender schreiben"
