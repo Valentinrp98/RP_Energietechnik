@@ -70,18 +70,22 @@ function processDeal(dealId) {
  * "Dokumente erkannt" -- gemerged mit bereits vorhandenen Optionen. Ein PATCH mit nur den neuen
  * IDs würde frühere Läufe überschreiben (siehe CLAUDE.md "Es gibt kein silent update" -- gilt
  * genauso fürs versehentliche Löschen bestehender Werte wie fürs Nicht-Schreiben).
- * ACHTUNG: Response-Schema für Mehrfachauswahl-Felder in v2 (Array numerischer Options-IDs) ist
- * aus der Doku abgeleitet, nicht live verifiziert -- beim ersten LIVE-Lauf gegenprüfen.
+ * ACHTUNG: Response-Schema für Mehrfachauswahl-Felder in v2 ist nicht live verifiziert -- deshalb
+ * geht der Lesepfad über normalisiereOptionIds() und verträgt beide plausiblen Formen.
  */
 function schreibeDokumenteErkannt(dealId, deal, erkannteKategorien) {
-  const bestehendeIds = deal.custom_fields && Array.isArray(deal.custom_fields[DOKUMENTE_ERKANNT_FIELD_KEY])
-    ? deal.custom_fields[DOKUMENTE_ERKANNT_FIELD_KEY]
-    : [];
-  const neueIds = Array.from(erkannteKategorien)
-    .map(k => DOKUMENTE_ERKANNT_OPTION_IDS[k])
-    .filter(id => id !== undefined);
-  const zusammengefasst = Array.from(new Set([...bestehendeIds, ...neueIds]));
-  if (zusammengefasst.length === bestehendeIds.length) return; // nichts Neues zu schreiben
+  const bestehendeIds = normalisiereOptionIds((deal.custom_fields || {})[DOKUMENTE_ERKANNT_FIELD_KEY]);
+  const neueIds = normalisiereOptionIds(
+    Array.from(erkannteKategorien).map(k => DOKUMENTE_ERKANNT_OPTION_IDS[k])
+  );
+  if (neueIds.length === 0) return; // keine Option-ID konfiguriert -- nichts zu schreiben
+
+  // Inhaltlicher Vergleich, NICHT über die Länge: ein Längenvergleich ("zusammengefasst.length ===
+  // bestehendeIds.length") ist falsch, sobald bestehendeIds Duplikate enthält -- dann schrumpft das
+  // Set und die Prüfung meldet "nichts Neues", obwohl eine Kategorie dazugekommen ist.
+  const fehlendeIds = neueIds.filter(id => bestehendeIds.indexOf(id) === -1);
+  if (fehlendeIds.length === 0) return; // nichts Neues zu schreiben
+  const zusammengefasst = bestehendeIds.concat(fehlendeIds);
 
   const response = UrlFetchApp.fetch(`https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals/${dealId}`, {
     method: 'patch',
@@ -96,6 +100,26 @@ function schreibeDokumenteErkannt(dealId, deal, erkannteKategorien) {
     return;
   }
   logRow(dealId, null, null, 'OK', `Dokumente-erkannt-Feld aktualisiert: ${JSON.stringify(zusammengefasst)}`);
+}
+
+/**
+ * Normalisiert einen Pipedrive-Mehrfachauswahl-Wert auf ein Array eindeutiger Zahlen.
+ * Nötig, weil nicht verifiziert ist, ob v2 für Set-Felder numerische Options-IDs ([12,13]) oder
+ * Objekte ([{id:12,label:'...'}]) liefert. Kämen Objekte und man würde sie ungeprüft mit den
+ * eigenen Zahlen mischen, wäre kein Eintrag je "schon vorhanden" (Objekt !== Zahl): der Dedupe
+ * greift nicht, das Feld wächst bei jedem Lauf, und der PATCH geht mit einem gemischten Array
+ * raus. Beide Formen gutmütig zu behandeln kostet weniger als der erste Fehllauf.
+ */
+function normalisiereOptionIds(rohwert) {
+  if (rohwert === null || rohwert === undefined) return [];
+  const liste = Array.isArray(rohwert) ? rohwert : [rohwert];
+  const ids = [];
+  liste.forEach(eintrag => {
+    if (eintrag === null || eintrag === undefined) return;
+    const id = (typeof eintrag === 'object') ? Number(eintrag.id) : Number(eintrag);
+    if (Number.isFinite(id) && ids.indexOf(id) === -1) ids.push(id);
+  });
+  return ids;
 }
 
 /** Holt alle Datei-Metadaten für einen Deal. Files-API existiert nur in v1 (siehe Plan). */
