@@ -1,5 +1,37 @@
 # Sheet-Sync
 
+> ## ⚠️ Diese README ist teilweise veraltet — nachgeprüft 2026-09-01
+>
+> | Behauptung unten | Tatsächlich |
+> |---|---|
+> | „für Berger/Greensky/KOLLSTAR/Kreuzeder fehlen Sheet-ID UND Tab-Name noch komplett" | **Alle 7 Partner-Sheets sind konfiguriert**, `Config.gs:132-140` |
+> | Setup-Schritt „`DRY_RUN` auf false stellen" | **Schon geschehen** — `DRY_RUN = false` seit 31.08.2026 (`Config.gs:336`) |
+> | Abschnitt „Sheets — korrigierte Zuordnung" | Nennt drei Sheet-IDs, die in der heutigen `Config.gs` **nicht mehr vorkommen** |
+>
+> **Realer Rollout-Stand:** live, aber **nur als Canary** — der onEdit-Trigger ist ausschließlich für
+> `ALE-Engineering (NÖ, Wien, BGL)` und `Kreuzeder (OÖ, SBG)` installiert (`SetupHelpers.gs:201`).
+> ~~Die globalen 15-Min- und Tages-Trigger sind **nicht** installiert.~~
+> **KORREKTUR 2026-09-02, am Log verifiziert:** Der 15-Min-Trigger für `syncNeueZeilen` **läuft**.
+> `LOG_Sheet-Sync (V2)` zeigt am 1.9. **57** und am 2.9. **23+** Läufe im 15-Minuten-Raster.
+> Nicht installiert ist nur der Timer für `syncPipedriveToSheetFields` (Pipedrive→Sheet).
+> Stand 2.9. nachmittags: 469 gewonnene Deals, **69 Kandidaten** (Projektdoku-Feld gesetzt),
+> davon 63 mit Zeile, 6 hängen ohne Montagepartner. 400 Deals sind `nichtReady` — **die Zeile
+> entsteht erst, wenn jemand „Projektdokumentation-Partner" setzt.** Das ist der Normalfall, kein Bug.
+>
+> ### 🔴 Zwei offene Befunde, die heute echte Partnerdaten betreffen
+> - **D2 — verlorene Edits.** `handleSheetEdit` (`FieldSync.gs:52/78`) und `verarbeitePendingCellEdits`
+>   (`:108/161`) machen beide Read-Modify-Write auf `PENDING_CELL_EDITS`. Im ganzen Projekt gibt es
+>   **null** `LockService`-Aufrufe. Ein onEdit dazwischen wird überschrieben — ohne Fehler, ohne Notiz.
+>   *(Teil-Fix 2.9.: `syncNeueZeilen` hat jetzt ein `tryLock`. `FieldSync.gs` weiterhin nicht.)*
+> - **D3 — die Queue kann dauerhaft sterben.** `Config.gs:698` erzeugt `.after()`-Trigger, die nie
+>   gelöscht werden. Nach ~20 Bursts wirft `.create()`, wird bei `:700` nur geloggt, und ab da wird
+>   **nichts** mehr verarbeitet.
+>
+> Dazu D8 (kein Laufzeit-Guard in vier Funktionen), D9 (~800 `getValue()` pro neuer Zeile), D10, D20.
+> Details: [`../docs/BEFUNDE-2026-09-01.md`](../docs/BEFUNDE-2026-09-01.md)
+
+---
+
 Zwei Aufgaben, beide zeitgesteuert bzw. edit-getriggert:
 1. **Neue Zeilen anlegen**: für gewonnene Deals mit gesetztem Ordner-Link (von
    `Ordnererstellung-bei-Gewonnen` gesetzt) aber noch fehlender Zeile im Partner-Sheet.

@@ -1,5 +1,28 @@
 # Montageplanung-Namensabgleich
 
+> ## ⚠️ Zwei Setup-Angaben unten sind überholt — nachgeprüft 2026-09-01
+>
+> | Behauptung unten | Tatsächlich |
+> |---|---|
+> | Schritt 1: „sobald ein `.clasp.json` für dieses Projekt existiert — noch nicht angelegt" | **Existiert**, scriptId `15it5Xl0RvJz7gSfXTZ5dCtO3VdPNIGD3g_g8EFtUF31B414fF7T-n-hu` |
+> | Schritt 4: „nur ALEs gid ist eingetragen" | **Alle 6 gids sind eingetragen**, `Config.gs:77-84` |
+>
+> Aktueller Partner: `AKTUELLER_PARTNER = 'GREENSKY'` (`Config.gs`, uncommitted geändert von `'TIROL'`).
+>
+> **Dieses Projekt macht eine Sache besser als alle anderen** — als Vorlage nutzen: Es löst die
+> Person-Feldcodes **zur Laufzeit über das Label** auf (`Config.gs:121-127`, `PLZ_FIELD_LABEL`) statt
+> sie hartzucodieren. Anlass war, dass die hartcodierten Codes hier nach 16 Tagen veraltet waren.
+>
+> ⚠️ **Konfigurationsrisiko:** `.clasp.json` erlaubt `scriptExtensions: [".js", ".gs"]`. Der
+> `gs-deploy`-Skill verbietet das ausdrücklich („nie beide gleichzeitig") wegen der
+> „Conflicting files"-Falle. Es knallt heute nicht, weil hier nur `.gs` liegt — aber die Schutzregel
+> ist nicht scharf.
+>
+> Kleiner Befund: `Abgleich.gs:95` nutzt `&limit=5` bei der Won-Deal-Suche und meldet „5 won-Deals",
+> als wäre das die Gesamtzahl (D19).
+
+---
+
 Sucht pro Kunde in einem "Montageplanung RP <Partner>"-Sheet (Spalte B) den passenden
 Pipedrive-Deal (nur lesend) und trägt Deal-ID/Adresse/PLZ/Telefon zurück ins Sheet ein.
 Schreibt NIE in Pipedrive selbst — nur ins Google Sheet, und auch das nur bei DRY_RUN=false.

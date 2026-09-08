@@ -172,6 +172,19 @@ v1 ist **nicht** abgeschaltet. Drei Dinge laufen weiterhin nur über v1:
 
 > **Angebotsnummer-Duplikat, geklärt:** Es gab zwei Felder. **Gültig und im Code verwendet ist `9935f33d…`.** Das zweite (`e442e2f3803eedfe77a2e4d7c5e180d33093e067`) ist das abzuräumende Duplikat. Die Memory beschreibt es widersprüchlich (einmal „neu", einmal „alt, sollte gelöscht werden") — maßgeblich ist der Code.
 
+### Netzanmeldung-Baustein (angelegt 07.09.2026, noch nicht im Code verwendet)
+
+Für den geplanten Netzanmeldung-Formular-Teil in Projektdoku-Generator (siehe project_pv_netzanmeldung_formular) — Doc-Generierung dafür existiert noch nicht, nur die Felder sind schon live.
+
+| Feld | field_code | Typ | |
+|---|---|---|---|
+| Neuanlage oder Erweiterung | `8bc19dfdb1f3135f1babe069f2f9bfba1b347c40` | enum (Neuanlage (Einspeisung)=330, Erweiterung=331) | ✅ |
+| Altanlage Photovoltaik | `37024fdad766c10171daa9c1076098e40f4a322e` | varchar (Freitext) | ✅ |
+| Altanlage Wechselrichter | `8f5e870d01746e8a68812de2ed3993f57fffafce` | varchar (Freitext) | ✅ |
+| Altanlage Speicher | `0b6f2e9dd10869ff362f6394bd0f31da20a8ed33` | varchar (Freitext) | ✅ |
+
+Bewusst als Freitext statt eigener double-Felder pro Kennzahl (kW/kWh/Anzahl) — bei Altanlagen ist selten ein exakter, sauber typisierter Wert bekannt.
+
 ### Kundenordner & Snapshot (Ordnererstellung)
 
 | Feld | field_code | |

@@ -21,10 +21,12 @@ zerstören, von der Claude nichts weiß (siehe "Der zentrale Risiko-Punkt" unten
    autorisiert werden muss (siehe unten), sonst schlägt der nächste automatische Lauf leise fehl.
 3. **Trifft die Änderung die Kernfunktion eines aktiv getriggerten Projekts?** (Liste siehe "Aktive
    Trigger" unten.) Wenn ja: kurz benennen, was sich ändert und wann der nächste automatische Lauf
-   greift ("Sheet-Sync hat einen 15-Min-Trigger, das läuft mit dem Push sofort in den nächsten
+   greift ("Sevdesk-Sync hat einen 5-Min-Trigger, das läuft mit dem Push sofort in den nächsten
    Durchlauf"). Bei reinen Test-/Debug-Helper-Funktionen, die von keinem Trigger aufgerufen werden,
    ist das nicht nötig.
 4. Im jeweiligen Projektordner: `clasp push --force` (siehe "Warum --force" unten).
+   **Bei den vier Webhook-Projekten zusätzlich `clasp deploy --deploymentId` — siehe eigenen Abschnitt
+   unten. Ohne den Schritt läuft der Webhook weiter alten Code.**
 5. **Push schlägt fehl:** stoppen, Fehler an Valentin melden, NICHT committen.
 6. **Push erfolgreich:** `git add <projektordner>` — **NIE `git add -A` oder `git add .` über das ganze
    Repo**, siehe "Parallele Sessions" unten. Dann `git commit -m "<Projektname>: <kurze Beschreibung>"`.
@@ -52,12 +54,16 @@ Claude/dieses Repo bearbeitet werden, ist das Risiko gering; bei den Partner-She
 
 **Optionaler Drift-Check, wenn Zweifel bestehen** (kostet nichts, zerstört nichts, weil er in einen
 Scratch-Ordner pullt statt lokal zu überschreiben):
+Diese Maschine läuft **Windows mit PowerShell 5.1** — kein `/tmp`, kein `&&`:
+```powershell
+$scratch = "$env:TEMP\clasp-check"
+New-Item -ItemType Directory -Force $scratch | Out-Null
+Copy-Item .clasp.json $scratch
+Push-Location $scratch; clasp pull; Pop-Location
+# Vergleich (Namen + Größe; für Inhaltsvergleich Get-FileHash nutzen):
+Compare-Object (Get-ChildItem $scratch -Exclude .clasp.json) (Get-ChildItem <projektordner> -Exclude .clasp.json) -Property Name, Length
 ```
-mkdir /tmp/clasp-check && cp .clasp.json /tmp/clasp-check/
-cd /tmp/clasp-check && clasp pull
-diff -rq /tmp/clasp-check <projektordner> --exclude=.clasp.json
-```
-Zeigt Unterschiede an, ohne den lokalen Stand zu berühren. Danach `/tmp/clasp-check` löschen.
+Zeigt Unterschiede an, ohne den lokalen Stand zu berühren. Danach `Remove-Item -Recurse -Force $scratch`.
 
 ## Warum --force
 
@@ -91,6 +97,8 @@ vorhandenen lokalen Dateien). Stattdessen `.clasp.json` von Hand anlegen:
 ```
 - `scriptExtensions` nur auf die tatsächlich verwendete Extension setzen (im Projektordner nachsehen,
   nicht raten) — nie beide (`.js` und `.gs`) gleichzeitig erlauben.
+  ⚠️ **`Montageplanung-Namensabgleich/.clasp.json` verletzt das heute** (`[".js", ".gs"]`). Es knallt
+  aktuell nicht, weil dort nur `.gs`-Dateien liegen — aber die Schutzregel ist dort nicht scharf.
 - `skipSubdirectories: true`, wenn irgendein Unterordner existiert (z.B. `_backup_v1`) — sonst versucht
   `clasp push` gleichnamige Dateien aus Haupt- und Unterordner gleichzeitig zu pushen → "Conflicting
   files"-Falle über Ordner statt Extension.
@@ -102,26 +110,75 @@ vorhandenen lokalen Dateien). Stattdessen `.clasp.json` von Hand anlegen:
   Sheet/Script gehört, noch aus sein. Valentin bittet, im richtigen Konto einmalig zu aktivieren, danach
   erneut pushen.
 
-## Aktive Trigger — Referenzliste (von Valentin bestätigt, hier aktuell halten!)
+## ⚠️ Webhook-Projekte: `clasp push` reicht NICHT
 
-Das ist aus Code/Repo NICHT ableitbar (Trigger sind Projekteinstellung, nicht Teil der Dateien) — diese
-Liste muss von Valentin bestätigt/aktualisiert werden, sonst veraltet sie unbemerkt:
-- **Stand 2026-08-21: KEIN Projekt hat einen aktiven Trigger.** Valentin bestätigt explizit "noch keine,
-  aber will starten" — er plant demnächst den ersten scharf zu schalten. Solange das so ist, ist ein
-  Push nirgends zeitkritisch (nichts läuft automatisch mit).
-- **Sobald ein Trigger aktiviert wird:** hier eintragen, WELCHES Projekt, welche Funktion und welches
-  Intervall — danach greift Schritt 3 im Ablauf oben (Kernfunktions-Änderung vor Push benennen).
-  Bis dahin nicht vorschnell "vermutlich aktiv" annehmen (frühere Annahme zu Sevdesk-Pipdrive_sync war
-  falsch — das Sync-Log dort stammt aus manuellen Testläufen, nicht aus einem laufenden Trigger).
+**Web-App-Deployments sind versioniert, Zeit-Trigger nicht.** Ein Zeit-Trigger führt sofort den frisch
+gepushten Code aus. Eine Web-App-URL bleibt dagegen auf dem alten Stand, bis die Deployment aktualisiert
+wird — die bei Pipedrive registrierte `subscription_url` zeigt also weiter auf alten Code, während Push
+und Commit grün aussehen. Genau dieser Fall ist am 26.08.2026 aufgetreten.
+
+Nach `clasp push` bei diesen vier Projekten zusätzlich:
+
+```bash
+clasp deploy --deploymentId <ID>
+```
+
+| Projekt | deploymentId |
+|---|---|
+| Bundesland-aus-PLZ | `AKfycbz6qogKvDL1wpO5bkITp8W9h2f6wHoha_QK6JtsJD7Cil9rF-dpeJqa8WQR391HmIA60Q` |
+| Montagepartner-aus-Bundesland | `AKfycbwdb-CW4Rnj97F0_dWGPu5oBWCPX9WX5lsLxNY3pKM4Ay1uZL5qghixDaodvNy9oe1MqA` |
+| Projektdoku-Generator | `AKfycbz0ugT-r9AkiKeiKqM1gpzQi1IZAoRje4uXjau92OXdYrfIgKQS6hn4VHcCVEvsEActFA` |
+| Ordnererstellung-bei-Gewonnen | `AKfycbwOT0kO7tcxfEsgJ412zOvTzb2p3IuUXxnbcQfAkPwB4h8n8vQ-QGbDSe8Gg0YpQ4o7` |
+
+Im UI: Bereitstellen → Bereitstellungen **verwalten** → ✎ → Neue Version.
+**Niemals "New deployment"** — das erzeugt eine zweite URL, und der registrierte Webhook zeigt weiter
+auf die alte.
+
+**Nach jedem `clasp deploy` die Zugriffsberechtigung gegenchecken.** Bekannter Fehlerfall (24.08.): sie
+rutschte von "Jeder" auf "Jeder mit einem Google-Konto", danach antwortete `/exec` mit HTTP 401 statt
+der normalen 302 — Googles Zugriffsverweigert-Seite, KEIN Bot-Schutz, auch wenn sie so aussieht.
+`appsscript.json`s `webapp.access: ANYONE` wird beim Versions-Redeploy nicht zuverlässig übernommen.
+
+## Aktive Trigger — Referenzliste (aus Code-Kommentaren + Memory, Stand 2026-09-01)
+
+Trigger sind Projekteinstellung und aus den Dateien NICHT direkt ableitbar. Diese Liste ist aus
+Code-Kommentaren und Memory rekonstruiert und **muss von Valentin bestätigt werden**.
+
+> 🔴 Die frühere Zeile "Stand 2026-08-21: KEIN Projekt hat einen aktiven Trigger" war **falsch bzw. am
+> selben Tag überholt** und hat die Sicherheitsstufe in Schritt 3 entwaffnet. Sie ist entfernt.
+
+Aktiv (Stand 2026-09-01):
+- **Sevdesk-Pipdrive_sync** — `syncPendingOrders`, **5-Min-Trigger** (seit 26.08., vorher 15 Min)
+- **Bundesland-aus-PLZ** — Webhook + Tages-Trigger 02:00 als Backup
+- **Montagepartner-aus-Bundesland** — Webhook + Tages-Trigger 03:00 als Backup
+- **Projektdoku-Generator** — Webhook + Tages-Trigger 02:00 als Backup
+- **Ordnererstellung-bei-Gewonnen** — nur Webhook, kein Zeit-Trigger
+- **Sheet-Sync** — onEdit **nur für die Canary-Partner** ALE-Engineering + Kreuzeder (seit 31.08.).
+  Die globalen 15-Min-/Tages-Trigger sind NICHT installiert.
+- **Deepcore-Automatisierung** — 15-Min-Trigger vorgesehen, **Status unbestätigt**. Siehe D1 in
+  `docs/BEFUNDE-2026-09-01.md` — solange das ungeklärt ist, hier nichts pushen.
+
+**Heißt für Schritt 3:** Ein Push ist bei diesen Projekten sehr wohl zeitkritisch. Vor dem Push
+benennen, was sich an der Kernfunktion ändert.
 
 ## Secrets-Check vor jedem `git push` zum GitHub-Remote
 
-Stand 2026-08-21 geprüft: alle Projekte lesen Tokens ausschließlich über
-`PropertiesService.getScriptProperties().getProperty(...)`, keine hardcodierten Werte gefunden.
+> 🔴 **Korrektur 2026-09-01.** Die frühere Aussage "alle Projekte lesen Tokens ausschließlich über
+> `PropertiesService`, keine hardcodierten Werte gefunden" **stimmt nicht**. Drei Webhook-Projekte haben
+> ihr Shared Secret im Klartext im committeten Code:
+> - `Bundesland-aus-PLZ/Webhook.js:19`
+> - `Montagepartner-aus-Bundesland/Webhook.js:23`
+> - `Projektdoku-Generator/Webhook.js:21`
+>
+> Es ist jeweils die **einzige** Auth auf einer `ANYONE_ANONYMOUS`/`ANYONE`-Web-App, die Produktiv-Deals
+> patcht. Vorlage für den Fix: `Ordnererstellung-bei-Gewonnen/Config.gs:102` (`getWebhookSecret()`).
+> Bewusst vertagt — Details als D4 in `docs/BEFUNDE-2026-09-01.md`.
+
 **Repo ist privat** (von Valentin bestätigt 2026-08-21) — senkt das Risiko, ersetzt den Check aber
 nicht: vor jedem tatsächlichen `git push` zum Remote kurz draufschauen, ob ein neu committeter Diff
 einen literalen Token/Secret enthält (nicht nur den Property-Key-Namen) — besonders nach Copy-Paste aus
-einem Test/Debug-Lauf.
+einem Test/Debug-Lauf. Solange D4 offen ist, gilt: **diese drei Dateien enthalten bekanntermaßen ein
+Secret** — das ist kein neuer Fund, sondern der dokumentierte Ist-Zustand.
 
 ## Parallele Sessions
 

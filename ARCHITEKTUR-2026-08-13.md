@@ -1,5 +1,23 @@
 # RP-Automatisierungen — Architekturentscheidungen
 
+> ## ⚠️ TEILWEISE ÜBERHOLT — geprüft 2026-09-01
+>
+> Als **Doktrin** (warum gepuffert wird, warum N+1 vermieden wird) weiter brauchbar.
+> Als **Statusdokument** überholt:
+>
+> | Abschnitt | Heute |
+> |---|---|
+> | **§1.1 „Browser-Editor ist Source of Truth, `clasp push` gibt es nicht"** | 🔴 **Umgekehrt.** Seit 21.08.2026 ist der lokale Code Source of Truth, `clasp push` ist der Weg. Siehe [`CLAUDE.md`](CLAUDE.md) und `.claude/skills/gs-deploy/SKILL.md`. |
+> | §0 / §1.2 / §7 — „soll ich die Befehle ausführen?" | Erledigt, längst committet |
+> | §1.2 „Keine `.gitignore`" | Es gibt eine. Aber `sync-log.txt` steht nicht drin und ist committet — insoweit trifft die Kritik noch zu. |
+> | §6 — 41.952 Calls/Tag durch N+1 | ✅ **Behoben**, `Sheet-Sync/FieldSync.gs:380-392` lädt in `dealMap` vor |
+> | §2 / §3 / §5 — Dashboard, `RPLog`-Library, Partner-Buttons | **Nicht gebaut.** `DASHBOARD_ENABLED = false` im einzigen Projekt mit dem Haken. |
+> | §4.2 „Notes und Aktivitäten laufen über die v1-API" | 🔴 **Falsch.** `Sheet-Sync/Config.gs:414` und `zahlungseingang.js:165` posten beide auf `/api/v2/activities`. |
+>
+> **Aktuelle Lage:** [`CLAUDE.md`](CLAUDE.md) · [`docs/BEFUNDE-2026-09-01.md`](docs/BEFUNDE-2026-09-01.md) · [`docs/REFERENZ-Pipedrive-AppsScript.md`](docs/REFERENZ-Pipedrive-AppsScript.md)
+
+---
+
 Stand 2026-08-13. Vier Themen: Backup, Dashboard, Logging, Partner-Sheets (Notizen + Buttons).
 Alles hier ist Review + Plan, **nichts davon ist gebaut**. Was ich von dir brauche, steht ganz unten.
 

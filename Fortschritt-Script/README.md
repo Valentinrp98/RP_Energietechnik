@@ -1,5 +1,31 @@
 # Fortschritt-Script
 
+> ## ⚠️ Die Sheet-Sync-Warnung unten ist erledigt — nachgeprüft 2026-09-01
+>
+> Weiter unten (und in `Config.gs:119-123`) steht die Warnung, Sheet-Sync deklariere noch
+> `FORTSCHRITT_FIELD_KEY`/`FORTSCHRITT_LABELS` und lese sie in `NetzanmeldungEskalation.gs`.
+> **Beides wurde am 17.08.2026 entfernt** (`Sheet-Sync/Config.gs:32-48`, `NetzanmeldungEskalation.gs:55-59`).
+> Die dort beschriebene Aufräumaufgabe ist erledigt — die Warnung kann weg.
+>
+> **Deployment-Stand:** Dieses Projekt hat als eines von wenigen **kein `.clasp.json`** und ist nie im
+> Editor angelegt worden (`Config.gs:2-3` sagt es selbst). `DRY_RUN = true`.
+>
+> **Aber:** es ist das einzige Projekt mit lokalen Node-Tests (`../_tests/Fortschritt-Script/`, 102 Tests)
+> und enthält mit `pruefePatchNutzlast()` (`Code.gs:407`) die **stärkste Absicherung gegen stille
+> Nicht-Schreibung im ganzen Repo** — sie prüft den serialisierten Round-Trip. Als Vorlage nutzen.
+>
+> ### Offene Befunde
+> - **D8** — `ladeAktivitaetenIndex()` (`Code.gs:92`) läuft **vor** dem Laufzeit-Guard bei `:114`.
+>   Sprengt der Preload allein 4,5 Min, stirbt der Lauf mit unverändertem Resume-Cursor, und jeder
+>   Folgelauf wiederholt denselben aussichtslosen Preload.
+> - `DASHBOARD_SHEET_ID` ist noch `'TODO_DASHBOARD_SHEET_ID'`, `DASHBOARD_ENABLED = false`.
+>
+> **field_code-Hinweis:** Gültig ist `dfa17befc9285d9641c2c92f3c001fe36a77a448` (Textfeld).
+> Das alte `fa77cb3c2a12790f5de5879ccb7b076b5c98ab44` war `varchar_auto` (Autocomplete) und ist abgelöst —
+> in manchen Memory-Dateien und in `PLAN-Fortschritt-Script.md` steht noch der alte Wert.
+
+---
+
 Befüllt zwei Pipedrive-Deal-Felder automatisch, damit niemand mehr händisch Fortschritt klickt.
 
 | Feld | field_code | Typ | Inhalt |

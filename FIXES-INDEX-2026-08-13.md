@@ -1,5 +1,31 @@
 # Fix-Index — alle Projekte, Stand 2026-08-13
 
+> ## ⚠️ ETWA ZUR HÄLFTE ERLEDIGT — nachgeprüft 2026-09-01
+>
+> Das Dokument sagt selbst nicht, welche Hälfte. Gegen den aktuellen Code geprüft:
+>
+> **✅ Erledigt:** `B2` (FEHLER landete in „übersprungen", `Bundesland Code.js:141`) · `B3` (Null-Lauf-Erkennung, `:168`) · `S1` (41.952 Calls/Tag → `dealMap`-Preload) · `S3` (überholt: DC/AC/IB sind heute bewusst `bidirektional`) · `V3` (Retry via `fetchMitRetry`) · `V4` (`Module_Anzahl` mit `|| null`) · `R4` (`.gitignore` existiert — aber `sync-log.txt` steht nicht drin und ist committet)
+>
+> **🔴 Noch offen:**
+> | ID | |
+> |---|---|
+> | `R2`/`R3` | `sync-all-scripts.ps1` kann das Backup zerstören — `:80-93` wertet ein fehlgeschlagenes `clasp pull` nur als Warnung und `:106-136` committet und pusht trotzdem. **Das Script sollte gar nicht mehr benutzt werden**, siehe [`CLAUDE.md`](CLAUDE.md). |
+> | `R5` | `Read-Host` blockiert Automation (`:45`, `:167`) |
+> | `R6` | Header-Kommentar `:11-14` ist noch stärker veraltet — nennt Ordnererstellung und Sheet-Sync als „existieren aktuell nur lokal", beide haben seit Wochen eine `.clasp.json` |
+> | `R7` | `dumpLiveState()` nur in **einem** Projekt gebaut (`Fortschritt-Script`) — ausgerechnet dem, das nicht deployed ist |
+> | `V1` | `SYNCED_ORDERS` 9-KB-Überlauf nur gemildert, nicht gelöst; `syncengine.js:420` korrigiert die reale Kapazität auf ~115 Aufträge nach unten |
+> | `V8` | stilles `break` bei >1000 Aufträgen (`syncengine.js:1393`) |
+> | `S2` | `findColumnIndexByHeader` in der inneren Schleife — in `syncPipedriveToSheetFields` behoben, in `RowCreation.gs:180` und `SetupHelpers.gs:82,107` **noch drin** |
+> | `D1` | Drive-Prototyp schreibt ohne `DRY_RUN` |
+> | `D2` | Prototyp umbenennen + README — README ist am 01.09. nachgeholt, die Umbenennung nicht |
+> | `P1` | form-prefill hat keinen Retry |
+> | `P3` | form-prefill hat kein `pruefeKonfiguration()` |
+> | — | `RPPipedrive`/`RPLog`-Library (`:153`) **nicht gebaut** |
+>
+> **Neuere, schwerere Befunde stehen woanders:** [`docs/BEFUNDE-2026-09-01.md`](docs/BEFUNDE-2026-09-01.md)
+
+---
+
 Pro Projektordner liegt eine `FIXES-2026-08-13.md` mit den Details. Hier die Übersicht plus
 die Punkte, die das Repo selbst betreffen.
 
