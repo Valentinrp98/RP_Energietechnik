@@ -37,8 +37,10 @@ function getSlackToken() {
 
 // Leer lassen, bis pruefeKonfiguration() den Kalender einmal selbst angelegt hat
 // und die ID geloggt hat — dann hier eintragen.
-const CALENDAR_ID = '';
-const CALENDAR_NAME = 'RP Geburtstage';
+// Manuell von Valentin unter sales@rp-energietechnik.at angelegt (08.09.2026) -- nicht vom
+// Skript, legeKalenderAnUndZeigeId() ist damit für dieses Setup nicht mehr nötig.
+const CALENDAR_ID = '9a320c57e44d7fa904c66b39e6428813f40c8986a16478909d53006f154a7b6d@group.calendar.google.com';
+const CALENDAR_NAME = 'Geburtstage RP intern';
 const WORKSPACE_DOMAIN = 'rp-energietechnik.at'; // für domainweite Kalenderfreigabe
 
 // Slack Custom-Field-ID für "Geburtstag" (Format "Xf0XXXXXXXX") — einmalig über
