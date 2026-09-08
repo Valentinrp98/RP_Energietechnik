@@ -15,7 +15,7 @@
 // ⚠️ Bewusst KEINE Selbst-Anlage aus aktualisiereUebersicht() heraus: die Funktion läuft
 // täglich mit, das hätte jeden Tag ein neues Sheet erzeugt (genau der Fehler, der beim
 // Kalender am 05.09.2026 gefixt wurde).
-const UEBERSICHT_SHEET_ID = '';
+const UEBERSICHT_SHEET_ID = '14yzIyzefc4kL89thXxXY8QyTA8Vlxv6mO5QPT2RFEtA';
 
 const UEBERSICHT_TAB_NAME = 'Geburtstage';
 const UEBERSICHT_HEADER = [
