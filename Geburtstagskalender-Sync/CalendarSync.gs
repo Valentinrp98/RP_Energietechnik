@@ -36,8 +36,9 @@ function syncGeburtstage() {
     }
   });
 
+  // String() um die Zähler, sonst loggt Apps Script Ganzzahlen als "1.0".
   Logger.log('Sync fertig (DRY_RUN=%s): %s angelegt, %s aktualisiert, %s gelöscht, %s unverändert.',
-    DRY_RUN, angelegt, aktualisiert, geloescht, uebersprungen);
+    DRY_RUN, String(angelegt), String(aktualisiert), String(geloescht), String(uebersprungen));
 }
 
 function findeExistierendesEvent(userId) {
