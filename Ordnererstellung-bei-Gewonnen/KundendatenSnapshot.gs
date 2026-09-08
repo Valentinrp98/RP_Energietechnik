@@ -94,7 +94,13 @@ function schreibeKundendatenSnapshot(dealId, deal) {
 // vorher gewonnen wurden, muss einmalig nachgetragen werden. Analog zum "437 Altdeals bekommen nie
 // automatisch einen Ordner"-Punkt bei der Ordnererstellung selbst.
 
-const PROP_BACKFILL_CURSOR = 'KUNDENDATEN_BACKFILL_CURSOR';
+// _V2 seit 8.9.2026: die Deal-Abfrage unten hat jetzt sort_by=id (seit 2.9.). Ein Cursor aus der
+// alten, unsortierten Abfrage passt nicht mehr dazu (Pipedrive-Cursor sind opake Tokens einer
+// konkreten Sortierung) -- ein gemerkter Cursor von vor dem 2.9. haette beim naechsten Backfill
+// Deals uebersprungen und danach still "sauber" gemeldet. Neuer Property-Name = alter Cursor wird
+// automatisch ignoriert, der naechste Lauf startet einmalig wieder bei Deal 1.
+// Gleiches Vorgehen wie BUNDESLAND_RESUME_CURSOR_V2 (Bundesland-aus-PLZ/Code.js:95).
+const PROP_BACKFILL_CURSOR = 'KUNDENDATEN_BACKFILL_CURSOR_V2';
 const BACKFILL_MAX_LAUFZEIT_MS = 4.5 * 60 * 1000; // Apps-Script-Laufzeitlimit ist 6 Min, Puffer einplanen
 
 /**
@@ -145,7 +151,7 @@ function backfillKundendatenSnapshotAlleGewonnenenDeals() {
         zeitlimitErreicht = true;
         break;
       }
-      const path = `deals?status=won&limit=100${cursor ? `&cursor=${cursor}` : ''}`;
+      const path = `deals?status=won&limit=100&sort_by=id&sort_direction=asc${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
       const seite = fetchPipedriveSeite(path);
       const deals = seite.data || [];
 

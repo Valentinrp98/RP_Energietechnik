@@ -97,7 +97,13 @@ const FORCE_OVERWRITE = false;
 // FIX E: freiwilliger Abbruch vor dem harten Apps-Script-Limit
 const MAX_LAUFZEIT_MS = 4.5 * 60 * 1000;
 
-const PROP_RESUME_CURSOR = 'MONTAGEPARTNER_RESUME_CURSOR';
+// _V2 seit 8.9.2026: die Deal-Abfrage hat jetzt sort_by=id (seit 2.9.). Ein Cursor aus der alten,
+// unsortierten Abfrage passt nicht mehr dazu (Pipedrive-Cursor sind opake Tokens einer konkreten
+// Sortierung) -- ein gemerkter Cursor von vor dem 2.9. haette beim naechsten Lauf Deals
+// uebersprungen und danach still "sauber" gemeldet. Neuer Property-Name = alter Cursor wird
+// automatisch ignoriert, der naechste Lauf startet einmalig wieder bei Deal 1. resetVollauf()
+// nicht noetig. Gleiches Vorgehen wie BUNDESLAND_RESUME_CURSOR_V2 (Bundesland-aus-PLZ/Code.js:95).
+const PROP_RESUME_CURSOR = 'MONTAGEPARTNER_RESUME_CURSOR_V2';
 const PROP_LOG_SHEET_ID = 'MONTAGEPARTNER_LOG_SHEET_ID';
 
 
@@ -127,7 +133,7 @@ function fillMontagepartnerForAllDeals() {
       // offene UND gewonnene/verlorene -- genau was wir brauchen. Der v1-Wert "all_not_deleted"
       // ist in v2 ungueltig und quittiert mit 400 ERR_SCHEMA_VALIDATION_FAILED (v2 kennt nur
       // open | won | lost | deleted).
-      const path = `deals?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const path = `deals?limit=100&sort_by=id&sort_direction=asc${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
       const response = callPipedriveWithRetryRaw(`https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`);
       const deals = response.data || [];
       cursor = (response.additional_data && response.additional_data.next_cursor) || null;
@@ -207,12 +213,19 @@ function testEinzelDeal() {
  * damit man die Ergebnisse im Sheet gezielt gegenchecken kann, bevor man auf alle Deals losläuft.
  */
 function fillMontagepartnerForAusgewaehlteDeals() {
-  // Aus dem ersten Projektdoku-Generator-Live-Batch (21.08.) als "kein Kundenordner-Link" aufgefallen,
-  // dann hier als "kein Montagepartner gesetzt" haengengeblieben. Reihenfolge: ERST
-  // fillBundeslandForAusgewaehlteDeals() (Bundesland-aus-PLZ) laufen lassen, dann diese Funktion --
-  // sonst werden alle 14 wieder als "kein Bundesland gesetzt" uebersprungen.
+  // 2026-09-04: dieselben 7 Deals wie in Bundesland-aus-PLZ (CUTOFF-Nachtrag). Bundesland wurde
+  // per fillBundeslandForAusgewaehlteDeals() gesetzt, die Webhook-Kette hat Montagepartner aber
+  // NICHT automatisch nachgezogen -- deshalb hier derselbe manuelle Nachtrag.
+  // URSACHE GEKLAERT (8.9.2026): hier stand "Ursache noch offen". Sie war es nicht -- dieses
+  // Projekt war das einzige der vier Webhook-Projekte, dessen appsscript.json auf
+  // webapp.access "ANYONE" stand (= Google-Login noetig) statt "ANYONE_ANONYMOUS". Maschinelle
+  // Aufrufe von Pipedrive landeten dadurch auf der Google-Anmeldeseite, doPost lief nie an, und
+  // das Cloudflare-Relay quittierte trotzdem 200 -- also lautloser Totalausfall seit 24.08.2026.
+  // Manifest am 8.9. korrigiert. Wenn dieser manuelle Nachtrag kuenftig wieder gebraucht wird,
+  // ZUERST pruefen, ob das Manifest noch auf ANYONE_ANONYMOUS steht: ein clasp deploy aus einer
+  // alten Version kippt den Wert zurueck (genau so ging der UI-Fix vom 24.08. verloren).
   const dealIds = [
-    4945, 5142, 5237, 5373, 5530, 5749, 5758, 5829, 5972, 6013, 6027, 6198, 6326, 6592
+    4876, 6006, 6037, 6439, 6454, 6593, 6605
   ];
   try {
     dealIds.forEach(dealId => Logger.log(`Deal ${dealId}: ${fillMontagepartnerForDeal(dealId)}`));
@@ -258,8 +271,12 @@ function fillMontagepartnerForDeal(dealId, dealVorab) {
 
   const partner = BUNDESLAND_TO_MONTAGEPARTNER[bundesland];
   if (!partner) {
-    // Fachlich gewollt: Oberoesterreich (3 Partner), Salzburg (2, siehe FIX C) sowie
-    // Steiermark/Tirol/Vorarlberg (kein Partner definiert).
+    // VERALTET (richtiggestellt 2.9.2026): Hier stand "fachlich gewollt: Oberoesterreich
+    // (3 Partner), Salzburg (2, siehe FIX C) sowie Steiermark/Tirol/Vorarlberg (kein Partner
+    // definiert)". Das gilt seit 20.08.2026 nicht mehr -- BUNDESLAND_TO_MONTAGEPARTNER oben
+    // ordnet ALLE 9 Bundeslaender eindeutig zu. Dieser Zweig ist damit unerreichbar, solange
+    // Mapping-Tabelle und BUNDESLAND_ID_TO_NAME deckungsgleich sind. Faellt er doch, ist das
+    // ein KONFIG-Fehler, kein Fachfall.
     logRow(dealId, deal.title, bundesland, 'übersprungen', null, 'kein eindeutiger Partner für dieses Bundesland (manuell zuordnen)');
     return `übersprungen (${bundesland}: kein eindeutiger Partner)`;
   }

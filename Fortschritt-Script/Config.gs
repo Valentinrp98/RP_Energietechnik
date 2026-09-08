@@ -280,7 +280,13 @@ const TEST_DEAL_ID_LEERER_SET = 7253;                // fuer testLeerenSetWert()
 
 
 // ===== SCRIPT-PROPERTY-SCHLUESSEL =====
-const PROP_RESUME_CURSOR = 'FORTSCHRITT_RESUME_CURSOR';
+// _V2 seit 8.9.2026: die Deal-Abfrage in Code.gs hat jetzt sort_by=id (seit 2.9.). Ein Cursor aus
+// der alten, unsortierten Abfrage passt nicht mehr dazu (Pipedrive-Cursor sind opake Tokens einer
+// konkreten Sortierung) -- ein gemerkter Cursor von vor dem 2.9. haette beim naechsten Lauf Deals
+// uebersprungen und danach still "sauber" gemeldet. Neuer Property-Name = alter Cursor wird
+// automatisch ignoriert, der naechste Lauf startet einmalig wieder bei Deal 1.
+// Gleiches Vorgehen wie BUNDESLAND_RESUME_CURSOR_V2 (Bundesland-aus-PLZ/Code.js:95).
+const PROP_RESUME_CURSOR = 'FORTSCHRITT_RESUME_CURSOR_V2';
 // Wird LOG_HEADER (Code.gs) jemals um Spalten erweitert, diesen Schluessel mit-versionieren
 // (..._V2). Dann legt das Script ein frisches Sheet mit passender Kopfzeile an, statt neue Werte
 // in die alten Spalten zu schreiben -- gleiches Vorgehen wie bei BUNDESLAND_LOG_SHEET_ID_V3.
