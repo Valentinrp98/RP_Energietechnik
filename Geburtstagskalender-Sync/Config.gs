@@ -87,11 +87,20 @@ function pruefeKonfiguration() {
     return false;
   }
 
-  const kalender = CalendarApp.getCalendarById(CALENDAR_ID);
-  if (!kalender) {
-    throw new Error('CALENDAR_ID gesetzt, aber Kalender nicht gefunden/kein Zugriff: ' + CALENDAR_ID);
+  // Bewusst über den Advanced Calendar Service geprüft, nicht über CalendarApp:
+  // CalendarApp.getCalendarById() liefert auch null, wenn der Account Zugriff HAT, den
+  // Kalender aber nicht in seiner eigenen Kalenderliste abonniert hat (Falle am 08.09.2026).
+  // Calendar.Calendars.get() ist derselbe Weg, den der Sync später tatsächlich benutzt.
+  let kalender;
+  try {
+    kalender = Calendar.Calendars.get(CALENDAR_ID);
+  } catch (fehler) {
+    throw new Error('Kein Zugriff auf CALENDAR_ID ' + CALENDAR_ID + ' als ' +
+      Session.getEffectiveUser().getEmail() + '. Diesem Account im Kalender unter "Geteilt mit" ' +
+      '"Änderungen an Terminen vornehmen" geben. Original-Fehler: ' + fehler.message);
   }
-  Logger.log('Ziel-Kalender: %s (%s)', kalender.getName(), CALENDAR_ID);
+  Logger.log('Ziel-Kalender: %s (%s)', kalender.summary, CALENDAR_ID);
+  Logger.log('Ausführender Account: %s', Session.getEffectiveUser().getEmail());
   Logger.log('OK — Konfiguration passt. DRY_RUN=%s', DRY_RUN);
   return true;
 }
