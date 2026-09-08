@@ -21,7 +21,7 @@ function verschiebeAbgeschlosseneOrdner() {
 
   try {
     do {
-      const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals?status=won&limit=100`
+      const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals?status=won&limit=100&sort_by=id&sort_direction=asc`
         + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
       const response = callPipedriveWithRetryRaw(url);
       const deals = response.data || [];

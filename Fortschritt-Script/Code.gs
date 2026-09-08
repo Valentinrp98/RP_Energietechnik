@@ -98,7 +98,7 @@ function laufDurchfuehren(laufTyp) {
     if (cursor) Logger.log(`Setze abgebrochenen Lauf fort (Cursor ${cursor}). Neustart von vorne: resetVollauf()`);
 
     do {
-      const path = `deals?status=won&limit=${DEALS_PRO_SEITE}`
+      const path = `deals?status=won&limit=${DEALS_PRO_SEITE}&sort_by=id&sort_direction=asc`
                  + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
       const response = fetchPipedriveRaw(path);
       const deals = response.data || [];

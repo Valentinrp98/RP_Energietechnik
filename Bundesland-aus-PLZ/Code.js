@@ -88,13 +88,17 @@ const GRENZFALL_MANUELL = true;
 // Freiwilliger Abbruch vor dem harten Apps-Script-Limit (6 bzw. 30 Min)
 const MAX_LAUFZEIT_MS = 4.5 * 60 * 1000;
 
-const PROP_RESUME_CURSOR = 'BUNDESLAND_RESUME_CURSOR';
+// _V2 seit 2.9.2026: die Deal-Abfrage hat jetzt sort_by=id. Ein Cursor aus der alten,
+// unsortierten Abfrage passt nicht mehr dazu (Pipedrive-Cursor sind opake Tokens einer
+// konkreten Sortierung). Neuer Property-Name = alter Cursor wird automatisch ignoriert,
+// der naechste Lauf startet einmalig wieder bei Deal 1. resetVollauf() nicht noetig.
+const PROP_RESUME_CURSOR = 'BUNDESLAND_RESUME_CURSOR_V2';
 // V3, weil das Log-Sheet zwei neue Spalten hat -- altes Sheet bleibt unangetastet erhalten.
 const PROP_LOG_SHEET_ID = 'BUNDESLAND_LOG_SHEET_ID_V3';
 
 // Wenn true: Deals, die vor CUTOFF_DATE angelegt wurden (deal.add_time), werden uebersprungen
 // und nicht angefasst -- z.B. um einen Altbestand bewusst unveraendert zu lassen.
-const CUTOFF_ENABLED = true; // war TEMPORÄR auf false für die 32 Fulfillment-Deals (fillBundeslandForAusgewaehlteDeals) -- laut eigenem Kommentar danach zurückgesetzt (2026-08-21)
+const CUTOFF_ENABLED = true; // war TEMPORÄR false für 7 Fulfillment-Deals, die vor CUTOFF_DATE angelegt aber erst danach gewonnen wurden (fillBundeslandForAusgewaehlteDeals) -- nach dem Lauf zurückgesetzt (2026-09-04)
 const CUTOFF_DATE = new Date('2026-06-01');
 
 
@@ -125,7 +129,7 @@ function fillBundeslandForAllDeals() {
       // FIX 9: KEIN status-Parameter. Der v1-Wert "all_not_deleted" ist in v2 ungueltig
       // (HTTP 400 ERR_SCHEMA_VALIDATION_FAILED); ohne Parameter liefert v2 laut Doku
       // "all not deleted deals", also offene UND gewonnene/verlorene.
-      const path = `deals?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const path = `deals?limit=100&sort_by=id&sort_direction=asc${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
       const response = callPipedriveWithRetryRaw(`https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`);
       const deals = response.data || [];
       cursor = (response.additional_data && response.additional_data.next_cursor) || null;
@@ -223,11 +227,11 @@ function testEinzelDeal() {
  * Praktisch fuer die 9 Grenzfall-Deals aus dem DRY-Lauf.
  */
 function fillBundeslandForAusgewaehlteDeals() {
-  // Aus dem ersten Projektdoku-Generator-Live-Batch (21.08.) als "kein Kundenordner-Link" aufgefallen,
-  // dann bei Montagepartner-aus-Bundesland als "kein Montagepartner" haengengeblieben -- vermutlich
-  // fehlt bei denen schon das Bundesland. 6952 (Hajrulla Krasniqi) war schon fertig, deshalb hier raus.
+  // 2026-09-03: 7 gewonnene Fulfillment-Deals mit add_time vor CUTOFF_DATE, aber erst danach
+  // gewonnen und in "1_Übernommen" verschoben -- fallen durch den CUTOFF-Filter, obwohl sie
+  // aktiv im Fulfillment sind. Ausgangsfall: Deal 6605 (Peter Palinceac), kein Kundenordner.
   const dealIds = [
-    4945, 5142, 5237, 5373, 5530, 5749, 5758, 5829, 5972, 6013, 6027, 6198, 6326, 6592
+    4876, 6006, 6037, 6439, 6454, 6593, 6605
   ];
   try {
     dealIds.forEach(dealId => Logger.log(`Deal ${dealId}: ${fillBundeslandForDeal(dealId)}`));
@@ -553,7 +557,7 @@ function zaehleDeals() {
   let ohnePerson = 0;
 
   do {
-    const path = `deals?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const path = `deals?limit=100&sort_by=id&sort_direction=asc${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
     const response = callPipedriveWithRetryRaw(`https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/${path}`);
     const deals = response.data || [];
     cursor = (response.additional_data && response.additional_data.next_cursor) || null;

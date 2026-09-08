@@ -133,7 +133,15 @@ const PARTNER_SHEET_CONFIG = {
   'ALE-Engineering (NÖ, Wien, BGL)': { sheetId: '1j2NIi4zeTQlEhWqYlb3IXSjE_69J6ZPNQ1vK4-YiFgM', tabName: 'Untitled' }, // Montageplanung RP ALE-Engineering, 25.08. angelegt (alte Dummy-Testumgebung abgelöst)
   'Berger Elektrotechnik (KTN)': { sheetId: '1agWue-J07hZpo-nRnyYzIxe1ow_QD9vaP61dyiT05G8', tabName: 'Untitled' }, // per API/CSV-Import erstellt -- anderer Default als bei manueller UI-Erstellung
   'Greensky (OÖ, SBG)': { sheetId: '1pRHk5ITCUhMywUuyAn738hAcJ3oK9ZSxwC4EJ92yXnc', tabName: 'Untitled' },
-  'KOLLSTAR (OÖ)': { sheetId: '1KPYBeVzsj0izYI6ZzUza4Bl5JcUIzWI1m5oojTOJ47E', tabName: 'Tabellenblatt1' }, // Testumgebung
+  // KOLLSTAR hat noch KEIN echtes Sheet (Valentin, 2.9.2026). Vorher stand hier die Test-Sheet-ID
+  // 1KPYBeVzsj0izYI6ZzUza4Bl5JcUIzWI1m5oojTOJ47E ("AI Test Montageplanung", 2 Datenzeilen) --
+  // damit hätte ein echter KOLLSTAR-Auftrag seine Zeile ins Testsheet bekommen, wo niemand
+  // hineinschaut, und findRowByDealId() hätte den Deal danach als "hat schon eine Zeile"
+  // behandelt. Genau der Deepcore-Fehler (Befund D1: live in die Test-Kopie schreiben, ohne
+  // Möglichkeit zum Backfill). TODO_-Präfix lässt openPartnerSheet() bewusst mit klarer Meldung
+  // scheitern -> zählt als sheetFehler -> Lauf-Status MANUELL_KLAEREN. Echte Sheet-ID eintragen,
+  // sobald "Montageplanung RP KOLLSTAR" angelegt ist.
+  'KOLLSTAR (OÖ)': { sheetId: 'TODO_KOLLSTAR_SHEET_ID', tabName: 'Untitled' },
   'Kreuzeder (OÖ, SBG)': { sheetId: '19-TnTIXawgYrDGwMEJauNFRZZaxmzYNtnnIsY1M3MF4', tabName: 'Untitled' },
   'Tiroler Partner (T)': { sheetId: '10jV4UC_w23l2hyhcDVwG5YyCy95vFtOr_stFBpLotXg', tabName: 'Untitled' },
   'Vorarlberg Partner (V)': { sheetId: '1r7XorkWkmqOYc0aa_hcfncEOFaGOvxX6eLWYpOMQeRU', tabName: 'Untitled' }
@@ -334,6 +342,20 @@ const SYNC_FIELD_CONFIG = [
 // globalen 15-Min-Timer (syncNeueZeilen/syncPipedriveToSheetFields) noch NICHT installiert sind
 // -- die anderen fünf Partner sind also nicht betroffen, bis installTriggers() für alle läuft.
 const DRY_RUN = false;
+
+// GEÄNDERT 1.9.2026 (Valentins Vorgabe): statt eines Zeit-Cutoffs jetzt dasselbe Trigger-Feld wie
+// im Projekt Projektdoku-Generator -- "Projektdokumentation-Partner" ("rdy for creation"). Ein Deal
+// bekommt hier automatisch eine Sheet-Zeile, sobald jemand dieses Feld setzt -- derselbe Klick löst
+// also BEIDES aus: die Projektdoku (Projektdoku-Generator, eigener Webhook/Tages-Lauf) UND die
+// Montageplanungs-Zeile (hier, syncNeueZeilen()/RowCreation.gs). 1:1 aus Projektdoku-Generator/
+// Config.js übernommen -- getrennte Apps-Script-Projekte können keine Konstanten teilen, beide
+// Stellen müssen bei einer Feldänderung in Pipedrive gleichzeitig aktualisiert werden.
+// DONE (234) zählt HIER auch als "ready": ein Deal bleibt nach der Doku-Erstellung auf 234 stehen
+// (siehe Projektdoku-Generator/DocGeneration.js), würde sonst nie eine Sheet-Zeile bekommen, wenn
+// syncNeueZeilen() erst NACH dem Projektdoku-Lauf desselben Tages läuft.
+const DOKU_STATUS_FIELD_KEY = 'd33a358f840e5e1ccade4e1f88cd9109ae3e63f4'; // Feld "Projektdokumentation-Partner"
+const DOKU_STATUS_OPTION_TRIGGER = 235; // "Projektdoku rdy for creation"
+const DOKU_STATUS_OPTION_DONE = 234; // "Projektdoku erstellt und abgelegt"
 
 // ===== HILFSFUNKTIONEN (Pipedrive) =====
 

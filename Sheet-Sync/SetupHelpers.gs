@@ -135,6 +135,9 @@ function installTriggers() {
   ScriptApp.newTrigger('verschiebeAbgeschlosseneOrdner').timeBased().everyDays(1).atHour(6).create();
   ScriptApp.newTrigger('ueberwacheNetzanmeldungUndKundentermin').timeBased().everyDays(1).atHour(7).create();
   ScriptApp.newTrigger('raeumeAlteNotizen').timeBased().everyDays(1).atHour(4).create();
+  // 5:00 -- nach den nächtlichen Läufen der Webhook-Projekte (2:00/3:00), vor Arbeitsbeginn.
+  // Siehe WebhookHealth.gs; separat installierbar über installWebhookHealthTrigger().
+  ScriptApp.newTrigger('pruefeWebhookErreichbarkeit').timeBased().everyDays(1).atHour(5).create();
 
   Object.entries(PARTNER_SHEET_CONFIG).forEach(([partner, config]) => {
     if (config.sheetId.startsWith('TODO_')) {
@@ -146,6 +149,27 @@ function installTriggers() {
   });
 
   Logger.log('Fertig. Mit listInstalledTriggers() prüfen.');
+}
+
+/**
+ * Aktiviert NUR den 15-Minuten-Timer für syncNeueZeilen() (automatische Zeilen-Erstellung für neu
+ * gewonnene Deals) -- rührt onEdit-Trigger und syncPipedriveToSheetFields NICHT an, anders als
+ * installTriggers(). ERST ausführen, wenn für ALLE Partner in PARTNER_SHEET_CONFIG der
+ * Namensabgleich (Montageplanung-Namensabgleich-Projekt) durchgelaufen ist: syncNeueZeilen prüft
+ * pro Deal nur "gibt's schon eine Zeile mit dieser Deal-ID" (findRowByDealId) -- eine alte,
+ * händisch reinkopierte Zeile OHNE Deal-ID wird dabei nicht erkannt, es entstünde eine zweite,
+ * doppelte Zeile für denselben Kunden. Idempotent: entfernt vorher einen evtl. bestehenden eigenen
+ * Trigger für dieselbe Funktion.
+ */
+function installSyncNeueZeilenTrigger() {
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'syncNeueZeilen') {
+      ScriptApp.deleteTrigger(t);
+      Logger.log('Bestehenden syncNeueZeilen-Trigger entfernt (Neuanlage folgt).');
+    }
+  });
+  ScriptApp.newTrigger('syncNeueZeilen').timeBased().everyMinutes(15).create();
+  Logger.log('syncNeueZeilen läuft jetzt alle 15 Minuten. onEdit-Trigger und syncPipedriveToSheetFields sind davon NICHT betroffen.');
 }
 
 function listInstalledTriggers() {
@@ -227,7 +251,7 @@ function testSyncPipedriveToSheetFuerEinenPartner() {
   const dealMap = {};
   let cursor = null;
   do {
-    const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals?status=won&limit=100`
+    const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals?status=won&limit=100&sort_by=id&sort_direction=asc`
       + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
     const response = callPipedriveWithRetryRaw(url);
     (response.data || []).forEach(d => { dealMap[d.id] = d; });
@@ -508,15 +532,23 @@ function listDealFieldsHelper() {
 // reinziehen, ohne den globalen syncNeueZeilen() company-weit laufen zu lassen.
 // createSheetRowForDeal() akzeptiert schon eine Deal-ID direkt (lädt den Deal nach), kein Umbau
 // dort nötig. DRY_RUN gilt hier genauso wie überall -- erst prüfen, dann DRY_RUN=false.
-const NEUE_DEALS_ZUM_ANLEGEN = [7345, 7189]; // Deal-IDs hier eintragen, die eine Sheet-Zeile bekommen sollen
+const NEUE_DEALS_ZUM_ANLEGEN = [7319]; // Deal-IDs hier eintragen, die eine Sheet-Zeile bekommen sollen
 
 /** Für Einzeltests/gezieltes Nachziehen einzelner Deals: Zeilen-Erstellung ohne den globalen Timer. */
 function testCreateSheetRow() {
   starteLauf('testCreateSheetRow');
   try {
     NEUE_DEALS_ZUM_ANLEGEN.forEach(dealId => {
-      const result = createSheetRowForDeal(dealId);
-      Logger.log('%s: %s', dealId, result);
+      // Diagnose-Zeile VOR createSheetRowForDeal (1.9.2026, Hubert-Hochmuth-Fall): zeigt status +
+      // DOKU_STATUS_FIELD_KEY direkt vom Einzelabruf -- erklärt, warum ein Deal in syncNeueZeilen()
+      // (die über die won-Liste geht) evtl. gar nicht erst auftaucht.
+      const deal = fetchPipedrive(`deals/${dealId}`);
+      const cf = deal.custom_fields || {};
+      Logger.log('%s: status=%s, DOKU_STATUS_FIELD_KEY=%s', dealId, deal.status, cf[DOKU_STATUS_FIELD_KEY]);
+      // createSheetRowForDeal() liefert seit 2.9.2026 { code, text } statt eines Strings --
+      // .text ist die Klartextzeile, .code der stabile Schlüssel für die Zählung in syncNeueZeilen().
+      const result = createSheetRowForDeal(deal);
+      Logger.log('%s: [%s] %s', dealId, result.code, result.text);
     });
   } finally {
     flushLog();

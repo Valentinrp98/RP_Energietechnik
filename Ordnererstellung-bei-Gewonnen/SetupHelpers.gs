@@ -130,7 +130,7 @@ function debugPersonPhones() {
 /** Für Einzeltests: nur den Kundendaten-Snapshot für einen bekannten Deal auslösen. */
 function testKundendatenSnapshot() {
   starteLauf('testKundendatenSnapshot');
-  const dealId = 7253; // hier eine bekannte Deal-ID eintragen
+  const dealId = 7321; // Florian Türtscher -- Fulfillment-Stage, aber Pipedrive-Status vermutlich nicht "won"
   try {
     const deal = fetchPipedrive(`deals/${dealId}`);
     if (!deal.person_id) {

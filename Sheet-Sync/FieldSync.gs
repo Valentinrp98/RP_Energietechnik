@@ -384,7 +384,7 @@ function syncPipedriveToSheetFields() {
   const dealMap = {};
   let cursor = null;
   do {
-    const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals?status=won&limit=100`
+    const url = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v2/deals?status=won&limit=100&sort_by=id&sort_direction=asc`
       + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
     const response = callPipedriveWithRetryRaw(url);
     (response.data || []).forEach(d => { dealMap[d.id] = d; });
