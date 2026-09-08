@@ -51,6 +51,11 @@ const SLACK_BIRTHDAY_FIELD_ID = 'Xf0BV2CREFUP';
 
 const EVENT_TITEL_PRAEFIX = '🎂 ';
 
+// Slack-Channel für die Gratulations-Posts (eigener Geburtstags-Channel, 08.09.2026).
+// Der Bot muss dort Mitglied sein (/invite @Geburtstagsapp RP), sonst antwortet Slack
+// mit "not_in_channel". Braucht zusätzlich den Bot-Scope chat:write.
+const BIRTHDAY_CHANNEL_ID = 'C0C063H2VT5';
+
 // true = Simulation: es wird nur geloggt, was angelegt/geändert/gelöscht WÜRDE.
 // AUF true LASSEN, bis Valentin explizit sagt "ja, live in den Kalender schreiben"
 // (Arbeitsregel "Nie ungefragt schreiben" gilt hier genauso wie für Pipedrive).
@@ -106,14 +111,21 @@ function pruefeKonfiguration() {
 }
 
 // ---------- gemeinsamer Slack-HTTP-Helper mit Retry (respektiert Retry-After bei Rate-Limit) ----------
-function fetchSlackJson(method, params) {
+// Ohne payload: GET mit Query-Parametern (Lese-Methoden). Mit payload: POST mit JSON-Body
+// (Schreib-Methoden wie chat.postMessage) -- Slack akzeptiert Schreibaufrufe nicht per GET.
+function fetchSlackJson(method, params, payload) {
   const url = SLACK_API_BASE + '/' + method + (params ? '?' + toQueryString(params) : '');
   for (let versuch = 1; versuch <= 3; versuch++) {
-    const response = UrlFetchApp.fetch(url, {
-      method: 'get',
+    const optionen = {
+      method: payload ? 'post' : 'get',
       headers: { Authorization: 'Bearer ' + getSlackToken() },
       muteHttpExceptions: true
-    });
+    };
+    if (payload) {
+      optionen.contentType = 'application/json; charset=utf-8';
+      optionen.payload = JSON.stringify(payload);
+    }
+    const response = UrlFetchApp.fetch(url, optionen);
     const code = response.getResponseCode();
     if (code === 429) {
       const retryAfter = Number(response.getHeaders()['Retry-After'] || response.getHeaders()['retry-after'] || 2);

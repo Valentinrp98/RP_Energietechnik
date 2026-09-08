@@ -9,10 +9,16 @@ Hintergrund/Entscheidungshistorie: Bauplan — liegt **nur lokal** auf Valentins
 im Repo; alles zum Weiterbauen Nötige steht in dieser README:
 `C:\Users\valen\.claude\plans\passt-mach-bitte-den-resilient-clarke.md`.
 
-## Noch offene manuelle Voraussetzungen
+## Manuelle Setup-Schritte
 
-Diese vier Schritte kann nur Valentin (bzw. der Slack-Workspace-Admin) erledigen —
-ohne sie kann das Skript zwar geschrieben, aber nicht live getestet werden:
+**Stand 08.09.2026 — 1 bis 3 sind erledigt:** Apps-Script-Projekt gebunden (per `clasp create`),
+Slack-Feld "Geburtstag" (Typ Date) angelegt, Feld-ID `Xf0BV2CREFUP` live verifiziert, Slack App
+"Geburtstagsapp RP" mit Bot Token installiert und in den Script Properties hinterlegt, Kalender
+"Geburtstage RP intern" manuell unter `sales@rp-energietechnik.at` angelegt und
+`valentin@rp-energietechnik.at` (der ausführende Account) darauf schreibberechtigt.
+**Offen: Schritt 4** — bisher hat nur Valentin sein Geburtsdatum eingetragen.
+
+Die Anleitung bleibt hier als Referenz stehen, falls das Setup nochmal aufgebaut werden muss:
 
 1. **Apps-Script-Projekt anlegen**: neues Standalone-Projekt unter
    [script.google.com/create](https://script.google.com/create), Script-ID an Claude
@@ -58,6 +64,24 @@ nächsten Lauf wird darüber exakt das richtige Event wiedergefunden — ein ge�
 Geburtsdatum führt zu einem `Calendar.Events.patch`, kein Duplikat. Wird das
 Slack-Feld geleert oder der Mitarbeiter deaktiviert, wird das Event gelöscht.
 
+## Gratulations-Post im Slack-Channel (`Geburtstagspost.gs`)
+
+Zweiter, unabhängiger Teil: `postGeburtstagsGruesse()` prüft morgens, wer heute Geburtstag
+hat, und postet `🎂 Heute hat @Name Geburtstag — alles Gute!` in den Channel
+`BIRTHDAY_CHANNEL_ID` (`C0C063H2VT5`, eigener Geburtstags-Channel). Eigener Trigger um 08:00
+via `richteGeburtstagsPostTriggerEin()`, unabhängig vom Kalender-Sync um 04:00.
+
+Voraussetzungen dafür:
+1. Bot-Scope **`chat:write`** in der App ergänzen → App neu installieren (Bot Token bleibt gleich)
+2. Bot in den Channel einladen: `/invite @Geburtstagsapp RP`
+3. `pruefeSlackRechte()` ausführen — loggt Workspace, Bot und alle erteilten Scopes und sagt
+   explizit, ob `chat:write` angekommen ist. Braucht selbst keinen Scope, postet nichts.
+
+**Doppelpost-Schutz:** die Script-Property `LETZTER_GRATULATIONS_POST` hält `{tag, userIds}`
+und wird nach jedem einzelnen erfolgreichen Post gespeichert. Ein Fehler mitten im Lauf führt
+also nicht dazu, dass beim nächsten Lauf schon Gratulierte erneut gepostet werden. `DRY_RUN`
+gilt auch hier: bei `true` wird nur geloggt, was gepostet würde.
+
 ## Not-Aus gegen Massenlöschung
 
 Liefert Slack für **keinen einzigen** Mitarbeiter einen Geburtstag, bricht der Lauf ab, statt
@@ -65,12 +89,18 @@ alle bestehenden Events zu löschen — eine falsche `SLACK_BIRTHDAY_FIELD_ID` o
 Slack-Antwort ist die viel wahrscheinlichere Erklärung als ein Workspace, in dem alle
 gleichzeitig ihr Feld leeren.
 
-## Bekannte Unsicherheit
+## Datumsformat — geklärt (08.09.2026)
 
-Das Rohformat, in dem Slack den Wert eines Date-Typ-Custom-Fields zurückgibt, ist
-nicht öffentlich dokumentiert — `parseGeburtsdatum()` in `SlackClient.gs` geht von
-`YYYY-MM-DD` aus, mit Fallback auf `TT.MM.(JJJJ)` für ein Freitextfeld. Beim ersten
-echten Testlauf (Schritt 1 oben) im Log gegenchecken, ob das Format passt.
+Slack liefert Date-Typ-Custom-Fields als `YYYY-MM-DD` (offiziell dokumentiert bei
+`users.profile.set`, live im DRY_RUN-Lauf bestätigt). `parseGeburtsdatum()` in
+`SlackClient.gs` behandelt genau das, mit Fallback auf `TT.MM.(JJJJ)` für den Fall,
+dass das Feld irgendwann als Freitext neu angelegt wird. Das Geburts**jahr** wird
+bewusst verworfen — nur Monat/Tag landen im Kalender, also steht dort kein Alter.
+
+Nebenbefund: in der Slack-Admin-Oberfläche zeigt das Feld "Geburtstag" **kein**
+"API"-Badge und keine Field-ID, anders als die Short-Text-Felder (City, Kostenstelle).
+Das ist kein Hinweis auf fehlenden API-Zugriff — über `team.profile.get` ist das Feld
+normal lesbar. Nicht davon irritieren lassen.
 
 ## Weitere bekannte Grenzen
 

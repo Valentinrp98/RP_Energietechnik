@@ -41,3 +41,19 @@ function richteTaeglichenTriggerEin() {
 
   Logger.log('Täglicher Trigger für syncGeburtstage um 04:00 eingerichtet.');
 }
+
+// Einmalig manuell ausführen — postet ab dann jeden Morgen um 08:00 die Gratulation
+// in den Geburtstags-Channel (siehe Geburtstagspost.gs).
+function richteGeburtstagsPostTriggerEin() {
+  ScriptApp.getProjectTriggers()
+    .filter(function (t) { return t.getHandlerFunction() === 'postGeburtstagsGruesse'; })
+    .forEach(function (t) { ScriptApp.deleteTrigger(t); });
+
+  ScriptApp.newTrigger('postGeburtstagsGruesse')
+    .timeBased()
+    .atHour(8)
+    .everyDays(1)
+    .create();
+
+  Logger.log('Täglicher Trigger für postGeburtstagsGruesse um 08:00 eingerichtet.');
+}
