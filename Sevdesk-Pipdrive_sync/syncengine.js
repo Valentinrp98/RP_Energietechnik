@@ -821,7 +821,7 @@ function debugDuplikatAngebotsnummer() {
 
 /** Für Einzeltests im Editor: Deal-ID unten eintragen (▷-Button ruft ohne Argumente auf). */
 function testEinzelDealOhneStatusFilter() {
-  const dealId = 7356; // hier Deal-ID eintragen
+  const dealId = 6605; // Peter Palinceac -- Kundennummer 4017, Order 2026-570-A haengt seit 31.08. geparkt
   const erfolg = syncEinzelDealOhneStatusFilter(dealId);
   Logger.log(erfolg ? '✓ Sync erfolgreich' : '✗ Sync nicht durchgeführt -- siehe Log/Sync-Log-Sheet');
 }
@@ -1604,3 +1604,10 @@ function debugKalmanUndWaldhaus() {
     Logger.log(JSON.stringify(treffer, null, 2));
   });
 }
+
+/**
+ * Am 8.9.2026 vom Apps-Script-Remote nach lokal uebernommen -- war nur im Browser-Editor angelegt
+ * und haette beim naechsten clasp push verloren gegangen. Direktsync fuer einen bekannten
+ * Deal/Order-Paar, umgeht das Angebotsnummer-/Kundennummer-Matching komplett.
+ */
+function testEinzelOrder() { syncDirektAufBekannterDeal(4087, 30218946); }
