@@ -43,7 +43,7 @@ const WORKSPACE_DOMAIN = 'rp-energietechnik.at'; // für domainweite Kalenderfre
 
 // Slack Custom-Field-ID für "Geburtstag" (Format "Xf0XXXXXXXX") — einmalig über
 // ermittleGeburtstagsFeldId() ermitteln (siehe SlackClient.gs) und hier eintragen.
-const SLACK_BIRTHDAY_FIELD_ID = '';
+const SLACK_BIRTHDAY_FIELD_ID = 'Xf0BV2CREFUP';
 
 const EVENT_TITEL_PRAEFIX = '🎂 ';
 
