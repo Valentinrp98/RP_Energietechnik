@@ -71,6 +71,74 @@ function fuegeEindeckungOptionenHinzu() {
 }
 
 /**
+ * EINMALIG (07.09.2026): legt 4 der Custom-Fields für den geplanten Netzanmeldung-Formular-Baustein
+ * an (siehe project_pv_netzanmeldung_formular) -- Neuanlage/Erweiterung (enum) plus 3 schlanke
+ * ALT-Bestandsfelder (Photovoltaik/Wechselrichter/Speicher), alle als freier Text statt eigener
+ * double-Felder pro Kennzahl -- auf Valentins Wunsch bewusst vereinfacht (07.09.), weil bei
+ * Altanlagen selten exakte, sauber typisierte Werte bekannt sind ("ca. 5 kWp, Marke unbekannt" etc.
+ * passt in kein double-Feld).
+ * Die restlichen 9 (Kundennummer EVU, KG-Nummer, ...) sind bewusst noch draußen, deren Datenherkunft
+ * ist noch offen. Läuft über die v1-API, weil v2 kein Field-Management hat (gleicher Grund wie bei
+ * fuegeEindeckungOptionenHinzu() oben).
+ * Idempotent: prüft vor jedem Anlegen per Namensabgleich gegen die bestehenden dealFields, ob der
+ * Name schon existiert -- sonst legt ein zweiter Lauf lauter Duplikate an (Pipedrive verhindert das
+ * nicht selbst, field_name ist nicht unique erzwungen).
+ * Nach dem Lauf: die zurückgegebenen field_code-Werte in Config.js eintragen (Muster wie
+ * ELEKTROMATERIAL_*_FIELD_KEY oben), dann erst im Code verwenden.
+ */
+function SETUP_EINMALIG_createNetzanmeldungFields() {
+  // Nur diese 3 (07.09.2026 auf Valentins Wunsch eingegrenzt) -- die restlichen 9 Felder aus
+  // project_pv_netzanmeldung_formular (Kundennummer EVU, KG-Nummer, ... Leitungsquerschnitt) sind
+  // noch nicht dran, weil ihre Datenherkunft (Elektriker/Kunde/Grundbuch) noch ungeklärt ist.
+  const NEUE_FELDER = [
+    { name: 'Neuanlage oder Erweiterung', field_type: 'enum', options: ['Neuanlage (Einspeisung)', 'Erweiterung'] },
+    { name: 'Altanlage Photovoltaik', field_type: 'varchar' }, // freier Text: Module Anzahl/Bezeichnung/Marke/kWp in einem Feld
+    { name: 'Altanlage Wechselrichter', field_type: 'varchar' }, // freier Text: Typ/Marke/kW in einem Feld
+    { name: 'Altanlage Speicher', field_type: 'varchar' } // freier Text: Typ/Marke/kWh in einem Feld
+  ];
+
+  const bestehendeResponse = UrlFetchApp.fetch(
+    `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v1/dealFields?api_token=${encodeURIComponent(getApiToken())}&limit=500`,
+    { muteHttpExceptions: true }
+  );
+  const bestehendeData = JSON.parse(bestehendeResponse.getContentText());
+  if (!bestehendeData.success) {
+    throw new Error(`dealFields-Abruf fehlgeschlagen: ${bestehendeResponse.getContentText()}`);
+  }
+  const bestehendeNamen = bestehendeData.data.map(f => f.name.toLowerCase());
+
+  NEUE_FELDER.forEach(feld => {
+    if (bestehendeNamen.includes(feld.name.toLowerCase())) {
+      Logger.log(`Übersprungen (existiert schon): "${feld.name}"`);
+      return;
+    }
+    const payload = { name: feld.name, field_type: feld.field_type };
+    if (feld.options) payload.options = feld.options.map(label => ({ label }));
+
+    const createResponse = UrlFetchApp.fetch(
+      `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v1/dealFields?api_token=${encodeURIComponent(getApiToken())}`,
+      {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      }
+    );
+    const createData = JSON.parse(createResponse.getContentText());
+    if (!createData.success) {
+      Logger.log(`FEHLER bei "${feld.name}": ${createResponse.getContentText()}`);
+      return;
+    }
+    const optionsInfo = createData.data.options
+      ? ` -- Optionen: ${createData.data.options.map(o => `${o.label}=${o.id}`).join(', ')}`
+      : '';
+    Logger.log(`Angelegt: "${feld.name}" -- field_code ${createData.data.key} (${feld.field_type})${optionsInfo}`);
+  });
+
+  Logger.log('Fertig. field_code-Werte oben jetzt in Config.js eintragen.');
+}
+
+/**
  * Diagnose (21.08.): warum liegen bei Deal 7072 (Hemetinger) offenbar 2 Docs im Ordner? Listet alle
  * Dateien im "2_Projektdokumentation"-Unterordner mit Erstelldatum + Datei-ID, plus den aktuell in
  * Pipedrive gespeicherten Link und den aktuellen Anlagendetails-Wert. Rein lesend.
@@ -352,7 +420,8 @@ function checkConfiguration() {
       { key: AUSRICHTUNG_FIELD_KEY, map: AUSRICHTUNG_OPTION_IDS, label: 'Ausrichtung' },
       { key: MONTAGEPARTNER_FIELD_KEY, map: MONTAGEPARTNER_OPTION_IDS, label: 'Montagepartner' },
       { key: ELEKTROMATERIAL_GEZAHLT_FIELD_KEY, map: ELEKTROMATERIAL_GEZAHLT_OPTION_IDS, label: 'Elektromaterial gezahlt von' },
-      { key: ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY, map: ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS, label: 'Elektromaterial organisiert von' }
+      { key: ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY, map: ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS, label: 'Elektromaterial organisiert von' },
+      { key: NEUANLAGE_ERWEITERUNG_FIELD_KEY, map: NEUANLAGE_ERWEITERUNG_OPTION_IDS, label: 'Neuanlage oder Erweiterung' }
     ];
     [['Dach 2', DACH2_FIELD_KEYS, DACH2_OPTION_IDS], ['Dach 3', DACH3_FIELD_KEYS, DACH3_OPTION_IDS]].forEach(([dachLabel, keys, optionMaps]) => {
       Object.entries(optionMaps).forEach(([feldName, map]) => {

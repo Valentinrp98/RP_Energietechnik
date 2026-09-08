@@ -80,7 +80,7 @@ function findDealsForDokuErstellung() {
     // encodeURIComponent ist Pflicht: der Cursor ist ein opaker Token, der '+', '/' und '=' enthalten
     // kann. Unencodiert wird ein '+' serverseitig als Leerzeichen gelesen -> falscher/ungültiger
     // Cursor -> übersprungene oder wiederholte Seiten, und ein Treffer-Deal wird nie gefunden.
-    const path = `deals?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const path = `deals?limit=100&sort_by=id&sort_direction=asc${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
     const response = fetchPipedriveRaw(path);
     const data = response.data || [];
     data.forEach(deal => {
@@ -349,6 +349,8 @@ function buildProjectDoc(deal, person, adresse) {
     ['Ausführungsart', resolveEnumLabel(cf[AUSFUEHRUNGSART_FIELD_KEY], AUSFUEHRUNGSART_ID_TO_NAME)]
   ]);
 
+  appendNetzanmeldungSection(body, sektion, cf);
+
   sektion('Kontakt');
   appendKeyValueTable(body, [
     ['E-Mail', person ? getPrimaryContactValue(person.emails) : ''],
@@ -421,6 +423,26 @@ function buildProjectDoc(deal, person, adresse) {
 
   doc.saveAndClose();
   return doc;
+}
+
+/**
+ * Baut die optionale Sektion "Neuanlage / Erweiterung" (07.09.2026, siehe
+ * project_pv_netzanmeldung_formular). Erscheint NUR, wenn mindestens eines der 4 Felder befüllt ist --
+ * bei laufenden Deals ist das im Regelfall noch leer, gleiches Prinzip wie bei
+ * appendZusatzDachSection() unten.
+ */
+function appendNetzanmeldungSection(body, sektion, cf) {
+  const felder = [NEUANLAGE_ERWEITERUNG_FIELD_KEY, ALTANLAGE_PHOTOVOLTAIK_FIELD_KEY, ALTANLAGE_WECHSELRICHTER_FIELD_KEY, ALTANLAGE_SPEICHER_FIELD_KEY];
+  const hatDaten = felder.some(key => cf[key] !== null && cf[key] !== undefined && cf[key] !== '');
+  if (!hatDaten) return;
+
+  sektion('Neuanlage / Erweiterung');
+  appendKeyValueTable(body, [
+    ['Neuanlage oder Erweiterung', resolveEnumLabel(cf[NEUANLAGE_ERWEITERUNG_FIELD_KEY], NEUANLAGE_ERWEITERUNG_ID_TO_NAME)],
+    ['Altanlage Photovoltaik', zeigeWert(cf[ALTANLAGE_PHOTOVOLTAIK_FIELD_KEY])],
+    ['Altanlage Wechselrichter', zeigeWert(cf[ALTANLAGE_WECHSELRICHTER_FIELD_KEY])],
+    ['Altanlage Speicher', zeigeWert(cf[ALTANLAGE_SPEICHER_FIELD_KEY])]
+  ]);
 }
 
 /**

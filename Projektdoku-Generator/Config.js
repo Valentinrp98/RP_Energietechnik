@@ -131,6 +131,18 @@ const ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY = '767eb0f43cd9f52d8a06c113294adb2cc
 const ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS = { 'RP': 256, 'Montagepartner': 257, 'Kunde': 258, 'noch offen': 259 };
 const ELEKTROMATERIAL_ORGANISIERT_ID_TO_NAME = invertOptionMap(ELEKTROMATERIAL_ORGANISIERT_OPTION_IDS);
 
+// ===== Netzanmeldung-Baustein (07.09.2026, siehe project_pv_netzanmeldung_formular) =====
+// Noch nirgends im Code verwendet -- das Doc-Template/die Generierungsfunktion für die
+// Netzanmeldung ist noch nicht gebaut, das hier sind nur die per SETUP_EINMALIG_
+// createNetzanmeldungFields() (SetupHelper.js) frisch angelegten field_codes.
+const NEUANLAGE_ERWEITERUNG_FIELD_KEY = '8bc19dfdb1f3135f1babe069f2f9bfba1b347c40'; // enum
+const NEUANLAGE_ERWEITERUNG_OPTION_IDS = { 'Neuanlage (Einspeisung)': 330, 'Erweiterung': 331 };
+const NEUANLAGE_ERWEITERUNG_ID_TO_NAME = invertOptionMap(NEUANLAGE_ERWEITERUNG_OPTION_IDS);
+
+const ALTANLAGE_PHOTOVOLTAIK_FIELD_KEY = '37024fdad766c10171daa9c1076098e40f4a322e'; // varchar, Freitext
+const ALTANLAGE_WECHSELRICHTER_FIELD_KEY = '8f5e870d01746e8a68812de2ed3993f57fffafce'; // varchar, Freitext
+const ALTANLAGE_SPEICHER_FIELD_KEY = '0b6f2e9dd10869ff362f6394bd0f31da20a8ed33'; // varchar, Freitext
+
 // ===== Zusätzliches Dach 2 / Dach 3 (27.08.2026, siehe FieldSetup2_3.js) =====
 // Eigene Custom Fields pro Zusatzdach (Präfix 2_/3_), NICHT in CONTENT_FIELDS aufgenommen -- die
 // meisten Deals haben nur ein Dach, als Pflicht-/optionale Felder würden sie die "Leere Felder"-
@@ -215,7 +227,13 @@ const CONTENT_FIELDS = [
   // Neue Felder, bei bereits laufenden Deals im Regelfall noch leer -- zählen deshalb NICHT als
   // Pflichtfeld mit, sonst zeigt "Leere Felder" im Log-Sheet ab sofort dauerhaft diese zwei.
   { key: ELEKTROMATERIAL_GEZAHLT_FIELD_KEY, label: 'Elektromaterial gezahlt von', optional: true },
-  { key: ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY, label: 'Elektromaterial organisiert von', optional: true }
+  { key: ELEKTROMATERIAL_ORGANISIERT_FIELD_KEY, label: 'Elektromaterial organisiert von', optional: true },
+  // Netzanmeldung-Baustein (07.09.2026): bei bestehenden Deals noch nicht befüllt, gleiches Prinzip
+  // wie bei den Elektromaterial-Feldern oben -- optional, sonst Log-Rauschen ab sofort für alle Altdeals.
+  { key: NEUANLAGE_ERWEITERUNG_FIELD_KEY, label: 'Neuanlage oder Erweiterung', optional: true },
+  { key: ALTANLAGE_PHOTOVOLTAIK_FIELD_KEY, label: 'Altanlage Photovoltaik', optional: true },
+  { key: ALTANLAGE_WECHSELRICHTER_FIELD_KEY, label: 'Altanlage Wechselrichter', optional: true },
+  { key: ALTANLAGE_SPEICHER_FIELD_KEY, label: 'Altanlage Speicher', optional: true }
 ];
 
 /** Zählt befüllte/leere PFLICHT-Inhaltsfelder eines Deals -- Grundlage für die Log-Spalten "Befüllt" und "Leere Felder". */
