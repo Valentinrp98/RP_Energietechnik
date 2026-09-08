@@ -3,22 +3,23 @@
 // ============================================================
 // Zweck: Geburtstage aus einem Slack Custom Profile Field ("Geburtstag") lesen
 // und als jährlich wiederkehrende Ganztags-Events in EINEN gemeinsamen Google-
-// Kalender ("RP Geburtstage") schreiben. Kein Schreiben in individuelle
+// Kalender ("Geburtstage RP intern") schreiben. Kein Schreiben in individuelle
 // Mitarbeiter-Kalender — alle abonnieren/sehen denselben Kalender.
 //
 // Ablauf:
-//   1. pruefeKonfiguration() — legt den Kalender beim ersten Lauf selbst an
-//      (falls CALENDAR_ID leer), prüft Slack-Token + Feld-ID.
+//   1. pruefeKonfiguration() — prüft nur (Token, Feld-ID, Kalenderzugriff), legt nichts an.
 //   2. ermittleGeburtstagsFeldId() — einmalig, falls SLACK_BIRTHDAY_FIELD_ID
 //      noch leer ist (siehe SlackClient.gs).
 //   3. syncGeburtstage() — Kernlogik (siehe CalendarSync.gs), täglich per
 //      richteTaeglichenTriggerEin() (siehe Setup.gs).
 //
-// Voraussetzungen (siehe README.md) — nur Valentin/Slack-Admin kann das:
-//   - Slack Custom Profile Field "Geburtstag" (Typ Datum) angelegt
-//   - Slack App + Bot Token (Scopes: users:read, users.profile:read) installiert
-//   - Dieses Apps-Script-Projekt im Editor erstellt und an dieses Repo gebunden
-//     (.clasp.json mit echter scriptId, siehe RP-Google-Scripts/.claude/skills/gs-deploy)
+// Setup-Stand 08.09.2026 — erledigt:
+//   - Slack Custom Profile Field "Geburtstag" (Typ Date) angelegt, Feld-ID live verifiziert
+//   - Slack App "Geburtstagsapp RP" + Bot Token (users:read, users.profile:read) installiert
+//   - Apps-Script-Projekt per clasp create gebunden, Code gepusht
+//   - Kalender "Geburtstage RP intern" manuell unter sales@rp-energietechnik.at angelegt
+// Offen: Bot Token in Script Properties, Kalender-Schreibrecht für den ausführenden
+// Account, Mitarbeiter tragen ihr Geburtsdatum ein.
 
 const SLACK_API_BASE = 'https://slack.com/api';
 
@@ -35,10 +36,11 @@ function getSlackToken() {
 // IDs sind nicht geheim — analog ERGEBNIS_SHEET_ID in Telefon-Qualifizierung/Config.gs
 // als Konstante im Code, nicht in Script Properties.
 
-// Leer lassen, bis pruefeKonfiguration() den Kalender einmal selbst angelegt hat
-// und die ID geloggt hat — dann hier eintragen.
 // Manuell von Valentin unter sales@rp-energietechnik.at angelegt (08.09.2026) -- nicht vom
 // Skript, legeKalenderAnUndZeigeId() ist damit für dieses Setup nicht mehr nötig.
+// ⚠️ Der Kalender gehört sales@, das Skript läuft aber als der Account, der es autorisiert hat.
+// Dieser Account braucht auf dem Kalender "Änderungen an Terminen vornehmen", sonst wirft
+// pruefeKonfiguration() "Kalender nicht gefunden/kein Zugriff" (aufgetreten 08.09.2026).
 const CALENDAR_ID = '9a320c57e44d7fa904c66b39e6428813f40c8986a16478909d53006f154a7b6d@group.calendar.google.com';
 const CALENDAR_NAME = 'Geburtstage RP intern';
 const WORKSPACE_DOMAIN = 'rp-energietechnik.at'; // für domainweite Kalenderfreigabe
