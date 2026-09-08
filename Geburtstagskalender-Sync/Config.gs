@@ -61,11 +61,12 @@ const BIRTHDAY_CHANNEL_IDS = [
 ];
 
 // true = Simulation: es wird nur geloggt, was angelegt/geändert/gelöscht WÜRDE.
-// AUF true LASSEN, bis Valentin explizit sagt "ja, live in den Kalender schreiben"
-// (Arbeitsregel "Nie ungefragt schreiben" gilt hier genauso wie für Pipedrive).
-// Deckt die Events ab -- NICHT das einmalige Anlegen des Kalenders selbst, das passiert
-// nur auf ausdrücklichen Zuruf über legeKalenderAnUndZeigeId() (Setup.gs).
-const DRY_RUN = true;
+// Von Valentin am 08.09.2026 ausdrücklich freigegeben ("ja dry run false bitte") --
+// schreibt jetzt echte Kalender-Events und postet echte Gratulationen in die Channels.
+// Deckt Events und Posts ab -- NICHT das Anlegen des Kalenders selbst, das passiert nur
+// auf ausdrücklichen Zuruf über legeKalenderAnUndZeigeId() (Setup.gs), wird hier aber
+// ohnehin nicht mehr gebraucht (Kalender existiert manuell).
+const DRY_RUN = false;
 
 // Weicher Ausstieg vor dem 6-Min-Ausführungslimit — bei größerer Belegschaft kann
 // die Schleife über users.profile.get + Calendar.Events.list sonst mittendrin
