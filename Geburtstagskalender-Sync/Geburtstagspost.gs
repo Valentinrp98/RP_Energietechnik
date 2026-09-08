@@ -26,7 +26,7 @@ function postGeburtstagsGruesse() {
   }
 
   geburtstagskinder.forEach(function (person) {
-    const text = '🎂 Heute hat <@' + person.userId + '> Geburtstag — alles Gute!';
+    const text = baueGratulationsText(person.userId);
 
     BIRTHDAY_CHANNEL_IDS.forEach(function (channelId) {
       // Doppelpost-Schutz pro Tag, Person UND Channel. Der Status wird nach JEDEM
@@ -56,6 +56,29 @@ function postGeburtstagsGruesse() {
       speicherePostStatus(status);
     });
   });
+}
+
+// Gender-neutral gehalten (kein "ihn/sie"), damit die Nachricht für alle passt, und mit
+// Einladung an das Team, im Thread mitzugratulieren.
+function baueGratulationsText(userId) {
+  return '🎂 *Heute hat <@' + userId + '> Geburtstag!*\n\n' +
+    'Alles Gute, viel Gesundheit und ein großartiges neues Lebensjahr 🎉\n' +
+    'Lasst eure Glückwünsche hier 👇';
+}
+
+// Einmaliger, echter Testpost in den ersten Channel aus BIRTHDAY_CHANNEL_IDS (GB-Channel).
+// Ignoriert DRY_RUN bewusst -- der Sinn der Funktion ist genau der eine sichtbare Post, um
+// Scope und Channel-Mitgliedschaft zu beweisen, ohne den Live-Schalter für Kalender und
+// Tagesposts umzulegen. Rührt den Doppelpost-Status nicht an.
+const TEST_USER_ID = 'U0BM9J0KPQT'; // Valentin -- nur für den Testpost, damit die Erwähnung echt rendert
+
+function testeGratulationsPost() {
+  const channelId = BIRTHDAY_CHANNEL_IDS[0];
+  const text = baueGratulationsText(TEST_USER_ID) +
+    '\n\n_(Testlauf — heute ist kein echter Geburtstag.)_';
+
+  fetchSlackJson('chat.postMessage', null, { channel: channelId, text: text });
+  Logger.log('Testpost in %s abgeschickt.', channelId);
 }
 
 function ladePostStatus(heuteKey) {
