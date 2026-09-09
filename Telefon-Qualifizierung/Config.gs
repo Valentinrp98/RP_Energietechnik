@@ -140,10 +140,9 @@ const MAX_LAUFZEIT_MS = 4.5 * 60 * 1000; // weicher Ausstieg vor dem 6-Min-Limit
 // ganze Monat leerräumt (sonst könnten neue Leads vom 2. Tag des Monats bis zum nächsten Monat
 // warten, weil Tag 1 schon alles verbraucht hat); MAX_EXISTENZ_CHECKS_PRO_MONAT ist die harte
 // Obergrenze, Sicherheitsabstand zu den echten 100. Bei Upgrade auf einen bezahlten Plan beide hochsetzen.
-// Einmalig auf 50 angehoben für den 50er-Batch vom 05.09.2026 (Valentins Wunsch) --
-// danach bewusst wieder auf einen kleinen Wert zurückstellen (z.B. 5), damit der tägliche
-// Trigger künftig nicht in einem Lauf das ganze Monatskontingent verbrennt.
-const MAX_EXISTENZ_CHECKS_PRO_LAUF = 50;
+// Test (4) + Hauptbatch (50) am 07.09.2026 gelaufen. Ab jetzt klein für den täglichen Trigger --
+// der soll den Rest über die Zeit abarbeiten, nicht in einem Rutsch.
+const MAX_EXISTENZ_CHECKS_PRO_LAUF = 5;
 const MAX_EXISTENZ_CHECKS_PRO_MONAT = 90;
 
 // Kopfzeile fett+fixiert, Verdacht-Spalte rot hinterlegt wenn nicht leer -- macht aus dem

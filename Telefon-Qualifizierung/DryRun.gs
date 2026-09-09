@@ -49,22 +49,48 @@ function getPersonsPage(cursor) {
 }
 
 // Löst NEU_LABEL_TEXT zur Laufzeit auf eine Label-ID auf, statt die 49 hartzucodieren.
-// Nimmt die erste Seite (500 neueste Personen) -- das Label ist laut Screenshot auf fast
-// jeder aktuellen Person, eine Seite reicht damit praktisch immer.
+// Quelle sind die Feld-Metadaten (/personFields -> Label-Feld mit allen Optionen), nicht mehr
+// eine 500er-Personenseite: die Metadaten enthalten ALLE Labels des Accounts, auch wenn gerade
+// keine der neuesten Personen das Label trägt, sind schon von getPersonFields() gecacht und
+// kosten damit keinen zusätzlichen 500er-Abruf pro Lauf.
+//
+// Das Label-Feld wird NICHT über einen hartcodierten field_code gesucht (09.09.2026):
+// Am Personen-OBJEKT heißt das Attribut in v2 `label_ids` (live geprüft), aber bei
+// Pipedrive-Built-ins weicht der field_code in den Metadaten davon ab -- die Telefonnummern
+// stehen am Objekt unter `phones`, das Feld heißt `phone`. Ob das Label-Feld also `label_ids`
+// oder (v1-Erbe) `label` heißt, ist nicht dokumentiert. Ein falscher Name hätte hier nicht nur
+// ungenau gearbeitet, sondern den ganzen Lauf geworfen (siehe Aufrufer unten). Deshalb beide
+// Namen probieren und als letzten Ausweg das einzige Optionsfeld nehmen, dessen Optionen den
+// gesuchten Label-Text enthalten.
+const LABEL_FELD_CODES = ['label_ids', 'label'];
+
 function resolveNeuLabelId() {
-  const seite = fetchPipedrive('/persons?limit=500&sort_by=add_time&sort_direction=desc&include_labels=true');
-  for (const person of (seite.data || [])) {
-    for (const label of (person.labels || [])) {
-      if (label.label && label.label.toLowerCase() === NEU_LABEL_TEXT.toLowerCase()) return label.id;
-    }
+  const felder = getPersonFields();
+  const gesucht = NEU_LABEL_TEXT.trim().toLowerCase();
+  const hatGesuchtesLabel = f => (f.options || []).some(o =>
+    (o.label || '').trim().toLowerCase() === gesucht);
+
+  let labelFeld = felder.find(f => LABEL_FELD_CODES.indexOf(f.field_code) !== -1 && f.options);
+  // Fallback: Feld unbekannt benannt -- dann über den Label-Text selbst finden.
+  if (!labelFeld || !hatGesuchtesLabel(labelFeld)) {
+    labelFeld = felder.find(hatGesuchtesLabel) || labelFeld;
   }
-  return null;
+  if (!labelFeld || !labelFeld.options) return null;
+
+  const option = labelFeld.options.find(o =>
+    (o.label || '').trim().toLowerCase() === gesucht);
+  return option ? option.id : null;
 }
 
 function ermittleVerdacht(format, existenz) {
+  if (format.platzhalterVerdacht) return 'Sieht nach Platzhalter/Fake-Nummer aus (Ziffernfolge) -- manuell prüfen, auch wenn Existenz-Check "aktiv" sagt';
   if (!format.formatOk) return 'Formatfehler: ' + format.reason;
   if (existenz && existenz.fehler) return 'Existenz-Check fehlgeschlagen: ' + existenz.fehler;
   if (existenz && existenz.existiert === false) return 'Existenz-Check meldet Nummer als NICHT aktiv';
+  // existiert === null heißt: Anbieter hat einen Status geliefert, den wir nicht als klares
+  // ja/nein deuten (siehe deuteLineStatus in ExistenceCheck.gs). Sichtbar machen, sonst sieht
+  // die Zeile wie ein sauberes Ergebnis aus, obwohl nichts nach Pipedrive geschrieben wurde.
+  if (existenz && existenz.existiert === null) return 'Line-Status unklar (' + (existenz.rohantwort && existenz.rohantwort.phone_validation ? existenz.rohantwort.phone_validation.line_status : 'kein Wert') + ') -- nichts nach Pipedrive geschrieben';
   if (existenz && existenz.abuseErkannt === true) return 'Abuse erkannt (AbstractAPI)';
   if (existenz && existenz.riskLevel === 'high') return 'Hohes Risk-Level';
   return '';
@@ -93,6 +119,26 @@ function taeglicherTelefonCheck() {
   if (!ERGEBNIS_SHEET_ID) {
     throw new Error('ERGEBNIS_SHEET_ID ist leer -- zuerst pruefeKonfiguration() laufen lassen und die ID eintragen.');
   }
+
+  // Zwei Läufe gleichzeitig (Tages-Trigger um 6:00 + manueller Start im Editor) würden dieselbe
+  // "erledigt"-Liste lesen, dieselben Personen doppelt prüfen (doppeltes Kontingent) und
+  // doppelte Zeilen ins Sheet schreiben. Genau der D2-Fehler aus RP-Google-Scripts/CLAUDE.md.
+  // tryLock statt waitLock: wenn schon einer läuft, ist der zweite Lauf schlicht unnötig.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    Logger.log('Ein anderer Lauf ist gerade aktiv (Trigger + manueller Start?) -- dieser Lauf beendet sich ohne etwas zu tun.');
+    return;
+  }
+  try {
+    fuehreTelefonCheckAus();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// NICHT direkt per ▷ starten -- das umgeht den Lock oben. Einstiegspunkt ist immer
+// taeglicherTelefonCheck().
+function fuehreTelefonCheckAus() {
   const start = Date.now();
   const props = PropertiesService.getScriptProperties();
   const monat = aktuellerMonat();
@@ -111,7 +157,7 @@ function taeglicherTelefonCheck() {
 
   const neuLabelId = resolveNeuLabelId();
   if (!neuLabelId) {
-    throw new Error('Kein Person-Label mit Text "' + NEU_LABEL_TEXT + '" gefunden -- Label umbenannt? NEU_LABEL_TEXT in DryRun.gs anpassen.');
+    throw new Error('Kein Person-Label mit Text "' + NEU_LABEL_TEXT + '" gefunden -- Label umbenannt? listePersonFields() ausführen und NEU_LABEL_TEXT in DryRun.gs abgleichen.');
   }
 
   const spreadsheet = SpreadsheetApp.openById(ERGEBNIS_SHEET_ID);
@@ -139,6 +185,16 @@ function taeglicherTelefonCheck() {
     }
     cursor = seite.additional_data && seite.additional_data.next_cursor;
     if (!cursor) break;
+
+    // Sobald allein die "new"-Warteschlange das Lauf-Kontingent füllt, bringt Weiterpaginieren
+    // nichts mehr: "new" wird zuerst abgearbeitet, mehr als MAX_EXISTENZ_CHECKS_PRO_LAUF geht
+    // in diesem Lauf sowieso nicht. Ohne diesen Abbruch werden bei ~7.000 Personen jeden Tag
+    // ~14 Seiten geladen, um am Ende 5 Nummern zu prüfen. Personen ohne Telefonnummer zählen
+    // nicht gegen das Kontingent, deshalb ein kleiner Puffer obendrauf.
+    if (neuQueue.length >= MAX_EXISTENZ_CHECKS_PRO_LAUF * 3) {
+      Logger.log('Genug "new"-Kandidaten für diesen Lauf gefunden (%s) -- Pagination hier abgebrochen, restlicher Bestand wird erst geladen wenn "new" abgearbeitet ist.', neuQueue.length);
+      break;
+    }
   }
   Logger.log('Einsortiert: %s Personen mit Label "new", %s im übrigen Bestand (jeweils noch nicht erledigt).', neuQueue.length, restQueue.length);
 
@@ -187,9 +243,11 @@ function taeglicherTelefonCheck() {
       // (laut Doku: "if you submit ... an invalid phone number ... that still counts as
       // 1 credit"). Bei Formatfehlern bringt der Existenz-Check ohnehin kaum verlässliche
       // Aussage -- deshalb nur bei formatOk aufrufen, sonst wird das knappe Monatskontingent
-      // für Nummern verbrannt, die schon als Format-Problem geflaggt sind.
+      // für Nummern verbrannt, die schon als Format-Problem geflaggt sind. Bei Platzhalter-
+      // Verdacht ebenfalls überspringen -- das Ergebnis wird eh verworfen (siehe
+      // PipedriveWriteBack.gs), also lohnt sich der Credit nicht (Fall Hakenschmidt, 08.09.2026).
       let existenz = null;
-      if (format.formatOk) {
+      if (format.formatOk && !format.platzhalterVerdacht) {
         existenz = checkPhoneExistence(format.normalized);
         existenzChecksMonat++;
         existenzChecksDiesLauf++;

@@ -60,7 +60,29 @@ Alle Feld-Keys und die drei Options-IDs werden zur Laufzeit über den Klartext-N
 
 **`WRITE_TO_PIPEDRIVE`** (Config.gs) steht seit 05.09.2026 auf `true` (von Valentin explizit freigegeben). Zum Zurückschalten auf reine Simulation: auf `false` setzen — dann zeigt die Sheet-Spalte "Pipedrive-Status" nur noch, was geschrieben WÜRDE (`DRY-RUN -- würde schreiben: "..."`).
 
-## Bekannte Grenzen (Stand 05.09.2026)
+## Review-Runde 08.09.2026 (Opus, auf Valentins „ich will den fehlerfrei haben")
+
+Anlass: Rudolf Hakenschmidt (Person 7223) bekam `ja +(+43) ergänzt` für die Nummer `01234565649` — offensichtlich eine Platzhalter-Eingabe aus dem Lead-Formular, für die AbstractAPI trotzdem `line_status: active` gemeldet hat.
+
+| # | Befund | Fix |
+|---|---|---|
+| P0 | `existiert: line_status === 'active'` machte aus **jedem** unbekannten Status ein hartes „nein" → falsches „nein" nach Pipedrive, Setter ruft echten Lead nicht an | `deuteLineStatus()` mit drei Zuständen: `active` → ja, explizit negative Liste → nein, **alles andere → null = unklar, nichts schreiben** |
+| P0 | Kein `LockService` — Tages-Trigger 6:00 + manueller Start gleichzeitig hätten dieselben Personen doppelt geprüft (doppeltes Kontingent, doppelte Sheet-Zeilen). D2-Fehlerklasse aus den Repo-Befunden | `tryLock(5000)` in `taeglicherTelefonCheck()`, eigentliche Logik in `fuehreTelefonCheckAus()` (die **nicht** direkt per ▷ starten) |
+| P1 | Platzhalter-Check hätte echte Firmen-Zentralen getroffen (`+43 1 500 0000` = 6 Nullen am Stück) | Getrennte Schwellen: auf-/absteigende Läufe ab 6, **Wiederholungen erst ab 8** |
+| P1 | `resolveNeuLabelId()` holte 500 Personen pro Lauf und warf, falls „new" dort zufällig nicht vorkam | löst jetzt über `/personFields` → Feld `label_ids` auf (alle Labels des Accounts, schon gecacht) |
+| P1 | Phase 1 paginierte immer den ganzen Bestand (~14 Calls bei 7.000 Personen), um am Ende 5 Nummern zu prüfen | Abbruch sobald genug „new"-Kandidaten gefunden sind |
+| P2 | Sheet-Spalte „Pipedrive-Status" meldete „Existenz-Check unklar" auch dann, wenn nie ein Check lief | Grund wird jetzt unterschieden (Platzhalter / kein Check / API-Fehler / Status nicht deutbar) |
+
+**Test-Harness:** `_tests/logiktest.js`, 33 Fälle über die reinen Funktionen (Platzhalter-Erkennung, Normalisierung, `wurdeVeraendert`, Line-Status-Deutung). Läuft ohne Apps-Script-API:
+```
+node _tests/logiktest.js
+```
+`.clasp.json` hat deshalb `skipSubdirectories: true` — sonst würde clasp die Testdatei mit ins Apps-Script-Projekt pushen und dort die Funktionsnamen doppelt definieren.
+
+## Bekannte Grenzen (Stand 08.09.2026)
+
+- **Platzhalter-Erkennung ist Heuristik, kein Wahrheitsbeweis.** Sie erkennt Ziffernläufe (`0123456…`, `0000000…`), aber keine „unauffällig erfundene" Nummer wie `+43 664 382 91 74`. Umgekehrt kann eine echte Nummer mit langem Lauf theoretisch geflaggt werden — dann steht sie als Verdacht im Sheet, es wird nur nichts nach Pipedrive geschrieben (kein Datenverlust).
+- **`testEinzelneNummer()` zählt nicht gegen `MAX_EXISTENZ_CHECKS_PRO_MONAT`**, verbraucht aber echte AbstractAPI-Credits. Deshalb der Puffer (90 statt 100).
 
 - **"Erledigt" heißt: steht im Ergebnis-Sheet.** Löscht man dort Zeilen, wird die betroffene Person beim nächsten Lauf einfach nochmal geprüft (verbraucht dann erneut Monatskontingent) — kein separates Tracking daneben.
 - **Skalierung beim Überspringen nicht optimiert.** Je mehr Personen schon erledigt sind, desto mehr Pipedrive-Seiten muss ein Lauf überspringen, bevor er auf frische trifft. Bei sehr großem Bestand (mehrere Zehntausend) könnte das irgendwann an die 4,5-Min-Laufzeitgrenze stoßen — für die aktuelle RP-Datenmenge kein Thema, "erst messen dann optimieren".

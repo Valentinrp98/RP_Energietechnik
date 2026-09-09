@@ -77,6 +77,11 @@ function pruefePersonFelder() {
 // schreiben statt zu raten (CLAUDE.md: "bei mehrdeutigen Daten nicht raten, sondern
 // entscheidbar machen"). Valentin hat aktuell nur 3 Optionen definiert, keine für "unklar".
 function ermittleStatusOptionText(format, existenz) {
+  // Platzhalter-Verdacht (z.B. "01234565649", siehe PhoneFormat.gs) zieht VOR dem Existenz-
+  // Ergebnis -- AbstractAPI hat für genau so einen Fall "aktiv" gemeldet, obwohl die Nummer
+  // offensichtlich erfunden war (Rudolf Hakenschmidt, 08.09.2026). Lieber nichts schreiben als
+  // ein falsches "ja".
+  if (format.platzhalterVerdacht) return null;
   if (!existenz || existenz.fehler || existenz.existiert === null) return null;
   if (existenz.existiert === false) return OPTION_NEIN;
   return format.wurdeVeraendert ? OPTION_JA_KORRIGIERT : OPTION_JA;
@@ -87,7 +92,12 @@ function ermittleStatusOptionText(format, existenz) {
 function schreibePersonStatus(personId, rawValue, format, existenz) {
   const statusText = ermittleStatusOptionText(format, existenz);
   if (statusText === null) {
-    return 'übersprungen (Existenz-Check unklar, kein Options-Text bestimmbar)';
+    // Grund unterscheiden -- die Spalte ist zum Diagnostizieren da. "Existenz-Check unklar" bei
+    // einem Platzhalter-Fall wäre irreführend, dort lief nie ein Check.
+    if (format.platzhalterVerdacht) return 'übersprungen (Platzhalter-/Fake-Verdacht, kein Existenz-Check gemacht)';
+    if (!existenz) return 'übersprungen (kein Existenz-Check gelaufen -- Formatfehler oder Kontingent)';
+    if (existenz.fehler) return 'übersprungen (Existenz-Check fehlgeschlagen: ' + existenz.fehler + ')';
+    return 'übersprungen (Line-Status nicht als ja/nein deutbar)';
   }
 
   const existiertKey = getPersonFieldKeyByLabel(FIELD_LABEL_EXISTIERT);

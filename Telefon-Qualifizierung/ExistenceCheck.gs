@@ -11,6 +11,23 @@
 // "line_status" ist die eigentliche Existenzaussage -- "is_valid" heißt nur "syntaktisch
 // plausibel" (das leistet unser eigener Format-Check schon kostenlos).
 
+// Die Doku nennt nur Beispiele ("e.g. active, inactive"), keine vollständige Werteliste.
+// Deshalb DREI Zustände statt zwei: nur ein explizit negativer Status ergibt "existiert nicht",
+// alles Unbekannte (fehlendes Feld, "unknown", ein künftiger neuer Wert) ergibt null = unklar
+// und wird von ermittleStatusOptionText() bewusst NICHT nach Pipedrive geschrieben.
+// Vorher stand hier `line_status === 'active'`, womit jeder unbekannte Status zu einem harten
+// "nein" wurde -- ein falsches "nein" ist teurer als kein Wert, weil der Setter einen echten
+// Lead dann gar nicht anruft.
+const LINE_STATUS_NEGATIV = ['inactive', 'disconnected', 'unallocated', 'invalid', 'not_in_service'];
+
+function deuteLineStatus(status) {
+  if (typeof status !== 'string') return null;
+  const s = status.trim().toLowerCase();
+  if (s === 'active') return true;
+  if (LINE_STATUS_NEGATIV.indexOf(s) !== -1) return false;
+  return null; // unklar -- lieber nichts behaupten
+}
+
 function checkPhoneExistence(e164Nummer) {
   const url = ABSTRACT_API_BASE + '?api_key=' + getAbstractApiKey() + '&phone=' + encodeURIComponent(e164Nummer);
 
@@ -26,7 +43,7 @@ function checkPhoneExistence(e164Nummer) {
   const risk = antwort.phone_risk || {};
 
   return {
-    existiert: validation.line_status === 'active',
+    existiert: deuteLineStatus(validation.line_status),
     valide: validation.is_valid === true,
     lineType: carrier.line_type || null,
     carrier: carrier.name || null,

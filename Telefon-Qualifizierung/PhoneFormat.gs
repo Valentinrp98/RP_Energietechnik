@@ -23,8 +23,47 @@ function ergebnis(raw, normalized, formatOk, reason, lineTypeGuess) {
     // true nur, wenn an der NUMMER etwas geändert wurde (Ländervorwahl ergänzt, führende
     // Null ersetzt, 0043 -> +43) -- steuert die Pipedrive-Rückmeldung "ja +(+43) ergänzt"
     // vs. schlichtes "ja".
-    wurdeVeraendert: istInhaltlichVeraendert(raw, normalized)
+    wurdeVeraendert: istInhaltlichVeraendert(raw, normalized),
+    // true = sieht nach Platzhalter/Tastatur-Eingabe aus (z.B. "01234565649" bei Rudolf
+    // Hakenschmidt, 08.09.2026) -- strukturell eine gültige AT-Nummer, AbstractAPI meldete
+    // sogar "aktiv", war aber offensichtlich erfundene Lead-Formular-Eingabe. Wird in
+    // ermittleStatusOptionText() (PipedriveWriteBack.gs) wie ein unklares Ergebnis behandelt
+    // -- lieber nichts nach Pipedrive schreiben als ein falsches "ja".
+    platzhalterVerdacht: wirktPlatzhalterhaft(raw)
   };
+}
+
+// Längster Lauf aufeinanderfolgender Ziffern mit konstantem Schritt (z.B. Schritt +1 für
+// "0123456", Schritt 0 für "0000000"). Reine Ziffernfolge rein, keine Formatzeichen.
+function laengsterLauf(ziffern, schritt) {
+  let maxLauf = 1, lauf = 1;
+  for (let i = 1; i < ziffern.length; i++) {
+    if (ziffern.charCodeAt(i) - ziffern.charCodeAt(i - 1) === schritt) {
+      lauf++;
+      if (lauf > maxLauf) maxLauf = lauf;
+    } else {
+      lauf = 1;
+    }
+  }
+  return maxLauf;
+}
+
+// Auf-/absteigende Läufe ab 6 Ziffern ("0123456" in Hakenschmidts Nummer, "9876543210") --
+// bei einer echten Rufnummer ist so ein Lauf statistisch praktisch ausgeschlossen.
+// Für WIEDERHOLUNGEN derselben Ziffer liegt die Schwelle absichtlich höher (8): echte
+// Firmen-Zentralen enden real auf mehreren Nullen (z.B. "+43 1 500 0000" = 6 Nullen am Stück),
+// die dürfen nicht als Fake geflaggt werden. Klassische Platzhalter ("0000000000",
+// "1111111111") haben 10 gleiche Ziffern und werden weiterhin erkannt.
+const PLATZHALTER_LAUF_SEQUENZ = 6;
+const PLATZHALTER_LAUF_WIEDERHOLUNG = 8;
+
+function wirktPlatzhalterhaft(raw) {
+  if (typeof raw !== 'string') return false;
+  const ziffern = raw.replace(/[^0-9]/g, '');
+  if (ziffern.length < PLATZHALTER_LAUF_SEQUENZ) return false;
+  return laengsterLauf(ziffern, 1) >= PLATZHALTER_LAUF_SEQUENZ
+    || laengsterLauf(ziffern, -1) >= PLATZHALTER_LAUF_SEQUENZ
+    || laengsterLauf(ziffern, 0) >= PLATZHALTER_LAUF_WIEDERHOLUNG;
 }
 
 // Hier stand bis 05.09.2026 nur "normalized !== raw". Damit galt jede sauber, aber hübsch
