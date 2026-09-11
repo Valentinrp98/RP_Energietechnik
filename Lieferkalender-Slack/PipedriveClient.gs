@@ -1,0 +1,125 @@
+// ============================================================
+// PIPEDRIVE — Deals der Pipeline 2 holen, plus PLZ aus den Personen
+// ============================================================
+// Muster uebernommen aus Fortschritt-Script/Code.gs:92-101 (Cursor-Pagination,
+// weicher Ausstieg). Wichtig: der Listen-Endpoint liefert custom_fields schon
+// mit — kein Call pro Deal.
+
+function fetchPipedriveJson(pfad, params) {
+  const alle = Object.assign({}, params || {});
+  const url = PIPEDRIVE_BASE + pfad + '?' + toQueryString(alle);
+  for (let versuch = 1; versuch <= 3; versuch++) {
+    const response = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: { 'x-api-token': getPipedriveToken() },
+      muteHttpExceptions: true
+    });
+    const code = response.getResponseCode();
+    if (code === 429 || code >= 500) {
+      if (versuch === 3) throw new Error('Pipedrive ' + code + ' bei ' + pfad + ' nach 3 Versuchen.');
+      Utilities.sleep(versuch * 2000); // 2s, 4s
+      continue;
+    }
+    const json = JSON.parse(response.getContentText());
+    if (code !== 200 || json.success === false) {
+      throw new Error('Pipedrive-Fehler ' + code + ' bei ' + pfad + ': ' + response.getContentText().slice(0, 300));
+    }
+    return json;
+  }
+}
+
+// Alle nicht-archivierten Deals der Fulfillment-Pipeline.
+// ⚠️ KEIN status-Parameter. v2 kennt nur open|won|lost|deleted; "all_not_deleted"
+// wirft HTTP 400. Und status:"won" wird bei RP schon bei der Anlage gesetzt
+// (Origin Marketplace/Zapier) — es traegt kein Liefersignal und darf nicht
+// filtern, sonst fallen Deals lautlos raus (Befund D20).
+function holeFulfillmentDeals() {
+  const start = Date.now();
+  const deals = [];
+  let cursor = null;
+  do {
+    if (Date.now() - start > MAX_LAUFZEIT_MS) {
+      Logger.log('⚠️ Zeitlimit beim Deal-Abruf nach %s Deals — Lauf wird abgebrochen, damit kein halber Snapshot geschrieben wird.', deals.length);
+      throw new Error('Zeitlimit beim Deal-Abruf. Lauf abgebrochen (Snapshot unveraendert).');
+    }
+    const params = { pipeline_id: PIPELINE_ID, limit: 100, include_option_labels: true };
+    if (cursor) params.cursor = cursor;
+    const json = fetchPipedriveJson('/deals', params);
+    (json.data || []).forEach(function (d) { deals.push(d); });
+    cursor = json.additional_data && json.additional_data.next_cursor;
+  } while (cursor);
+  return deals;
+}
+
+// Die PLZ haengt an der Person, nicht am Deal. Ein Bulk-Sweep ueber /persons
+// baut die Map person_id -> { plzFeld, plzAdresse } — deutlich guenstiger als
+// ein Call pro Deal.
+function holePersonenPlzMap() {
+  const map = {};
+  let cursor = null;
+  do {
+    // limit 500 statt 100: RP hat ~7000 Personen, das sind 14 Calls statt 70 —
+    // und zwar bei JEDEM Lauf. Beim 15-Minuten-Trigger ist das der Unterschied
+    // zwischen 1.344 und 6.720 Calls am Tag, und zwischen ~4 s und ~20 s
+    // Laufzeit. 500 ist das v2-Maximum fuer Listen-Endpunkte.
+    const params = { limit: 500 };
+    if (cursor) params.cursor = cursor;
+    const json = fetchPipedriveJson('/persons', params);
+    (json.data || []).forEach(function (p) {
+      const cf = p.custom_fields || {};
+      const adresse = cf[PERSON_ADRESSE_FIELD_KEY];
+      map[p.id] = {
+        plzFeld: normalisierePlz(cf[PERSON_PLZ_FIELD_KEY]),
+        plzAdresse: normalisierePlz(plzAusAdressfeld(adresse))
+      };
+    });
+    cursor = json.additional_data && json.additional_data.next_cursor;
+  } while (cursor);
+  return map;
+}
+
+// Address-Custom-Fields liefern ein Objekt mit Subfeldern (postal_code,
+// locality, formatted_address, value). Die Subfelder sind nur befuellt, wenn die
+// Adresse per Google-Maps-Autocomplete angelegt wurde; bei freier Texteingabe
+// steht alles in value. Beide Faelle abdecken
+// (REFERENZ-Pipedrive-AppsScript.md, Abschnitt Address-Custom-Fields).
+function plzAusAdressfeld(adresse) {
+  if (!adresse) return null;
+  if (typeof adresse === 'string') return ersteViererZahl(adresse);
+  if (adresse.postal_code) return adresse.postal_code;
+  return ersteViererZahl(adresse.formatted_address || adresse.value || '');
+}
+
+function ersteViererZahl(text) {
+  const treffer = /\b(\d{4})\b/.exec(String(text));
+  return treffer ? treffer[1] : null;
+}
+
+function normalisierePlz(wert) {
+  if (wert === null || wert === undefined || wert === '') return null;
+  const nurZiffern = String(wert).replace(/\D/g, '');
+  // Im PLZ-Feld stand schon eine Telefonnummer (REFERENZ, Abschnitt Logging).
+  // Alles, was keine 4-stellige oesterreichische PLZ ist, gilt als unbrauchbar.
+  return nurZiffern.length === 4 ? nurZiffern : null;
+}
+
+// Ein Datumsfeld liefert entweder "2026-09-14" oder null. Kein Zeitzonenthema,
+// solange nicht in ein Date-Objekt umgewandelt wird — deshalb bleibt es String.
+function leseTerminfeld(deal, feldName) {
+  const key = TERMIN_FELDER[feldName];
+  const wert = (deal.custom_fields || {})[key];
+  if (!wert) return '';
+  return String(wert).slice(0, 10);
+}
+
+function leseMontagepartner(deal) {
+  const wert = (deal.custom_fields || {})[MONTAGEPARTNER_FIELD_KEY];
+  if (!wert) return '';
+  if (typeof wert === 'object' && wert.label) return wert.label;
+  return MONTAGEPARTNER_LABELS[Number(wert)] || String(wert);
+}
+
+function leseKundenordner(deal) {
+  const wert = (deal.custom_fields || {})[KUNDENORDNER_FIELD_KEY];
+  return wert ? String(wert) : '';
+}
