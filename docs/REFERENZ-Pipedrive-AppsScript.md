@@ -29,6 +29,10 @@ v1 ist **nicht** abgeschaltet. Drei Dinge laufen weiterhin nur über v1:
 | Deals, Persons, Organizations, dealFields, Activities, itemSearch | **v2** | Header `x-api-token` |
 | **Webhook-Registrierung** (`/v1/webhooks`) | **v1** | Query-Param `?api_token=` |
 | **Files API** (`/v1/files`) | **v1** | Query-Param `?api_token=` |
+| **Notes API** (`/v1/notes`) | **v1** | Query-Param `?api_token=` |
+| **Users** (`/v1/users/{id}`) | **v1** | Query-Param `?api_token=` |
+
+**`POST /v1/notes` antwortet mit HTTP `201`, nicht mit `200` — die offizielle Doku behauptet `200`.** Live verifiziert am 14.09.2026 (Deal 7621, Notiz 13061). Wer nur auf `200` prüft, wirft einen Fehler, obwohl die Notiz **angelegt wurde** — und legt beim nächsten Durchlauf ein Duplikat an. Betrifft jeden Retry-Wrapper, der `code === 200` als einzige Erfolgsbedingung hat (war in `Ordnererstellung-bei-Gewonnen/Config.gs` so). Pflichtfelder: `content` (HTML, wird serverseitig sanitisiert) **plus** genau eine Zuordnung (`deal_id`/`person_id`/`org_id`/…).
 
 **Die Formulierung „Webhooks gibt es nur in v1" ist irreführend und hat schon Fehler verursacht.** Korrekt ist:
 
@@ -49,7 +53,7 @@ v1 ist **nicht** abgeschaltet. Drei Dinge laufen weiterhin nur über v1:
 - **Der Options-Label-Abgleich muss case-insensitiv und als Substring laufen.** Pipedrive-Labels tragen teils Präfixe (`☐ Satteldach`), und `SUNOVA` vs. `Sunova` ist für die numerische Option-ID folgenlos. Ein exakter String-Vergleich in `pruefeKonfiguration()` erzeugt sonst Scheinfehler.
 - **Address-Custom-Fields** liefern ein Objekt mit Subfeldern (`postal_code`, `locality`, `formatted_address`, `value`). Die Subfelder sind **nur befüllt, wenn die Adresse per Google-Maps-Autocomplete angelegt wurde**; bei freier Texteingabe steht alles in `value`, der Rest ist `null`. Beide Fälle abdecken.
 - **Im Webhook-Payload sind Custom Fields Objekte, keine nackten Werte.** Gilt für alle vier Webhook-Projekte. Wer den Wert direkt vergleicht, vergleicht gegen `[object Object]`.
-- **Pagination:** Cursor über `additional_data.next_cursor`, `limit=100` ist sicher. **Cursor immer `encodeURIComponent`** — ein `+` im Cursor wird sonst als Leerzeichen dekodiert und Seiten werden übersprungen oder doppelt geholt.
+- **Pagination:** Cursor über `additional_data.next_cursor`, `limit=100` ist sicher. **Cursor immer `encodeURIComponent`** — ein `+` im Cursor wird sonst als Leerzeichen dekodiert und Seiten werden übersprungen oder doppelt geholt. **Zusätzlich immer einen expliziten, eindeutigen `sort_by` mitgeben** (z.B. `sort_by=id&sort_direction=asc`) — ohne das sortiert die API vermutlich nach `update_time`, und bei mehreren Deals mit demselben Sortierwert können an Seitengrenzen ganze Datensätze **komplett und stillschweigend** aus dem Ergebnis fallen (nicht mal doppelt geholt, einfach weg — kein Fehler, kein Log-Eintrag). Aufgefallen 02.09.2026 in Sheet-Sync/RowCreation.gs (`syncNeueZeilen()`): zwei einzeln verifiziert eligible Deals (7195, 7319) fehlten komplett in mehreren aufeinanderfolgenden `deals?status=won&limit=100`-Läufen über ~469 Deals/~5 Seiten. Fix: `id` als Sortierschlüssel, weil garantiert eindeutig (keine Ties möglich).
 - **`dealFields` immer mit `?limit=500` abrufen.** RP hat deutlich über 100 Deal-Felder; ohne `limit` truncatet die erste Seite und ein Feld gilt fälschlich als „existiert nicht".
 - **Exakte Feldsuche:** `/api/v2/itemSearch/field?entity_type=deal&field={code}&match=exact&return_item_ids=true`. **`/deals/search` hat einen Indexierungs-Delay** und ist für frisch geschriebene Daten unbrauchbar — wer ein Feld schreibt und sofort darauf sucht, bekommt „nicht gefunden". Für frisch Geschriebenes direkt `GET /deals/{id}` nutzen.
 - **Es gibt kein „silent update".** API-Schreibvorgänge lösen Automations genauso aus wie Klicks in der Oberfläche. Vor Massenläufen prüfen, ob Automations auf den betroffenen Feldern hängen — sonst gehen hunderte Mails raus.
@@ -204,6 +208,32 @@ Bewusst als Freitext statt eigener double-Felder pro Kennzahl (kW/kWh/Anzahl) �
 Option-IDs: `234` = Erstellt · `235` = Doku erstellen (Trigger) · `245` = Neu erstellen.
 Das Statusfeld ist **gleichzeitig Trigger und Idempotenz-Marker** — kein Script-Property-State nötig.
 
+### Quali-Felder Setter / Ersttermin (angelegt 11.09.2026, alle 11)
+
+Angelegt per `Sevdesk-Pipdrive_sync/QualiFelderSetup.js` (`qfAnlegen()`, Stufe 1 um 14:58, Stufe 2 um 15:07). Spec: `SPEC-Quali-Felder-Setter.md`.
+Werden von den Settern im Ersttermin befüllt, ersetzen die bisherige Freitext-Vorlage in den Notizen.
+
+| Feld | field_code | Typ | |
+|---|---|---|---|
+| Stromkosten €/Monat | `c108b937caf5aad0c2d48dbc3863a794ded9ec2e` | double | OK |
+| Stromverbrauch kWh/Jahr | `f5b1f9d0c9fb5779fbd5c2b32d9df474f938c41e` | double | OK |
+| Montageart-Präferenz | `b1f1969ced7c29cf0f566319dc9d5c0eb471c699` | enum (6) | OK |
+| Umsetzungszeitpunkt | `2f47be01059ed2c391b80fe2cf76477cb9fcc9bf` | enum (6) | OK |
+| Interesse an (Ersttermin) | `bb4b8c59fa5891867170f6aeaba88cd294307cac` | set (20) | OK |
+| Setter | `75df8ada23f08fa5828020bf92db78bb76ef823a` | **user** | OK |
+| Provision Setter % | `714b3275757e97165c8fe97b266b991266d0e30c` | double | OK |
+| Provision Closer % | `4aee2c1423cb61e004a997ce357928f009fde9b7` | double | OK |
+| Geplanter Montageort | `e4c34197894538f20deed0a1ca0ce11304d93977` | set (18) | OK |
+| E-Auto | `109e5a752dfc57a75aba31d96e87f6442f977e57` | enum (5) | OK |
+| Einschränkung am Standort | `f4948cce46f2b5a5ae168cf4ff20d092f2a2f94e` | set (20) | OK |
+
+`Setter` ist ein **Benutzerfeld** (`field_type: 'user'`) -- per API anlegbar, hat auf Anhieb funktioniert.
+Kein eigenes Closer-Feld: der Closer ist der **Deal-Besitzer**.
+Nicht verwechseln: `Interesse an (Ersttermin)` ist Kaufinteresse, **nicht** die verkaufte Anlage (dafür die sevdesk-Sync-Felder wie `Speicher Kapazität kWh`).
+
+Alle 11 Felder sind angelegt, Options-IDs laufen durchgehend 332–406. `qfAnlegen()` ist idempotent über den Feldnamen — ein erneuter Lauf überspringt alles.
+Pflichtfeld-Setzung (Stromkosten, Montageart) geht nicht über die API, das ist UI-Handarbeit pro Pipeline/Stage.
+
 ### Person-Felder
 
 | Feld | field_code | |
@@ -282,7 +312,53 @@ const ENUM_OPTION_IDS = {
     'IB erfolgt': 231, 'Förderzusage': 232, 'Fertigmeldung': 233
   },
 
-  'Dokumentation-Status': { 'Erstellt': 234, 'Doku erstellen': 235, 'Neu erstellen': 245 }
+  'Dokumentation-Status': { 'Erstellt': 234, 'Doku erstellen': 235, 'Neu erstellen': 245 },
+
+  // Quali-Felder Setter, angelegt 11.09.2026 -- QualiFelderSetup.js
+  'Montageart-Präferenz': {
+    'Selbstmontage': 332, 'Hybrid (Teilmontage)': 333, 'Schlüsselfertig': 334,
+    'Beides anbieten': 335, 'Entscheidet vor Ort': 336, 'Noch offen': 337
+  },
+  'Umsetzungszeitpunkt': {
+    'sofort': 338, '< 3 Monate': 339, 'heuer noch': 340, 'nach dem Winter / Frühjahr': 341,
+    'nächstes Jahr oder später': 342, 'hängt vom Angebot ab': 343
+  },
+  // set-Feld, 20 Optionen
+  'Interesse an (Ersttermin)': {
+    'Speicher': 344, 'Notstrom / Ersatzstrom': 345, 'Inselbetrieb / Autarkie': 346,
+    'Will nicht einspeisen': 347, 'Einspeisung / Überschuss': 348, 'Energiegemeinschaft': 349,
+    'Dynamischer Stromtarif': 350, 'Wallbox': 351, 'Wärmepumpe': 352, 'Klimaanlage': 353,
+    'Heizstab / Warmwasser': 354, 'Pool / Poolheizung': 355, 'Förderung': 356,
+    'Finanzierung / Leasing': 357, 'Erweiterung Altanlage': 358,
+    'Modularer / etappenweiser Ausbau': 359, 'Energiemanagement / Smart Home': 360,
+    'Monitoring-App': 361, 'Optik / unauffällige Module': 362,
+    'Herkunft der Komponenten (Made in Europe)': 363
+  },
+  // set-Feld, 18 Optionen
+  'Geplanter Montageort': {
+    'Hausdach': 364, 'Flachdach / Anbau': 365, 'Garagendach': 366, 'Carport': 367,
+    'Pooldach': 368, 'Terrassen- / Pergolaüberdachung': 369, 'Vordach / Überdachung': 370,
+    'Balkon': 371, 'Wintergarten / Glasdach': 372, 'Fassade': 373,
+    'Nebengebäude / Schuppen': 374, 'Gartenhaus': 375, 'Stadl / Scheune': 376, 'Stall': 377,
+    'Halle / Betriebsgebäude': 378, 'Freifläche / Wiese': 379, 'Zaun': 380,
+    'Standort noch offen': 381
+  },
+  'E-Auto': {
+    'ja, vorhanden': 382, 'geplant / demnächst': 383, 'überlegt es': 384,
+    'nein': 385, 'nein, definitiv nie': 386
+  },
+  // set-Feld, 20 Optionen
+  'Einschränkung am Standort': {
+    'Keine bekannt': 387, 'Denkmalschutz / Ortsbildschutz': 388, 'Bebauungsplan / Widmung': 389,
+    'Genehmigung offen': 390, 'Dachsanierung nötig': 391, 'Eternit / Asbest': 392,
+    'Statik unklar': 393, 'Dachfläche zu klein': 394, 'Verschattung durch Bäume': 395,
+    'Verschattung durch Nachbargebäude': 396, 'Tallage / wenig Wintersonne': 397,
+    'Schnee- / Frostlage': 398, 'Blitzschutz vorhanden': 399,
+    'Netzanschluss / Trafo begrenzt': 400, 'Einspeiselimit Netzbetreiber': 401,
+    'Zählerkasten / Verteiler zu klein': 402, 'Kabelweg schwierig': 403,
+    'Zufahrt / Kran nötig': 404, 'Mietobjekt -- Zustimmung Eigentümer': 405,
+    'Miteigentum / WEG-Beschluss nötig': 406
+  }
 };
 ```
 

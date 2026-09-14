@@ -139,7 +139,11 @@ function callPipedriveWithRetry(doFetch, path) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const response = doFetch();
     const code = response.getResponseCode();
-    if (code === 200) return JSON.parse(response.getContentText()).data;
+    // 201 zusaetzlich zu 200: POST-Endpunkte (z.B. v1 /notes) koennen "201 Created" liefern.
+    // Ohne das landet ein ERFOLGREICHES Anlegen im throw unten -- der Aufrufer haelt es fuer
+    // fehlgeschlagen und legt beim naechsten Event ein Duplikat an. Fuer die bestehenden
+    // GET/PATCH-Aufrufe aendert sich nichts, die antworten immer mit 200.
+    if (code === 200 || code === 201) return JSON.parse(response.getContentText()).data;
     if (code === 429 || code >= 500) {
       if (attempt === maxAttempts) {
         throw new Error(`Pipedrive API-Fehler ${code} bei "${path}" nach ${maxAttempts} Versuchen: ${response.getContentText()}`);

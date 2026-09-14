@@ -47,6 +47,18 @@ function processGewonnenDealUnlocked(dealId) {
   // Voraussetzung für die Ordnererstellung. Prüfung auf person_id passiert in der Funktion selbst.
   schreibeKundendatenSnapshot(dealId, deal);
 
+  // Setter-Info als Notiz (siehe SetterInfoNotiz.gs): gleiche Logik wie oben -- eigene
+  // Automatisierung, laeuft unabhaengig von der Ordnererstellung. Idempotent ueber einen
+  // Marker in der Notiz, sonst gaebe es bei jeder Deal-Aenderung eine neue.
+  // try/catch bewusst NUR hier: die Notiz ist die neueste und am wenigsten erprobte der drei
+  // Automatisierungen in dieser Funktion. Ohne Netz wuerde ein Fehler darin (z.B. Notes-API
+  // zickt) den ganzen Aufruf abbrechen und die etablierte Ordnererstellung mit runterreissen.
+  try {
+    schreibeSetterInfoNotiz(dealId, deal);
+  } catch (err) {
+    logRow(dealId, deal.title, null, 'WARNUNG', null, `Setter-Info-Notiz fehlgeschlagen (Ordnererstellung laeuft weiter): ${err.message}`);
+  }
+
   // Diese beiden Skips sind seit der Webhook-Robustheits-Änderung (2026-08-26, doPost reagiert auf
   // JEDE Deal-Änderung bei gewonnenem Deal statt nur den Status-Wechsel) der Normalfall, nicht die
   // Ausnahme: ein fertiger Deal ohne Montagepartner bekommt bei jeder weiteren Feldänderung erneut
