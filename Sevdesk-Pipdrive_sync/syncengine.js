@@ -103,14 +103,24 @@ function fetchOrderFromSevdesk(orderId) {
 
   // 2. Positionen über eigenen Endpoint
   const posData = sevdeskFetch(`/OrderPos?order[id]=${orderId}&order[objectName]=Order`);
-  // UNGETESTET (31.08.2026): `p.price` als sevdesk-OrderPos-Feld für den Netto-Einzelpreis ist aus
-  // der gängigen sevdesk-API-Struktur abgeleitet (analog InvoicePos), aber NICHT live verifiziert --
-  // vor dem ersten echten Einsatz mit debugOrderPosPreisFelder(orderId) gegen eine echte FS-Order
-  // gegenchecken. Falls `price` nicht stimmt: rohe Positionsdaten dort einsehen und Feldnamen korrigieren.
+  // VERIFIZIERT 10.09.2026 (ersetzt den UNGETESTET-Hinweis vom 31.08.): `p.price` IST der
+  // Netto-Einzelpreis. Gegen Order 26886490 (2026-633-A) per testOrderPosPreisFelder() geprueft --
+  // in allen 11 Positionen gilt `price` == `priceNet`, und `price * quantity` == `sumNet`
+  // (Summe 9.881 = 9.881). Die befuerchtete Verwechslung mit einer Zeilensumme gibt es nicht.
+  // Offen bleibt eine Robustheitsluecke, kein Fehler: sevdesk liefert pro Position `discount`/
+  // `isPercentage`/`sumDiscount`. Bei einem Positionsrabatt waere `price * quantity` zu hoch --
+  // `p.sumNet` direkt zu nehmen waere robuster. In 26886490 waren alle Rabatte 0, deshalb hier
+  // noch nicht umgestellt. Rohdaten jederzeit per testOrderPosPreisFelder() einsehbar.
   const positions = (posData.objects || []).map(p => ({
     name: p.name || (p.part && p.part.name) || 'Unbekannt',
     quantity: Number(p.quantity) || 1,
-    einzelpreisNetto: (p.price !== undefined && p.price !== null) ? Number(p.price) : null
+    einzelpreisNetto: (p.price !== undefined && p.price !== null) ? Number(p.price) : null,
+    // Einheit der Position (11.09.2026). sevdesk liefert sie als `unity.id`: 1 = Stueck,
+    // 7 = Pauschale, 9 = Stunde. NUR damit laesst sich ein REGIE-Stundensatz von einem
+    // Pauschalbetrag unterscheiden -- im Preis selbst steht der Unterschied nicht.
+    // Ausgeloest durch Order 30321086: "MONTAGEARBEITEN (REGIE), 1 x 89" landete vorher als
+    // "Montage Pauschale = 89 EUR" im Deal, gemeint waren aber 89 EUR pro STUNDE.
+    einheitId: (p.unity && p.unity.id !== undefined && p.unity.id !== null) ? Number(p.unity.id) : null
   }));
 
   // 3. Sichtbare Kundennummer (nicht die interne Kontakt-ID!) über Contact-Endpoint
@@ -127,8 +137,32 @@ function fetchOrderFromSevdesk(orderId) {
     orderNumber: order.orderNumber,          // z.B. "2026-154-A" → primärer Matching-Schlüssel
     updateTimestamp: order.update || null,   // für den Duplikat-Schutz
     customerId: customerNumber,              // z.B. "3700" → Fallback-Matching
+    // Bruttosumme des GANZEN Auftrags (09.09.2026). Kommt von sevdesk als STRING ("27140.39"),
+    // nicht als Zahl -- vor dem Rechnen/Formatieren also Number(), siehe formatiereBruttoSumme().
+    // Bewusst vom Auftrag gelesen und nicht aus den Positionen aufsummiert: sevdesk hat Rabatte
+    // und Steuer hier schon eingerechnet, ein Aufsummieren der Positionen läge bei rabattierten
+    // Angeboten daneben.
+    sumGross: (order.sumGross !== undefined && order.sumGross !== null) ? order.sumGross : null,
     positions
   };
+}
+
+/**
+ * Formatiert die sevdesk-Bruttosumme für das Pipedrive-TEXTfeld "Gesamtsumme Brutto" (09.09.2026).
+ * Österreichisches Format (Punkt = Tausender, Komma = Dezimal), von Hand gebaut statt über
+ * toLocaleString('de-AT') -- die Locale-Daten in Apps Script sind nicht verlässlich.
+ * Gibt null zurück, wenn keine brauchbare Summe vorliegt: dann wird das Feld GELEERT statt
+ * "0,00 €" als scheinbar echten Wert zu hinterlassen.
+ * @param {string|number|null} sumGross Rohwert aus order.sumGross
+ * @returns {string|null} z.B. "27.140,39 €"
+ */
+function formatiereBruttoSumme(sumGross) {
+  if (sumGross === null || sumGross === undefined || sumGross === '') return null;
+  const zahl = Number(sumGross);
+  if (!isFinite(zahl) || zahl <= 0) return null;
+  const teile = zahl.toFixed(2).split('.');
+  const mitTausendern = teile[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${mitTausendern},${teile[1]} €`;
 }
 
 // ============================================================================
@@ -232,7 +266,7 @@ function getDealCustomFieldValue(dealId, fieldKey) {
 // PIPEDRIVE: Deal mit Artikel-Daten füllen
 // ============================================================================
 
-function writeArticleFieldsToDeal(dealId, aggregated) {
+function writeArticleFieldsToDeal(dealId, aggregated, order) {
   const customFields = {};
 
   // Immer aktiv setzen (auch null) — sonst bleiben Werte vom letzten Sync stehen.
@@ -256,7 +290,16 @@ function writeArticleFieldsToDeal(dealId, aggregated) {
   setFieldIfConfigured(customFields, 'Elektroinstallation_Pauschale_EUR', aggregated.fields.Elektroinstallation_Pauschale_EUR);
   setFieldIfConfigured(customFields, 'Elektromaterial_Pauschale_EUR', aggregated.fields.Elektromaterial_Pauschale_EUR);
   setFieldIfConfigured(customFields, 'Technische_Projektierung_Pauschale_EUR', aggregated.fields.Technische_Projektierung_Pauschale_EUR);
-  addEnumFieldIfSet(customFields, 'SM_FS_Typ', aggregated.fields.SM_FS_Typ);
+  // Kein SM_FS_Typ/"Ausführungsart" mehr (09.09.2026, Valentins Entscheidung): das Feld pflegt der
+  // Seller in Pipedrive von Hand. Ein abgeleiteter Wert hätte die Handeingabe bei jedem Sync
+  // überschrieben. Begründung + bekannter field_code stehen in FieldKeysAndMapping.gs.
+
+  // Gesamtsumme Brutto (09.09.2026, TEXT-Feld). Steht nicht in `aggregated`, weil der Wert nicht
+  // aus den Positionen kommt, sondern vom Auftrag selbst -- deshalb der zusätzliche `order`-
+  // Parameter. Fehlt er (alter Aufruf), wird das Feld bewusst gar nicht angefasst statt geleert.
+  if (order) {
+    setFieldIfConfigured(customFields, 'Gesamtsumme_Brutto', formatiereBruttoSumme(order.sumGross));
+  }
 
   // Pipedrive-Limit für autocomplete-Felder: 255 Zeichen. Bei vielen Positionen (z.B. große
   // Gewerbe-Anlagen) überschreitet der zusammengesetzte Summary-String das -- ohne Kappung
@@ -266,12 +309,9 @@ function writeArticleFieldsToDeal(dealId, aggregated) {
     : aggregated.summary;
   customFields[FIELD_KEYS.Verkaufte_Artikel_Summary] = summary;
 
-  // Separate Montage/Elektro/Projektierung-Summary (01.09.2026), gleiches 255-Zeichen-Limit wie oben
-  // -- in der Praxis viel kürzer (max. 4 Positionen), aber der Cap kostet nichts und schützt gleich mit.
-  const montageSummary = aggregated.montageSummary.length > 255
-    ? aggregated.montageSummary.substring(0, 252) + '...'
-    : aggregated.montageSummary;
-  setFieldIfConfigured(customFields, 'Montage_Elektro_Summary', montageSummary);
+  // Montage_Elektro_Summary wurde hier bis 09.09.2026 geschrieben -- verworfen, siehe FIELD_KEYS
+  // in FieldKeysAndMapping.gs. `aggregated.montageSummary` wird weiter gebaut und landet im
+  // Sync-Log (formatiereErkannteFelder), nur eben nicht mehr in einem Pipedrive-Feld.
 
   const result = pipedriveFetch(`/deals/${dealId}`, {
     method: 'patch',
@@ -300,9 +340,9 @@ function setFieldIfConfigured(customFields, fieldName, value) {
 /** Setzt ein Dropdown-Feld auf die passende Options-ID (Groß-/Kleinschreibung egal) oder leert es. */
 function addEnumFieldIfSet(customFields, fieldName, textValue) {
   const fieldKey = FIELD_KEYS[fieldName];
-  // Gleicher PLACEHOLDER-Schutz wie setFieldIfConfigured() -- betrifft aktuell nur SM_FS_Typ, bis
-  // der field_code eingetragen ist. Bestehende Felder (Module_Marke etc.) sind nie PLACEHOLDER,
-  // Verhalten für die bleibt unverändert.
+  // Gleicher PLACEHOLDER-Schutz wie setFieldIfConfigured(). Seit dem Entfernen von SM_FS_Typ
+  // (09.09.2026) ist aktuell kein enum-Feld mehr ein PLACEHOLDER -- der Guard bleibt trotzdem, damit
+  // ein künftig neu angelegtes Feld nicht versehentlich als Platzhalter-Key rausgeht.
   if (!fieldKey || fieldKey.indexOf('PLACEHOLDER') === 0) return;
 
   if (!textValue) {
@@ -518,8 +558,9 @@ function resetSyncState() {
  * Summary, sondern jedes Feld einzeln benannt, so wie es (bei DRY_RUN=false) nach Pipedrive
  * geschrieben würde. Damit sieht man beim DRY_RUN-Log genau, was das Script erkannt hat.
  */
-function formatiereErkannteFelder(aggregated) {
+function formatiereErkannteFelder(aggregated, order) {
   const f = aggregated.fields;
+  const brutto = order ? formatiereBruttoSumme(order.sumGross) : null;
   const teile = [
     `Module: ${f.Module_Anzahl || 0}x ${f.Module_Marke || '-'}`,
     `WR: ${f.WR_Leistung_kW || '-'} (System-Marke: ${f.System_Marke || '-'})`,
@@ -527,11 +568,11 @@ function formatiereErkannteFelder(aggregated) {
     `Notstrom: ${f.Notstrom_Typ}`,
     `Wallbox: ${f.Wallbox_Typ}`,
     `Heizstab: ${f.Heizstab}`,
-    `SM/FS: ${f.SM_FS_Typ}`,
     `Montage: ${f.Montage_Pauschale_EUR !== null ? f.Montage_Pauschale_EUR + ' €' : '-'}`,
     `Elektroinstallation: ${f.Elektroinstallation_Pauschale_EUR !== null ? f.Elektroinstallation_Pauschale_EUR + ' €' : '-'}`,
     `Elektromaterial: ${f.Elektromaterial_Pauschale_EUR !== null ? f.Elektromaterial_Pauschale_EUR + ' €' : '-'}`,
-    `Techn. Projektierung: ${f.Technische_Projektierung_Pauschale_EUR !== null ? f.Technische_Projektierung_Pauschale_EUR + ' €' : '-'}`
+    `Techn. Projektierung: ${f.Technische_Projektierung_Pauschale_EUR !== null ? f.Technische_Projektierung_Pauschale_EUR + ' €' : '-'}`,
+    `Gesamtsumme Brutto: ${brutto || '-'}`
   ];
   let zeile = teile.join(' | ');
   if (aggregated.summary) zeile += ` || Rohpositionen: ${aggregated.summary}`;
@@ -604,10 +645,10 @@ function syncOrderToPipedrive(orderId) {
 
     dealId = match.dealId;
     const aggregated = aggregatePositions(order.positions);
-    const erkannt = formatiereErkannteFelder(aggregated);
+    const erkannt = formatiereErkannteFelder(aggregated, order);
 
     if (!DRY_RUN) {
-      writeArticleFieldsToDeal(dealId, aggregated);
+      writeArticleFieldsToDeal(dealId, aggregated, order);
     }
 
     const warnung = aggregated.unknownArticles.length > 0
@@ -787,6 +828,20 @@ function debugOrderPosPreisFelder(orderId) {
 }
 
 /**
+ * Für Einzeltests im Editor: Order-ID unten eintragen (▷-Button ruft ohne Argumente auf).
+ * Ohne diesen Wrapper landet `orderId` als `undefined` in der URL -- sevdesk antwortet dann mit
+ * einer LEEREN Liste statt einem Fehler, das Log sagt nur "0 Position(en) für Order undefined"
+ * und man hält es leicht für "Auftrag hat keine Positionen" (am 10.09.2026 genau so passiert).
+ */
+function testOrderPosPreisFelder() {
+  const orderId = 30321086; // FS-Auftrag mit REGIE-Montage, Elektro und Projektierung.
+  // Korrektur 11.09.2026: hier stand 26886490 mit dem Kommentar "bekannter FS-Auftrag" --
+  // das war falsch, 26886490 (2026-633-A) ist eine SELBSTMONTAGE ohne Montagepositionen.
+  // Valentin hat die ID am 10.09. im Browser-Editor auf 30321086 korrigiert.
+  debugOrderPosPreisFelder(orderId);
+}
+
+/**
  * Debug: vergleicht alle sevdesk-Orders mit einer Angebotsnummer nebeneinander, um bei einem
  * Mehrfachtreffer ("WARNUNG: N sevdesk-Aufträge mit derselben Angebotsnummer") zu klären, ob es
  * sich um echte Duplikate (gleicher Kunde, gleicher Inhalt) oder wie bei Schwaiger/Radmacher um
@@ -843,7 +898,7 @@ function syncDirektAufBekannterDeal(dealId, orderId) {
   try {
     const order = fetchOrderFromSevdesk(orderId);
     const aggregated = aggregatePositions(order.positions);
-    const erkannt = formatiereErkannteFelder(aggregated);
+    const erkannt = formatiereErkannteFelder(aggregated, order);
 
     if (!DRY_RUN) {
       if (order.orderNumber) {
@@ -853,7 +908,7 @@ function syncDirektAufBekannterDeal(dealId, orderId) {
           payload: JSON.stringify({ custom_fields: { [FIELD_KEYS.sevdesk_angebotsnummer]: order.orderNumber } })
         });
       }
-      writeArticleFieldsToDeal(dealId, aggregated);
+      writeArticleFieldsToDeal(dealId, aggregated, order);
     }
 
     const warnung = aggregated.unknownArticles.length > 0
@@ -1611,3 +1666,108 @@ function debugKalmanUndWaldhaus() {
  * Deal/Order-Paar, umgeht das Angebotsnummer-/Kundennummer-Matching komplett.
  */
 function testEinzelOrder() { syncDirektAufBekannterDeal(4087, 30218946); }
+
+// ============================================================================
+// API-CHECK — beantwortet nur die Frage "gehen die Verbindungen?"
+// ============================================================================
+
+/**
+ * Reiner Verbindungstest, angelegt 11.09.2026 auf Wunsch von Valentin.
+ *
+ * NUR LESEND. Kein PATCH, kein POST, kein Schreibzugriff auf Pipedrive oder sevdesk --
+ * ausschliesslich vier GETs plus ein Blick in die Script Properties.
+ *
+ * Warum eigene Funktion: debugOrderPosPreisFelder() & Co. mischen Verbindungstest mit
+ * Datenanalyse. Wenn dort nichts rauskommt, weiss man nicht, ob die API tot ist oder die
+ * Order einfach leer -- genau diese Verwechslung ist am 10.09. passiert (sevdesk antwortet
+ * auf eine unbekannte Order-ID mit einer LEEREN LISTE statt einem Fehler). Diese Funktion
+ * haengt an keiner konkreten Order und kann deshalb eindeutig antworten.
+ *
+ * Der ▷-Button uebergibt keine Argumente -- diese Funktion braucht auch keine.
+ */
+function checkApiVerbindungen() {
+  Logger.log('=== API-CHECK (nur lesend, kein Schreibzugriff) ===');
+  let fehler = 0;
+
+  // --- 1. Sind die Tokens ueberhaupt hinterlegt? -----------------------------
+  // Bewusst nur die Laenge loggen, nie Teile des Tokens -- das Ausfuehrungsprotokoll
+  // ist fuer jeden Editor-Zugriff sichtbar.
+  const props = PropertiesService.getScriptProperties();
+  const sevToken = props.getProperty('SEVDESK_API_TOKEN');
+  const pdToken  = props.getProperty('PIPEDRIVE_API_TOKEN');
+  Logger.log(sevToken ? `[OK]     SEVDESK_API_TOKEN hinterlegt (${sevToken.length} Zeichen)`
+                      : '[FEHLER] SEVDESK_API_TOKEN fehlt in den Script Properties');
+  Logger.log(pdToken  ? `[OK]     PIPEDRIVE_API_TOKEN hinterlegt (${pdToken.length} Zeichen)`
+                      : '[FEHLER] PIPEDRIVE_API_TOKEN fehlt in den Script Properties');
+  if (!sevToken) fehler++;
+  if (!pdToken)  fehler++;
+
+  // --- 2. sevdesk: Auth, Auftragslesen, Positionslesen -----------------------
+  // Absichtlich OHNE sevdeskFetch()/fetchMitRetry() -- die geben nur geparstes JSON
+  // zurueck und verschlucken den HTTP-Code. Fuer eine Diagnose ist genau der Code die
+  // Information ("401 = Token falsch" vs "200 aber leer = Daten fehlen").
+  if (sevToken) {
+    fehler += checkGet_('sevdesk Auth',        `${SEVDESK_BASE_URL}/SevUser`,
+                        { 'Authorization': sevToken });
+    fehler += checkGet_('sevdesk Auftraege',   `${SEVDESK_BASE_URL}/Order?limit=1`,
+                        { 'Authorization': sevToken });
+    fehler += checkGet_('sevdesk Positionen',  `${SEVDESK_BASE_URL}/OrderPos?limit=1`,
+                        { 'Authorization': sevToken });
+  }
+
+  // --- 3. Pipedrive: lesender Zugriff ----------------------------------------
+  // dealFields, weil pruefeKonfiguration() denselben Endpunkt schon erfolgreich nutzt --
+  // kein geratener Endpunkt.
+  if (pdToken) {
+    fehler += checkGet_('Pipedrive Lesen', `${PIPEDRIVE_BASE_URL}/dealFields?limit=1`,
+                        { 'x-api-token': pdToken });
+  }
+
+  Logger.log(fehler === 0
+    ? '=== ERGEBNIS: alle Verbindungen OK ==='
+    : `=== ERGEBNIS: ${fehler} Problem(e) -- siehe [FEHLER]-Zeilen oben ===`);
+  return fehler === 0;
+}
+
+/**
+ * Hilfsfunktion fuer checkApiVerbindungen(): ein GET, Ausgabe von HTTP-Code, Dauer und
+ * Trefferzahl. Gibt 0 zurueck wenn ok, sonst 1 (wird oben aufaddiert).
+ * HTTP 200 heisst NUR "Verbindung steht" -- ob Daten drin sind, steht in der Trefferzahl.
+ */
+function checkGet_(label, url, headers) {
+  const start = Date.now();
+  try {
+    const response = UrlFetchApp.fetch(url, { headers: headers, muteHttpExceptions: true });
+    const code = response.getResponseCode();
+    const text = response.getContentText();
+    const dauer = Date.now() - start;
+
+    if (code !== 200) {
+      const hinweis = code === 401 ? ' -- Token ungueltig oder abgelaufen'
+                    : code === 403 ? ' -- Token gueltig, aber keine Berechtigung fuer diesen Endpunkt'
+                    : code === 429 ? ' -- Rate Limit, spaeter nochmal'
+                    : code >= 500  ? ' -- Stoerung auf Anbieterseite, nicht bei uns'
+                    : '';
+      Logger.log(`[FEHLER] ${label}: HTTP ${code}${hinweis} (${dauer} ms) | ${text.substring(0, 150)}`);
+      return 1;
+    }
+
+    let anzahl = '?';
+    try {
+      const json = JSON.parse(text);
+      const daten = json.objects !== undefined ? json.objects : json.data; // sevdesk vs Pipedrive
+      if (Array.isArray(daten)) anzahl = `${daten.length} Datensatz/Datensaetze gelesen`;
+      else if (daten) anzahl = 'Daten erhalten';
+      else anzahl = 'Antwort ohne Datenfeld';
+    } catch (e) {
+      Logger.log(`[FEHLER] ${label}: HTTP 200, aber kein JSON (${dauer} ms) | ${text.substring(0, 150)}`);
+      return 1;
+    }
+
+    Logger.log(`[OK]     ${label}: HTTP 200, ${anzahl} (${dauer} ms)`);
+    return 0;
+  } catch (e) {
+    Logger.log(`[FEHLER] ${label}: Aufruf abgebrochen -- ${e.message}`);
+    return 1;
+  }
+}

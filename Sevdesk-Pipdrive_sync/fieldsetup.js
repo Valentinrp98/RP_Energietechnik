@@ -69,26 +69,22 @@ function createModulBezeichnungField() {
 }
 
 // ============================================================================
-// SETUP: neues Feld für die separate Montage/Elektro/Projektierung-Summary (für Christof)
-// → Diese Funktion EINMAL ausführen, dann den field_code in Datei 2 eintragen.
-// Getrennt von Verkaufte_Artikel_Summary (Hardware), auf Wunsch (01.09.2026).
+// VERWORFEN 09.09.2026: Feld für die separate Montage/Elektro/Projektierung-Summary
 // ============================================================================
 
-function createMontageElektroSummaryFeld() {
-  const feld = { field_name: 'Montage_Elektro_Summary', field_type: 'varchar_auto' };
-
-  const res = pdFetch('/dealFields', {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(feld)
-  });
-
-  if (res.code === 200 || res.code === 201) {
-    Logger.log(`✓ Montage_Elektro_Summary angelegt → field_code: ${res.data.data.field_code}`);
-    Logger.log('\n👉 Diesen field_code in Datei 2 unter FIELD_KEYS.Montage_Elektro_Summary eintragen.');
-  } else {
-    Logger.log(`✗ Fehlgeschlagen (${res.code}): ${res.raw}`);
-  }
+/**
+ * ⛔ VERWORFEN am 09.09.2026 (Entscheidung Valentin) — nicht ausführen.
+ * Sollte ab 01.09.2026 ein Textfeld `Montage_Elektro_Summary` anlegen, damit Christof eine
+ * kurze Zusammenfassung "Montage 3200€ | E-Install 1400€ | ..." am Deal sieht. Wurde nie
+ * ausgeführt; der PLACEHOLDER-Key hielt dafür pruefeKonfiguration() dauerhaft rot (Befund D5).
+ * Verworfen, weil die vier Beträge einzeln und strukturiert am Deal stehen (Montage_,
+ * Elektroinstallation_, Elektromaterial_, Technische_Projektierung_Pauschale_EUR — alle Typ
+ * Nummer, siehe ARCHIV_createMontageElektroFelder unten). Ein Textfeld mit denselben Zahlen
+ * wäre reine Redundanz. Die Zusammenfassung steht weiterhin im Sync-Log.
+ * Bevor das jemand wieder aktiviert: mit Valentin und Christof klären, wofür genau.
+ */
+function VERWORFEN_createMontageElektroSummaryFeld() {
+  throw new Error('Verworfen am 09.09.2026: die 4 Pauschalen stehen einzeln am Deal, eine Text-Summary wäre Redundanz. Vor Reaktivierung mit Valentin klären.');
 }
 
 // ============================================================================

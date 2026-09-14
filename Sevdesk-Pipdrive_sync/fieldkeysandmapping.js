@@ -29,16 +29,32 @@ const FIELD_KEYS = {
   Elektroinstallation_Pauschale_EUR: '13892f466a82621f0c3ee7020b61f208724dcd6b',
   Elektromaterial_Pauschale_EUR:     '83713577892e7c77de66f55690c4299d14b47097',
   Technische_Projektierung_Pauschale_EUR: '61f65b794a6bac1d9160374f7ff1c4d78f3533f5',
-  // Zweite, getrennte Summary NUR für Montage/Elektro/Projektierung -- auf Valentins Wunsch (01.09.2026),
-  // damit Verkaufte_Artikel_Summary sauber bei der Hardware bleibt und Christof eine eigene,
-  // fokussierte Zusammenfassung bekommt statt in der langen Hardware-Summary suchen zu müssen.
-  // PLACEHOLDER: createMontageElektroSummaryFeld() in FieldSetup.gs einmal ausführen, dann eintragen.
-  Montage_Elektro_Summary:          'PLACEHOLDER_MONTAGE_ELEKTRO_SUMMARY',
-  // PLACEHOLDER -- NOCH NICHT BESTÄTIGT: "Ausführungsart" (enum) ist der stärkste Kandidat aus
-  // checkExistingFields() (01.09.2026), passt inhaltlich zu SM/Fullservice, aber Valentin muss das
-  // noch bestätigen, bevor der echte field_code hier steht. Sobald bestätigt: field_code eintragen
-  // UND showFieldOptions() (FELDNAME='Ausführungsart') für die Options-IDs unten ausführen.
-  SM_FS_Typ:                        'PLACEHOLDER_SM_FS_TYP'
+  // Bruttosumme des gesamten sevdesk-Auftrags. Von Valentin in Pipedrive als TEXT-Feld angelegt
+  // (09.09.2026) -- deshalb wird der Wert formatiert geschrieben ("27.140,39 EUR", siehe
+  // formatiereBruttoSumme() in SyncEngine.gs), nicht als rohe Zahl.
+  Gesamtsumme_Brutto:               '4af5a8d4ff079ac13a13b6de092748479fbe3d13'
+
+  // VERWORFEN 09.09.2026: Montage_Elektro_Summary -- ABSICHTLICH KEIN FELD MEHR HIER.
+  // Die Idee (01.09.2026) war eine zweite, kurze Summary nur für Montage/Elektro/Projektierung,
+  // damit Christof nicht in der langen Hardware-Summary suchen muss. Sie wurde nie gebaut: das
+  // Pipedrive-Feld wurde nie angelegt, der Key blieb ein PLACEHOLDER und ließ pruefeKonfiguration()
+  // dauerhaft rot laufen (Befund D5). Valentins Entscheidung: die vier Beträge stehen längst
+  // einzeln und strukturiert am Deal (Montage_/Elektroinstallation_/Elektromaterial_/
+  // Technische_Projektierung_Pauschale_EUR, alle Typ Nummer) -- eine Textkopie derselben Zahlen
+  // bringt nichts dazu. Der String wird weiter gebaut, aber nur noch ins Sync-Log geschrieben
+  // (aggregated.montageSummary, siehe formatiereErkannteFelder() in SyncEngine.gs).
+  // Wer das Feld doch will: erst mit Valentin und Christof klären, WOFÜR -- eine Listenansicht
+  // oder ein Filter wäre der einzige echte Grund.
+
+  // ENTFERNT 09.09.2026: SM_FS_Typ (SM/FS bzw. "Ausführungsart") -- ABSICHTLICH KEIN FELD MEHR HIER.
+  // Valentins Entscheidung: die Ausführungsart trägt der Seller in Pipedrive selbst ein. Das Script
+  // hat dafür bis 09.09. einen Wert aus den Positionen ABGELEITET (Montage/Elektro-Position
+  // vorhanden => "FS") und hätte damit bei jedem Sync die Handeingabe überschrieben.
+  // Der field_code ist bekannt (`cc80ad5daf0788dba60b3da3931681edd3dd2c87`, enum, Optionen
+  // Full Service=154 / Selbstmontage=155 / Hybrid=156, siehe docs/REFERENZ-Pipedrive-AppsScript.md)
+  // -- er fehlt hier also nicht aus Unwissen, sondern weil dieses Script das Feld nicht anfassen soll.
+  // Wer es wieder einbauen will, klärt vorher mit Valentin, wer die Ausführungsart pflegt.
+  // Damit ist Befund D6 ("geladene Waffe") erledigt, nicht nur entschärft.
 };
 
 const ENUM_OPTION_IDS = {
@@ -49,11 +65,8 @@ const ENUM_OPTION_IDS = {
   Wallbox_Typ:     { '11kW': 135, '22kW': 136, 'Nein': 137 },
   // Live gegen Pipedrive verifiziert (26.08.2026, pruefeZahlungseingangKonfiguration()):
   // Label heißt "Erhalten", nicht "Ja" -- gleiches Namensmuster wie bei "AR versendet".
-  Zahlungseingang_erhalten: { 'Erhalten': 207 },
-  // PLACEHOLDER (31.08.2026): Options-IDs unbekannt -- showFieldOptions() (FIELDNAME auf 'SM_FS_Typ'
-  // stellen) einmal ausführen und die echten Label/ID-Paare hier eintragen. Labels 'SM'/'FS' sind nur
-  // eine Annahme, ggf. an die echten Pipedrive-Optionen anpassen.
-  SM_FS_Typ: { 'SM': null, 'FS': null }
+  Zahlungseingang_erhalten: { 'Erhalten': 207 }
+  // SM_FS_Typ hier ebenfalls entfernt (09.09.2026) -- Begründung oben bei FIELD_KEYS.
 };
 
 // ============================================================================
@@ -69,11 +82,18 @@ const ARTICLE_PATTERNS = {
     // Montagearbeiten/Elektroinstallation(smaterial) bewusst NICHT hier -- eigene Kategorien weiter
     // unten (31.08.2026), damit die Pauschalbeträge nicht mehr stillschweigend übersprungen werden.
     // Projektbetreuung/Projektierung bewusst NICHT hier -- eigene Kategorie weiter unten (01.09.2026).
-    match: /Smart Meter|Power Sensor|Controller BC|Communication Modul|SparSmart|MPPT|Optimierer|Moduloptimierung|Fernwartung|Montageset|Bodenmontageset|Wandmontageset|Modulhalterung|Transportkosten|Planung der PV|Anmeldung EVU|EVU Abnahme|Messpauschale|Landesförderung|Garantie|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Energiemanager/i
+    // "EMS Integration" ergaenzt 11.09.2026: tauchte in Order 30321086 als "SIGENERGY EMS
+    // Integration" (1.200 EUR) auf und landete mangels Muster als "[?]" in der Summary.
+    // Bewusst eng gefasst ("EMS Integration", nicht blosses "EMS"), damit kein Geraetename
+    // mit EMS im Titel versehentlich mitverschluckt wird.
+    match: /Smart Meter|Power Sensor|Controller BC|Communication Modul|SparSmart|MPPT|Optimierer|Moduloptimierung|Fernwartung|Montageset|Bodenmontageset|Wandmontageset|Modulhalterung|Transportkosten|Planung der PV|Anmeldung EVU|EVU Abnahme|Messpauschale|Landesförderung|Garantie|Klima|Wärmepumpe|Aquarea|Single-Split|Adapter Box|Smart Wifi Plug|Schuko Stecker|Betteri|Balkonkraftwerk|Leistungssteller|Heizungsumwälzpumpe|EMMA|Dongle|SMARTFOX|Energiemanager|EMS[\s-]?Integration/i
   },
   montage: {
     // Deckt "MONTAGEARBEITEN (PAUSCHAL)", "(PAUSCHAL PRO KW)" und "(REGIE)" gleichermaßen ab --
-    // welche Preisbasis tatsächlich verrechnet wurde, steht im gelesenen Positionspreis, nicht im Namen.
+    // WIDERLEGT am 11.09.2026: hier stand,
+    // die tatsaechliche Preisbasis stehe im gelesenen Positionspreis und nicht im Namen. Falsch --
+    // "(REGIE)" liefert einen STUNDENSATZ, "(PAUSCHAL)" einen Endbetrag, und im Preis sieht man
+    // den Unterschied nicht. Unterschieden wird jetzt ueber EINHEIT_STUNDE/REGIE_IM_NAMEN, siehe dort.
     match: /Montagearbeiten/i
   },
   elektroinstallation: {
@@ -200,6 +220,19 @@ const ARTICLE_PATTERNS = {
 // Kategorien ohne Marken-Logik -- haben stattdessen einen Pauschalbetrag (siehe unten, 31.08.2026/01.09.2026).
 const BETRAG_KATEGORIEN = ['montage', 'elektroinstallation', 'elektromaterial', 'projektierung'];
 
+// --- REGIE vs. PAUSCHALE (11.09.2026) ---------------------------------------
+// sevdesk-Einheit "Stunde". Eine Position mit dieser Einheit traegt einen STUNDENSATZ,
+// keinen Endbetrag: "MONTAGEARBEITEN (REGIE), 1 x 89" heisst "89 EUR pro Stunde, Gesamtsumme
+// offen" -- NICHT "Montage kostet 89 EUR". Live belegt an Order 30321086.
+// ACHTUNG, das widerlegt den frueheren Kommentar bei ARTICLE_PATTERNS.montage, die tatsaechliche
+// Preisbasis stehe im gelesenen Positionspreis. Tut sie nicht -- sie steht in der Einheit.
+const EINHEIT_STUNDE = 9;
+
+// Zweiter, unabhaengiger Indikator: sevdesk-Artikelnamen fuehren die Abrechnungsart im Klartext
+// ("(REGIE)" vs "(PAUSCHAL)"). Bewusst ZUSAETZLICH zur Einheit geprueft -- fehlt die unity mal
+// (aelterer Auftrag, handisch erfasste Position), traegt der Name die Information noch.
+const REGIE_IM_NAMEN = /\(\s*REGIE\s*\)/i;
+
 /**
  * Analysiert eine einzelne sevdesk-Position und ordnet sie einer Kategorie zu.
  * @param {{name: string, quantity: number, einzelpreisNetto: number|null}} position
@@ -216,6 +249,10 @@ function classifyPosition(position) {
     ? Math.round(position.einzelpreisNetto * quantity * 100) / 100
     : null;
 
+  // Wird die Position nach Aufwand verrechnet? Zwei unabhaengige Indikatoren, damit ein
+  // fehlender reicht (siehe EINHEIT_STUNDE / REGIE_IM_NAMEN oben).
+  const istRegie = position.einheitId === EINHEIT_STUNDE || REGIE_IM_NAMEN.test(name);
+
   for (const [category, config] of Object.entries(ARTICLE_PATTERNS)) {
     if (config.match.test(name)) {
       if (category === 'zubehoer') {
@@ -223,7 +260,19 @@ function classifyPosition(position) {
       }
 
       if (BETRAG_KATEGORIEN.indexOf(category) !== -1) {
-        return { category, marke: null, value: null, quantity, skipped: false, rawName: name, betrag };
+        // REGIE: `betrag` bleibt bewusst null. Ein Stundensatz in ein Feld namens
+        // "... Pauschale EUR" zu schreiben waere nicht ungenau, sondern FALSCH -- der
+        // Montagepartner liest "89 EUR" und plant damit, obwohl die Summe offen ist.
+        // Entscheidung Valentin 11.09.2026: "wenn wir es nicht wissen, soll es nicht falsch sein".
+        // Leer ist ehrlich und fuehrt zur Rueckfrage, eine falsche Zahl tut das nicht.
+        // Der Satz geht dabei NICHT verloren: er wandert als `stundensatz` in die Montage-
+        // Summary, die "89EUR/Std" darstellen kann -- ein Zahlenfeld kann das nicht.
+        return {
+          category, marke: null, value: null, quantity, skipped: false, rawName: name,
+          betrag: istRegie ? null : betrag,
+          istRegie: istRegie,
+          stundensatz: istRegie ? position.einzelpreisNetto : null
+        };
       }
 
       const markeMatch = config.marken.find(m => m.pattern.test(name));
@@ -248,6 +297,25 @@ function classifyPosition(position) {
 }
 
 /**
+ * Baut eine Zeile der Montage-Summary (11.09.2026).
+ *   Pauschale -> "Montage 2400EUR"
+ *   Regie     -> "Montage REGIE 89EUR/Std"
+ * Der Regie-Fall ist der Grund, warum es diese Textzeile ueberhaupt braucht: das Pipedrive-
+ * ZAHLENfeld kann "89 EUR pro Stunde" nicht ausdruecken und bleibt deshalb leer. Ohne diese
+ * Zeile waere der Stundensatz komplett verloren, statt nur nicht im Zahlenfeld zu stehen.
+ * Trailing-Underscore = im Apps-Script-Editor nicht als ausfuehrbare Funktion gelistet.
+ */
+function montageSummaryTeil_(label, c) {
+  if (c.istRegie) {
+    const satz = (c.stundensatz !== null && c.stundensatz !== undefined)
+      ? c.stundensatz + '€/Std'
+      : 'Satz unbekannt';
+    return label + ' REGIE ' + satz;
+  }
+  return label + ' ' + (c.betrag !== null ? c.betrag + '€' : '?');
+}
+
+/**
  * Aggregiert alle Positionen eines Auftrags zu einem Custom-Field-Objekt.
  * @param {Array<{name: string, quantity: number}>} positions
  * @returns {{fields: Object, summary: string, unknownArticles: Array<string>}}
@@ -267,12 +335,9 @@ function aggregatePositions(positions) {
     Montage_Pauschale_EUR: null,
     Elektroinstallation_Pauschale_EUR: null,
     Elektromaterial_Pauschale_EUR: null,
-    Technische_Projektierung_Pauschale_EUR: null, // kommt bei SM UND FS vor -- siehe SM_FS_Typ unten
-    // SM (Selbstmontage) vs. FS (Fullservice) -- ABGELEITET, nicht aus Freitext geparst: sobald
-    // irgendeine der 3 Montage/Elektro-Positionen im Auftrag vorkommt, ist es ein FS-Angebot (siehe
-    // project_sevdesk_pipedrive_sync: "PV SM" vs. "PV FS" sind zwei echte sevdesk-Produktvorlagen,
-    // FS hat diese Positionen, SM nicht). Robuster als der Auftragstitel/-header zu parsen.
-    SM_FS_Typ: 'SM'
+    Technische_Projektierung_Pauschale_EUR: null
+    // Kein SM_FS_Typ mehr (09.09.2026): die Ausführungsart pflegt der Seller von Hand, siehe
+    // Kommentar oben bei FIELD_KEYS.
   };
 
   let speicherKwhTotal = 0; // Menge x Modellwert je Position, dann aufsummiert
@@ -334,28 +399,27 @@ function aggregatePositions(positions) {
         break;
 
       case 'montage':
-        result.Montage_Pauschale_EUR = c.betrag;
-        result.SM_FS_Typ = 'FS';
-        montageSummaryParts.push(`Montage ${c.betrag !== null ? c.betrag + '€' : '?'}`);
+        // Bei REGIE bleibt das Zahlenfeld leer -- siehe Begruendung in classifyPosition().
+        if (!c.istRegie) result.Montage_Pauschale_EUR = c.betrag;
+        montageSummaryParts.push(montageSummaryTeil_('Montage', c));
         break;
 
       case 'elektroinstallation':
-        result.Elektroinstallation_Pauschale_EUR = c.betrag;
-        result.SM_FS_Typ = 'FS';
-        montageSummaryParts.push(`E-Install ${c.betrag !== null ? c.betrag + '€' : '?'}`);
+        // Bei REGIE bleibt das Zahlenfeld leer -- siehe Begruendung in classifyPosition().
+        if (!c.istRegie) result.Elektroinstallation_Pauschale_EUR = c.betrag;
+        montageSummaryParts.push(montageSummaryTeil_('E-Install', c));
         break;
 
       case 'elektromaterial':
-        result.Elektromaterial_Pauschale_EUR = c.betrag;
-        result.SM_FS_Typ = 'FS';
-        montageSummaryParts.push(`E-Material ${c.betrag !== null ? c.betrag + '€' : '?'}`);
+        // Bei REGIE bleibt das Zahlenfeld leer -- siehe Begruendung in classifyPosition().
+        if (!c.istRegie) result.Elektromaterial_Pauschale_EUR = c.betrag;
+        montageSummaryParts.push(montageSummaryTeil_('E-Material', c));
         break;
 
       case 'projektierung':
-        // Setzt SM_FS_Typ bewusst NICHT -- kommt bei SM (2026-644-A, optional) UND FS vor,
-        // taugt anders als Montage/Elektro nicht als Unterscheidungsmerkmal.
-        result.Technische_Projektierung_Pauschale_EUR = c.betrag;
-        montageSummaryParts.push(`Projekt. ${c.betrag !== null ? c.betrag + '€' : '?'}`);
+        // Bei REGIE bleibt das Zahlenfeld leer -- siehe Begruendung in classifyPosition().
+        if (!c.istRegie) result.Technische_Projektierung_Pauschale_EUR = c.betrag;
+        montageSummaryParts.push(montageSummaryTeil_('Projekt.', c));
         break;
 
       case 'unknown':
