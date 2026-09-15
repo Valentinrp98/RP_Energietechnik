@@ -375,11 +375,30 @@ function fetchPipedrive(path) {
 
 function callPipedriveWithRetryRaw(url) {
   const maxAttempts = 3;
+  const token = getApiToken();
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = UrlFetchApp.fetch(url, {
-      headers: { 'x-api-token': getApiToken() },
-      muteHttpExceptions: true
-    });
+    // NETZWERKFEHLER-RETRY (15.09.2026): muteHttpExceptions faengt nur HTTP-Statuscodes ab,
+    // KEINE Netzwerkfehler. Bei einer Zeitueberschreitung wirft UrlFetchApp.fetch() selbst
+    // ("Exception: Timeout: <url>"), bevor es ueberhaupt eine Response gibt -- das lief an der
+    // Statuscode-Retry-Schleife unten komplett vorbei und riss den ganzen Lauf ab. So passiert
+    // am 11.09.2026 06:25 in syncNeueZeilen(), mitten in der Cursor-Pagination (Seite 2 von ~5).
+    // Folgenlos fuer die Daten (idempotent, Lock wird im finally freigegeben), aber der Lauf hat
+    // die restlichen Deals nicht mehr angesehen. Deshalb hier derselbe Backoff wie bei 429/5xx.
+    // getApiToken() bewusst VOR der Schleife -- ein fehlendes Token ist kein Netzwerkfehler und
+    // soll nicht 3x mit Backoff wiederholt werden.
+    let response;
+    try {
+      response = UrlFetchApp.fetch(url, {
+        headers: { 'x-api-token': token },
+        muteHttpExceptions: true
+      });
+    } catch (e) {
+      if (attempt === maxAttempts) {
+        throw new Error(`Pipedrive-Netzwerkfehler bei "${url}" nach ${maxAttempts} Versuchen: ${e.message}`);
+      }
+      Utilities.sleep(1000 * Math.pow(2, attempt));
+      continue;
+    }
     const code = response.getResponseCode();
     if (code === 200) return JSON.parse(response.getContentText());
     if (code === 429 || code >= 500) {
@@ -432,7 +451,21 @@ function erstellePipedriveAktivitaet(dealId, subject, ownerId, typ) {
 function callPipedriveWithRetry(doFetch, path) {
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = doFetch();
+    // Gleicher Netzwerkfehler-Retry wie in callPipedriveWithRetryRaw() -- siehe Kommentar dort.
+    // Betrifft hier auch die schreibenden Aufrufe (patchPipedrive, Aktivitaeten): ein Timeout
+    // heisst NICHT zwingend, dass Pipedrive den Schreibvorgang nicht doch ausgefuehrt hat.
+    // Vertretbar, weil alle Schreibpfade hier idempotent sind (fester Feldwert statt Inkrement);
+    // bei einem nicht-idempotenten Aufruf muesste man stattdessen vor dem Retry nachlesen.
+    let response;
+    try {
+      response = doFetch();
+    } catch (e) {
+      if (attempt === maxAttempts) {
+        throw new Error(`Pipedrive-Netzwerkfehler bei "${path}" nach ${maxAttempts} Versuchen: ${e.message}`);
+      }
+      Utilities.sleep(1000 * Math.pow(2, attempt));
+      continue;
+    }
     const code = response.getResponseCode();
     if (code === 200) return JSON.parse(response.getContentText()).data;
     if (code === 429 || code >= 500) {
