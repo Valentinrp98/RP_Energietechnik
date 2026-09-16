@@ -428,9 +428,9 @@ function syncPipedriveToSheetFields() {
           // combineFrom: mehrere Pipedrive-Freitextfelder zu einem Sheet-Wert zusammenfassen
           // (z.B. "Sonstige Informationen" aus internen Notizen UND Kunden-Mitteilung, Valentin
           // 25.08. -- beide sollen der Montagepartner sehen, es gibt aber nur eine Sheet-Spalte).
-          const pipedriveWert = fieldConfig.combineFrom
-            ? fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean).join('\n---\n')
-            : cf[fieldConfig.pipedriveFieldKey];
+          // Seit 16.09.2026 zusaetzlich mit Kurzhinweis "Neuanlage/ANLAGENERWEITERUNG" als erster
+          // Zeile (praefixVonEnumFeld) -- gemeinsame Berechnung in Config.gs baueKombiniertenWert().
+          const pipedriveWert = baueKombiniertenWert(fieldConfig, cf);
           if (pipedriveWert === undefined) return;
           // combineFrom liefert bei leeren Quellfeldern '' statt undefined (Array.join auf leerem
           // Array) -- ohne diesen Check überschreibt das eine bereits befüllte Sheet-Zelle mit

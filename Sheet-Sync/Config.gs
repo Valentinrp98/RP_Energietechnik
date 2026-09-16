@@ -23,6 +23,21 @@ const ANLAGENDETAILS_FIELD_KEY = 'a38455087829e67f22cb5217a44c3cf31f39bcbc';
 const NOTIZEN_INTERN_FIELD_KEY = '2565f8005e57f0b6bad0a36560f9f3213beffe98'; // "Projektdoku-Notizen"
 const NOTIZEN_KUNDE_FIELD_KEY = '0aff5c6f5bd4d7990c171cbe62a670bfabd5c0fd'; // "Sonstige Mitteilung Kunde"
 
+// Valentin, 16.09.2026: der Montagepartner muss SOFORT sehen, ob es eine Anlagenerweiterung ist --
+// das aendert Material, Verkabelung und Aufwand. Bisher stand das nur in Pipedrive und im
+// Projektdoku-Doc; im Sheet hat es niemand gesehen. Deshalb wird es der Spalte "Sonstige
+// Informationen" als kurze erste Zeile VORANGESTELLT (praefixVonEnumFeld in SYNC_FIELD_CONFIG).
+// Derselbe field_code/dieselben Options-IDs wie in Projektdoku-Generator/Config.js
+// (NEUANLAGE_ERWEITERUNG_OPTION_IDS) -- beide muessen uebereinstimmen.
+const NEUANLAGE_ERWEITERUNG_FIELD_KEY = '8bc19dfdb1f3135f1babe069f2f9bfba1b347c40';
+// Options-ID -> Text, der oben in der Zelle landet. Wer eine der beiden Zeilen NICHT im Sheet
+// haben will (z.B. weil "Neuanlage" ohnehin der Regelfall ist), loescht hier einfach den Eintrag
+// -- dann faellt nur dieses Praefix weg, der Rest der Zelle bleibt unveraendert.
+const NEUANLAGE_ERWEITERUNG_PRAEFIX_TEXTE = {
+  330: 'Neuanlage (Einspeisung)',
+  331: 'ANLAGENERWEITERUNG !'
+};
+
 // Stufe 2 (IDEEN-Felder-und-Aktionen.md, R1+R2, die zwei "Anruf-Killer"): TODO, Feldcode erst
 // eintragen nachdem listDealFieldsHelper() geprüft hat, ob unter den 33 Fulfillment-Feldern vom
 // 10.08. schon ein passendes Datumsfeld existiert -- sonst neu in Pipedrive anlegen (Typ: Datum,
@@ -223,6 +238,8 @@ const SYNC_FIELD_CONFIG = [
     label: 'Sonstige Informationen',
     sheetColumnHeader: COL.sonstigeInfos,
     combineFrom: [NOTIZEN_INTERN_FIELD_KEY, NOTIZEN_KUNDE_FIELD_KEY],
+    // Kurzhinweis als erste Zeile ueber den Notizen -- siehe baueKombiniertenWert() unten.
+    praefixVonEnumFeld: { fieldKey: NEUANLAGE_ERWEITERUNG_FIELD_KEY, texte: NEUANLAGE_ERWEITERUNG_PRAEFIX_TEXTE },
     direction: 'pipedrive_to_sheet'
   },
   {
@@ -600,6 +617,44 @@ function flushLog() {
   const sheet = getLogSheet();
   sheet.getRange(sheet.getLastRow() + 1, 1, _logBuffer.length, LOG_HEADER.length).setValues(_logBuffer);
   _logBuffer = [];
+}
+
+/**
+ * Baut den Sheet-Wert eines Feldes aus dem Pipedrive-Deal. Deckt drei Faelle ab:
+ *   1. normales Feld      -> Rohwert aus custom_fields
+ *   2. combineFrom        -> mehrere Freitextfelder mit "---" zusammengefasst
+ *   3. praefixVonEnumFeld -> ein kurzer Hinweis aus einem enum-Feld als ERSTE Zeile davor
+ *
+ * Steht bewusst hier in Config.gs und nicht in FieldSync.gs: dieselbe Berechnung braucht auch
+ * RowCreation.gs beim Anlegen/Nachfuellen einer Zeile. Waeren es zwei Kopien, wuerde der Sync eine
+ * Zelle bei jedem Lauf umschreiben, sobald die Kopien auseinanderlaufen (der Vergleich "Pipedrive
+ * gegen Sheet" in syncPipedriveToSheetFields() haette dann nie Gleichstand).
+ *
+ * Rueckgabe undefined = "Pipedrive hat zu diesem Feld nichts" -- die Aufrufer lassen die Zelle
+ * dann in Ruhe, statt sie leer zu schreiben.
+ */
+function baueKombiniertenWert(fieldConfig, cf) {
+  if (!fieldConfig.combineFrom) return cf[fieldConfig.pipedriveFieldKey];
+
+  const teile = fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean);
+
+  // Enum-Felder kommen in der v2-API als Options-ID (Zahl), nicht als Label -- deshalb das
+  // Mapping ueber texte[]. Unbekannte/neue Options-IDs werden bewusst ignoriert statt als nackte
+  // Zahl ("332") ins Partner-Sheet geschrieben zu werden.
+  const p = fieldConfig.praefixVonEnumFeld;
+  let praefix = '';
+  if (p) {
+    const optionId = cf[p.fieldKey];
+    const text = (optionId === null || optionId === undefined) ? null : p.texte[String(optionId)];
+    if (text) praefix = text;
+  }
+
+  const rest = teile.join('\n---\n');
+  // Praefix nur durch einen Zeilenumbruch abgetrennt, NICHT durch "---": es ist eine Kopfzeile
+  // ueber der Notiz, kein gleichrangiger dritter Notiz-Block. Steht kein Praefix an, sieht die
+  // Zelle exakt aus wie vorher -- bestehende Zeilen werden dadurch nicht angefasst.
+  if (!praefix) return rest;
+  return rest ? `${praefix}\n${rest}` : praefix;
 }
 
 /** Werte für Notizen/Logs lesbar machen -- niemals "null" oder "undefined" an eine Zelle. */
