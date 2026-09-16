@@ -133,12 +133,12 @@ am Ereignis, nicht daran, ob es DC oder AC ist. Ein Symbol pro Terminart waere
 die Sortierung, die man beim Lesen gerade nicht braucht.
 
 `setzeVorlagenNeu()` schreibt nur die Spalte `Vorlage` neu (nach
-Feld|Ereignis|Tage gematcht) und loggt ALT/NEU pro Zeile. Channel-ID und
+Feld|Ereignis|Tage|Channel gematcht) und loggt ALT/NEU pro Zeile. Channel-ID und
 `Aktiv` bleiben unangetastet. Damit sind Text-Updates aus dem Code moeglich,
 ohne den Tab zu loeschen — aber Achtung: **eigene Texte werden dabei
 ueberschrieben.**
 
-### Die 14 Startregeln
+### Die 15 Startregeln
 
 `befuelleRegelnMitStartwerten()` legt genau das an, was am 10.09. festgelegt
 wurde:
@@ -150,8 +150,66 @@ wurde:
 | AC-Termin | gesetzt · 2 Tage vorher · am Tag |
 | IB-Termin | gesetzt · 2 Tage vorher · am Tag |
 
+Dazu die **Bonus-DM** (16.09.2026): `Liefertermin / am Tag` ein zweites Mal,
+Ziel ist aber nicht `#ernst-knows`, sondern Valentins User-ID.
+
 Die Texte sind Platzhalter-Formulierungen. **Valentin schreibt sie um** — dafuer
 ist der Tab da. Die Funktion ueberschreibt nichts, wenn der Tab schon Zeilen hat.
+Fuer das Nachruesten einzelner Regeln in einen bereits gefuellten Tab gibt es
+`ergaenzeFehlendeRegeln()` — haengt nur an, was fehlt, ist idempotent.
+
+---
+
+## Die Bonus-DM (seit 16.09.2026)
+
+Valentin bekommt pro erfolgter Lieferung eine Praemie. Dafuer laeuft eine
+zweite `Liefertermin / am Tag`-Regel, die als **Direktnachricht** zugestellt
+wird — nicht in `#ernst-knows`. Was er pro Lieferung verdient, ist keine
+Team-Information.
+
+**Empfaenger als DM:** in der Spalte `Channel-ID` steht eine **User-ID**
+(`U0BM9J0KPQT`). Slack oeffnet die DM bei `chat.postMessage` von selbst, sobald
+`channel` eine User-ID ist — ein `conversations.open` braucht es nicht, und
+`chat:write` reicht als Scope. Die Validierung in `Regeln.gs` akzeptiert
+deshalb `C`, `G`, `D` **und** `U`.
+
+**Neue Platzhalter:** `{bonus_brutto}` und `{bonus_netto}`, gespeist aus
+`Config.gs`:
+
+| Konstante | Bedeutung |
+|---|---|
+| `BONUS_PRO_LIEFERUNG_BRUTTO` | `100` |
+| `BONUS_NETTO_FAKTOR` | `null` = unbekannt. Dann bleibt `{bonus_netto}` **leer** und faellt samt `·` aus der Zeile. |
+
+Der Faktor wird **bewusst nicht geraten** — Grenzsteuersatz und SV sind
+individuell, und eine erfundene Netto-Zahl in einer Bonus-Meldung ist schlimmer
+als gar keine. Sobald Valentin den Satz nennt: eintragen (z.B. `0.52`) und
+`clasp push`.
+
+### Warum der Ausloeser der Liefertermin ist und nicht "Geliefert"
+
+Naheliegender waere der Meilenstein `Geliefert` (Option 228 im Erledigt-Feld).
+Messung am 16.09.2026 ueber alle 485 gewonnenen Deals: **0 gesetzt.** Das Feld
+wird nicht gepflegt und ist als Ausloeser wertlos.
+
+Folge, die man wissen muss: gemeldet wird der **geplante** Liefertag, nicht die
+bestaetigte Lieferung. Wird ein Termin nach der Meldung verschoben, ist die
+Bonus-DM trotzdem schon raus. Ausserdem hatten zum selben Zeitpunkt nur
+**9 von 485** gewonnenen Deals ueberhaupt einen Liefertermin — die DM ist also
+nur so vollstaendig wie die Feldpflege in Pipedrive.
+
+### Zwei Regeln, ein Ereignis — der Doppelpost-Schutz musste mit
+
+Der Schluessel im Log-Tab war `dealId|Feld|Ereignis|Tage|Bezugsdatum` — **ohne
+Channel**. Zwei Regeln auf dasselbe Ereignis in verschiedene Channels haetten
+sich damit gegenseitig blockiert: die erste setzt den Schluessel, die zweite
+haelt sich fuer ein Duplikat und postet **nie**, ohne Warnung.
+
+Seit 16.09.2026 gehoert der Channel in den Schluessel. Fuer die Log-Eintraege
+aus der Zeit davor gibt es in `schonGesendet()` eine Bruecke: fehlt der neue
+Schluessel, wird zusaetzlich die alte Form geprueft — aber nur fuer
+`C0C0Q6JML23`, den damals einzigen Channel. Ohne diese Bruecke waere jede heute
+schon gemeldete Erinnerung ein zweites Mal gekommen.
 
 ---
 

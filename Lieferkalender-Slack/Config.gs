@@ -104,6 +104,24 @@ function getSlackToken() {
   return token;
 }
 
+// ---------- Bonus-Meldung (privat an Valentin) ----------
+// Valentin bekommt pro erfolgter Lieferung eine Praemie. Die Meldung dazu geht
+// NICHT in #ernst-knows (oeffentlich, das Gehalt geht das Team nichts an),
+// sondern als DM. Slack oeffnet die DM automatisch, wenn als "channel" eine
+// USER-ID (U...) uebergeben wird — ein extra conversations.open braucht es
+// nicht, chat:write reicht.
+const VALENTIN_USER_ID = 'U0BM9J0KPQT';
+
+const BONUS_PRO_LIEFERUNG_BRUTTO = 100;
+
+// Netto-Faktor (0..1). null = unbekannt -> der Platzhalter {bonus_netto} bleibt
+// leer und die Netto-Angabe faellt aus der Zeile heraus, statt eine erfundene
+// Zahl zu zeigen. Sobald Valentin seinen Grenzsteuersatz nennt, hier eintragen
+// (z.B. 0.52 fuer "100 brutto = 52 netto") und clasp push.
+// BEWUSST nicht geraten: Grenzsteuersatz + SV sind individuell, und eine
+// falsche Netto-Zahl in einer Bonus-Meldung ist schlimmer als gar keine.
+const BONUS_NETTO_FAKTOR = null;
+
 // ---------- Betrieb ----------
 
 // true = Simulation. Es wird gelesen und verglichen, aber NICHT nach Slack

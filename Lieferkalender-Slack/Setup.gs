@@ -58,9 +58,12 @@ function befuelleRegelnMitStartwerten() {
 // Die alten Texte wandern vorher ins Log — wer eigene Formulierungen drin
 // hatte, holt sie von dort zurueck, statt sie zu verlieren.
 function setzeVorlagenNeu() {
+  // Der CHANNEL gehoert in den Schluessel. "Liefertermin / am Tag" gibt es
+  // zweimal — einmal nach #ernst-knows, einmal als Bonus-DM. Ohne den Channel
+  // im Schluessel wuerde diese Funktion der DM den Channel-Text verpassen.
   const vorgabe = {};
   startRegeln().forEach(function (z) {
-    vorgabe[[z[1], z[2], z[3] === '' ? '' : String(z[3])].join('|')] = z[5];
+    vorgabe[regelSchluessel(z[1], z[2], z[3], z[4])] = z[5];
   });
 
   const blatt = holeOderLegeAn(TAB_REGELN, REGEL_SPALTEN);
@@ -76,7 +79,8 @@ function setzeVorlagenNeu() {
     const feld = String(werte[z][spalte['Feld']] || '').trim();
     const ereignis = String(werte[z][spalte['Ereignis']] || '').trim();
     const tage = String(werte[z][spalte['Tage davor']] || '').trim().replace(/\.0$/, '');
-    const neu = vorgabe[[feld, ereignis, tage].join('|')];
+    const channel = String(werte[z][spalte['Channel-ID']] || '').trim();
+    const neu = vorgabe[regelSchluessel(feld, ereignis, tage, channel)];
     if (!neu) {
       Logger.log('— Zeile %s (%s/%s) hat keine Vorgabe, bleibt unveraendert.', z + 1, feld, ereignis);
       continue;
@@ -94,6 +98,8 @@ function startRegeln() {
   // #ernst-knows, von Valentin am 11.09.2026 angelegt.
   // Channel-ID, NICHT der Name — Umbenennen bricht sonst alles.
   const CH = 'C0C0Q6JML23';
+  // Ziel der Bonus-Meldung: Valentins User-ID. Slack oeffnet die DM selbst.
+  const DM = VALENTIN_USER_ID;
   // Slack-Formatierung, die hier benutzt wird (mrkdwn, kein Markdown):
   //   *fett*           — EIN Stern, nicht zwei. **so** bleibt sichtbar stehen.
   //   _kursiv_         — Unterstrich
@@ -123,6 +129,16 @@ function startRegeln() {
     ['ja', 'Liefertermin', 'vorher',     1,   CH, ERIN + ' *Morgen Lieferung* — {datum}' + Z + L],
     ['ja', 'Liefertermin', 'am Tag',     '',  CH, ERIN + ' *HEUTE Lieferung*' + Z + L],
 
+    // Dieselbe Bedingung, anderer Empfaenger: als DM an Valentin, mit der
+    // Praemie dazu. Bewusst NICHT in #ernst-knows — was Valentin pro Lieferung
+    // verdient, ist keine Team-Information.
+    // Warum "am Tag" und nicht der Meilenstein "Geliefert" (Erledigt-Option
+    // 228): der ist am 16.09.2026 bei 0 von 485 gewonnenen Deals gesetzt, also
+    // als Ausloeser wertlos. Der Liefertermin ist der einzige gepflegte Marker.
+    // Heisst auch: gemeldet wird der GEPLANTE Tag, nicht die bestaetigte
+    // Lieferung. Wird der Termin danach verschoben, ist die Meldung schon raus.
+    ['ja', 'Liefertermin', 'am Tag',     '',  DM, '💰 *Lieferung heute — Bonus +{bonus_brutto}* · {bonus_netto}' + Z + L],
+
     ['ja', 'DC-Termin', 'gesetzt', '', CH, FIX + ' *DC-Termin fix* — {datum}' + Z + L],
     ['ja', 'DC-Termin', 'vorher',  2,  CH, ERIN + ' *DC-Montage in {tage} Tagen* — {datum}' + Z + L],
     ['ja', 'DC-Termin', 'am Tag',  '', CH, ERIN + ' *HEUTE DC-Montage*' + Z + L],
@@ -137,6 +153,62 @@ function startRegeln() {
   ];
 
   return zeilen;
+}
+
+function regelSchluessel(feld, ereignis, tage, channel) {
+  const t = (tage === '' || tage === null || tage === undefined) ? '' : String(tage).trim().replace(/\.0$/, '');
+  return [String(feld).trim(), String(ereignis).trim(), t, String(channel).trim()].join('|');
+}
+
+// Haengt Regel-Zeilen aus startRegeln() an, die im Sheet noch fehlen.
+// befuelleRegelnMitStartwerten() verweigert die Arbeit, sobald der Tab gefuellt
+// ist (richtig so — es soll nichts ueberschrieben werden). Fuer das Nachruesten
+// einer einzelnen neuen Regel braucht es deshalb diesen Weg.
+// Idempotent: zweimal laufen lassen aendert nichts, bestehende Zeilen werden
+// nicht angefasst — weder Aktiv-Schalter noch selbst umgeschriebene Texte.
+function ergaenzeFehlendeRegeln() {
+  const blatt = holeOderLegeAn(TAB_REGELN, REGEL_SPALTEN);
+  const werte = blatt.getDataRange().getValues();
+  if (werte.length < 1) {
+    Logger.log('Regeln-Tab ist leer. Erst befuelleRegelnMitStartwerten() laufen lassen.');
+    return;
+  }
+  const spalte = spaltenIndex(werte[0], REGEL_SPALTEN);
+
+  const vorhanden = {};
+  for (let z = 1; z < werte.length; z++) {
+    const feld = String(werte[z][spalte['Feld']] || '').trim();
+    if (!feld) continue;
+    vorhanden[regelSchluessel(
+      feld,
+      werte[z][spalte['Ereignis']],
+      werte[z][spalte['Tage davor']],
+      werte[z][spalte['Channel-ID']]
+    )] = true;
+  }
+
+  const fehlend = startRegeln().filter(function (z) {
+    return !vorhanden[regelSchluessel(z[1], z[2], z[3], z[4])];
+  });
+
+  if (!fehlend.length) {
+    Logger.log('Keine fehlende Regel — der Tab ist auf Stand.');
+    return;
+  }
+
+  // In der Spaltenreihenfolge des SHEETS schreiben, nicht in der von
+  // REGEL_SPALTEN: die Spalten duerfen verschoben sein, gelesen wird ueberall
+  // nach Header-Namen. Hier genauso, sonst landen die Werte schief.
+  const zeilen = fehlend.map(function (z) {
+    const reihe = [];
+    for (let i = 0; i < werte[0].length; i++) reihe.push('');
+    REGEL_SPALTEN.forEach(function (name, i) { reihe[spalte[name]] = z[i]; });
+    return reihe;
+  });
+
+  blatt.getRange(blatt.getLastRow() + 1, 1, zeilen.length, werte[0].length).setValues(zeilen);
+  fehlend.forEach(function (z) { Logger.log('+ %s / %s -> %s', z[1], z[2], z[4]); });
+  Logger.log('%s Regel-Zeile(n) ergaenzt.', fehlend.length);
 }
 
 // Prueft alles, legt nichts an, sendet nichts.

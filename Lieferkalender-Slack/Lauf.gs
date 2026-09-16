@@ -88,8 +88,8 @@ function sweep() {
         const befund = pruefeRegel(regel, altWert, neuWert, heute, alt === null);
         if (!befund) return;
 
-        const schluessel = baueSchluessel(deal.id, regel.feld, regel.ereignis, regel.tage, befund.bezugsdatum);
-        if (gesendet[schluessel]) return;
+        const schluessel = baueSchluessel(deal.id, regel.feld, regel.ereignis, regel.tage, befund.bezugsdatum, regel.channel);
+        if (schonGesendet(gesendet, schluessel, regel.channel)) return;
 
         const kontext = baueKontext(deal, plzMap, regel.feld, befund.altWert, befund.neuWert, regel.tage);
         const text = baueText(regel.vorlage, kontext);

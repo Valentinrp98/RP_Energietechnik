@@ -65,8 +65,12 @@ function leseRegeln() {
     }
     // Der Channel-NAME funktioniert nicht. Rechtsklick auf den Channel ->
     // Link kopieren, die ID am Ende beginnt mit C (oder G bei privaten).
-    if (!/^[CG][A-Z0-9]{6,}$/.test(channel)) {
-      warnRegel(zeilenNr, 'Channel-ID "' + channel + '" sieht nicht wie eine Slack-ID aus (erwartet z.B. C08ABC123).');
+    // Zusaetzlich erlaubt: U... (User-ID) und D... (DM-Channel) — damit geht
+    // eine Regel auch als Direktnachricht statt in einen Channel. Slack
+    // oeffnet die DM bei chat.postMessage selbst, sobald channel eine User-ID
+    // ist. Gebraucht fuer die Bonus-Meldung, die niemanden sonst angeht.
+    if (!/^[CGDU][A-Z0-9]{6,}$/.test(channel)) {
+      warnRegel(zeilenNr, 'Channel-ID "' + channel + '" sieht nicht wie eine Slack-ID aus (erwartet z.B. C08ABC123 oder U0BM9J0KPQT fuer eine DM).');
       continue;
     }
     if (!vorlage) {

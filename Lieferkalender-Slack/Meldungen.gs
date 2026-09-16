@@ -71,8 +71,19 @@ function baueKontext(deal, plzMap, feld, altWert, neuWert, tage) {
     ac: deutschesDatum(leseTerminfeld(deal, 'AC-Termin')),
     ib: deutschesDatum(leseTerminfeld(deal, 'IB-Termin')),
     deallink: DEAL_URL_BASE + deal.id,
-    ordnerlink: leseKundenordner(deal)
+    ordnerlink: leseKundenordner(deal),
+    bonus_brutto: BONUS_PRO_LIEFERUNG_BRUTTO + ' €',
+    bonus_netto: bonusNettoText()
   };
+}
+
+// Leerer String, solange BONUS_NETTO_FAKTOR nicht gesetzt ist. Die Vorlage
+// haengt die Netto-Angabe deshalb hinter ein "·" — raeumeZeileAuf() wirft das
+// leere Stueck samt Trennzeichen raus, statt "≈  netto" stehen zu lassen.
+function bonusNettoText() {
+  if (BONUS_NETTO_FAKTOR === null || BONUS_NETTO_FAKTOR === undefined) return '';
+  const netto = BONUS_PRO_LIEFERUNG_BRUTTO * BONUS_NETTO_FAKTOR;
+  return '≈ ' + Math.round(netto) + ' € netto';
 }
 
 // "2026-09-18" -> "Fr, 18.09.2026". Bewusst aus dem String gerechnet, nicht
@@ -94,8 +105,28 @@ function deutschesDatum(isoText) {
 // einem 15-Minuten-Trigger 96 Posts am Tag. Das Termindatum steckt im
 // Schluessel — wird der Termin verschoben, darf die Erinnerung fuer das NEUE
 // Datum erneut feuern.
-function baueSchluessel(dealId, feld, ereignis, tage, bezugsdatum) {
-  return [dealId, feld, ereignis, tage === null ? '' : tage, bezugsdatum || ''].join('|');
+// Der CHANNEL gehoert in den Schluessel. Sonst blockieren sich zwei Regeln
+// gegenseitig, die dasselbe Ereignis in verschiedene Channels melden sollen
+// (genau der Fall "HEUTE Lieferung" nach #ernst-knows UND als Bonus-DM): die
+// erste Regel setzt den Schluessel, die zweite haelt sich fuer ein Duplikat
+// und postet nie. Still, ohne Warnung — der schlimmste Fehlertyp hier.
+function baueSchluessel(dealId, feld, ereignis, tage, bezugsdatum, channel) {
+  return [dealId, feld, ereignis, tage === null ? '' : tage, bezugsdatum || '', channel || ''].join('|');
+}
+
+// Vor dem Channel-Zusatz (16.09.2026) hatte der Schluessel ein Feld weniger.
+// Ohne diese Bruecke gelten alle Eintraege im Log-Tab als "nie gesendet" und
+// jede heute schon gemeldete Erinnerung kaeme ein zweites Mal. Gilt nur fuer
+// den Channel, der damals als einziger in Benutzung war.
+const LEGACY_CHANNEL = 'C0C0Q6JML23';
+
+function schonGesendet(gesendet, schluessel, channel) {
+  if (gesendet[schluessel]) return true;
+  if (channel === LEGACY_CHANNEL) {
+    const ohneChannel = schluessel.replace(/\|[^|]*$/, '');
+    if (gesendet[ohneChannel]) return true;
+  }
+  return false;
 }
 
 function leseGesendeteSchluessel() {
