@@ -59,10 +59,22 @@ function sevdeskFetch(path) {
   let letzterFehler = '';
 
   for (let versuch = 0; versuch < 4; versuch++) {
-    const response = UrlFetchApp.fetch(url, {
-      headers: { 'Authorization': token },
-      muteHttpExceptions: true
-    });
+    // NETZWERKFEHLER-RETRY (15.09.2026): muteHttpExceptions deckt nur HTTP-Statuscodes ab.
+    // Bei Zeitueberschreitung wirft UrlFetchApp.fetch() selbst ("Exception: Timeout: <url>"),
+    // noch bevor es eine Response gibt -- das lief an der Statuscode-Pruefung vorbei und riss
+    // den ganzen Lauf ab (zuerst am 11.09.2026 in Sheet-Sync/syncNeueZeilen()).
+    // Ausschliesslich GET hier, also gefahrlos wiederholbar.
+    let response;
+    try {
+      response = UrlFetchApp.fetch(url, {
+        headers: { 'Authorization': token },
+        muteHttpExceptions: true
+      });
+    } catch (e) {
+      letzterFehler = `Netzwerkfehler: ${e.message}`;
+      Utilities.sleep(Math.pow(2, versuch) * 1000);
+      continue;
+    }
     const code = response.getResponseCode();
     const text = response.getContentText();
 

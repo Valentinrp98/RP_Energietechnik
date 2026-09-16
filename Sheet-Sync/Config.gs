@@ -445,23 +445,25 @@ function erstellePipedriveAktivitaet(dealId, subject, ownerId, typ) {
     payload: JSON.stringify(payload),
     headers: { 'x-api-token': getApiToken() },
     muteHttpExceptions: true
-  }), 'activities');
+  }), 'activities', false);  // false = POST legt an, Retry wuerde eine zweite Aktivitaet erzeugen
 }
 
-function callPipedriveWithRetry(doFetch, path) {
+function callPipedriveWithRetry(doFetch, path, wiederholbar) {
   const maxAttempts = 3;
+  const darfWiederholen = wiederholbar !== false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // Gleicher Netzwerkfehler-Retry wie in callPipedriveWithRetryRaw() -- siehe Kommentar dort.
-    // Betrifft hier auch die schreibenden Aufrufe (patchPipedrive, Aktivitaeten): ein Timeout
-    // heisst NICHT zwingend, dass Pipedrive den Schreibvorgang nicht doch ausgefuehrt hat.
-    // Vertretbar, weil alle Schreibpfade hier idempotent sind (fester Feldwert statt Inkrement);
-    // bei einem nicht-idempotenten Aufruf muesste man stattdessen vor dem Retry nachlesen.
+    // Netzwerkfehler-Retry wie in callPipedriveWithRetryRaw() -- siehe Kommentar dort.
+    // WIEDERHOLBAR (15.09.2026): Ein Timeout heisst NICHT, dass der Aufruf nicht doch
+    // ausgefuehrt wurde -- die Antwort kann auf dem Rueckweg verloren gehen. Bei GET und PATCH
+    // egal (nochmal lesen / denselben Wert nochmal setzen aendert nichts). Bei POST-Aufrufen,
+    // die etwas ANLEGEN (Notiz, Aktivitaet), wuerde ein Retry ein Duplikat erzeugen -- deshalb
+    // dort wiederholbar=false: der Fehler fliegt sofort raus, genau wie bisher.
     let response;
     try {
       response = doFetch();
     } catch (e) {
-      if (attempt === maxAttempts) {
-        throw new Error(`Pipedrive-Netzwerkfehler bei "${path}" nach ${maxAttempts} Versuchen: ${e.message}`);
+      if (!darfWiederholen || attempt === maxAttempts) {
+        throw new Error(`Pipedrive-Netzwerkfehler bei "${path}": ${e.message}`);
       }
       Utilities.sleep(1000 * Math.pow(2, attempt));
       continue;

@@ -134,10 +134,30 @@ function patchPipedrive(path, payload) {
 }
 
 /** Retry-Wrapper: bei 429/5xx bis zu 3x mit steigender Wartezeit, bei 4xx sofort abbrechen. */
-function callPipedriveWithRetry(doFetch, path) {
+function callPipedriveWithRetry(doFetch, path, wiederholbar) {
   const maxAttempts = 3;
+  const darfWiederholen = wiederholbar !== false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = doFetch();
+    // NETZWERKFEHLER-RETRY (15.09.2026): muteHttpExceptions faengt nur HTTP-Statuscodes ab,
+    // KEINE Netzwerkfehler. Bei einer Zeitueberschreitung wirft UrlFetchApp.fetch() selbst
+    // ("Exception: Timeout: <url>"), bevor es ueberhaupt eine Response gibt -- das lief an der
+    // Statuscode-Schleife unten komplett vorbei und riss den ganzen Lauf ab. Zuerst am
+    // 11.09.2026 in Sheet-Sync/syncNeueZeilen() aufgeschlagen, das Muster steckte in allen
+    // Projekten. HIER besonders relevant: dieses Projekt haengt NUR am Webhook und hat keinen
+    // Backup-Zeit-Trigger -- ein abgerissener Lauf bedeutet, dass der Kundenordner nie angelegt
+    // wird und die ganze Folgekette (Sheet-Zeile, Projektdoku) still haengenbleibt.
+    // wiederholbar=false fuer POST-Aufrufe, die etwas ANLEGEN: ein Timeout heisst nicht, dass
+    // Pipedrive es nicht doch ausgefuehrt hat -- bei /notes waere das eine Duplikat-Notiz.
+    let response;
+    try {
+      response = doFetch();
+    } catch (e) {
+      if (!darfWiederholen || attempt === maxAttempts) {
+        throw new Error(`Pipedrive-Netzwerkfehler bei "${path}": ${e.message}`);
+      }
+      Utilities.sleep(1000 * Math.pow(2, attempt));
+      continue;
+    }
     const code = response.getResponseCode();
     // 201 zusaetzlich zu 200: POST-Endpunkte (z.B. v1 /notes) koennen "201 Created" liefern.
     // Ohne das landet ein ERFOLGREICHES Anlegen im throw unten -- der Aufrufer haelt es fuer

@@ -8,12 +8,27 @@
 function fetchPipedriveJson(pfad, params) {
   const alle = Object.assign({}, params || {});
   const url = PIPEDRIVE_BASE + pfad + '?' + toQueryString(alle);
+  const token = getPipedriveToken();  // vor die Schleife: fehlendes Token ist kein Netzwerkfehler
   for (let versuch = 1; versuch <= 3; versuch++) {
-    const response = UrlFetchApp.fetch(url, {
-      method: 'get',
-      headers: { 'x-api-token': getPipedriveToken() },
-      muteHttpExceptions: true
-    });
+    // NETZWERKFEHLER-RETRY (15.09.2026): muteHttpExceptions deckt nur HTTP-Statuscodes ab.
+    // Bei Zeitueberschreitung wirft UrlFetchApp.fetch() selbst ("Exception: Timeout: <url>"),
+    // noch bevor es eine Response gibt -- das lief an der Statuscode-Pruefung vorbei und riss
+    // den ganzen Lauf ab (zuerst am 11.09.2026 in Sheet-Sync/syncNeueZeilen()).
+    // POST-Aufrufe, die etwas ANLEGEN, werden bewusst NICHT wiederholt: ein Timeout heisst
+    // nicht, dass die Gegenseite es nicht doch ausgefuehrt hat -- das Retry waere ein Duplikat.
+    // Hier ausnahmslos GET -- dieses Projekt schreibt nie nach Pipedrive, ein Retry ist gefahrlos.
+    let response;
+    try {
+      response = UrlFetchApp.fetch(url, {
+        method: 'get',
+        headers: { 'x-api-token': token },
+        muteHttpExceptions: true
+      });
+    } catch (e) {
+      if (versuch === 3) throw new Error('Pipedrive-Netzwerkfehler bei ' + pfad + ': ' + e.message);
+      Utilities.sleep(versuch * 2000);
+      continue;
+    }
     const code = response.getResponseCode();
     if (code === 429 || code >= 500) {
       if (versuch === 3) throw new Error('Pipedrive ' + code + ' bei ' + pfad + ' nach 3 Versuchen.');

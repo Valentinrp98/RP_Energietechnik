@@ -57,7 +57,10 @@ function pipedriveFetch(path, options) {
   const opts = Object.assign({ muteHttpExceptions: true }, options || {});
   opts.headers = Object.assign({ 'x-api-token': token }, opts.headers || {});
 
-  return fetchMitRetry(() => UrlFetchApp.fetch(`${PIPEDRIVE_BASE_URL}${path}`, opts), `Pipedrive ${path}`);
+  // POST legt an (z.B. /activities fuer den Zahlungseingang) -- nach einem Timeout nicht
+  // wiederholen, sonst haengen zwei identische Aktivitaeten am Deal. GET/PATCH sind unkritisch.
+  const istAnlegenderPost = String(opts.method || 'get').toLowerCase() === 'post';
+  return fetchMitRetry(() => UrlFetchApp.fetch(`${PIPEDRIVE_BASE_URL}${path}`, opts), `Pipedrive ${path}`, !istAnlegenderPost);
 }
 
 /**
@@ -68,10 +71,26 @@ function pipedriveFetch(path, options) {
  * geparste JSON zurueck (auch bei 4xx, damit die bestehenden `.success`-Checks der Aufrufer
  * unveraendert funktionieren) -- nur 429/5xx werden hier abgefangen und wiederholt.
  */
-function fetchMitRetry(doFetch, bezeichnung) {
+function fetchMitRetry(doFetch, bezeichnung, wiederholbar) {
   const maxAttempts = 3;
+  const darfWiederholen = wiederholbar !== false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = doFetch();
+    // NETZWERKFEHLER-RETRY (15.09.2026): muteHttpExceptions deckt nur HTTP-Statuscodes ab.
+    // Bei Zeitueberschreitung wirft UrlFetchApp.fetch() selbst ("Exception: Timeout: <url>"),
+    // noch bevor es eine Response gibt -- das lief an der Statuscode-Pruefung vorbei und riss
+    // den ganzen Lauf ab (zuerst am 11.09.2026 in Sheet-Sync/syncNeueZeilen()).
+    // POST-Aufrufe, die etwas ANLEGEN, werden bewusst NICHT wiederholt: ein Timeout heisst
+    // nicht, dass die Gegenseite es nicht doch ausgefuehrt hat -- das Retry waere ein Duplikat.
+    let response;
+    try {
+      response = doFetch();
+    } catch (e) {
+      if (!darfWiederholen || attempt === maxAttempts) {
+        throw new Error(`${bezeichnung}: Netzwerkfehler: ${e.message}`);
+      }
+      Utilities.sleep(1000 * Math.pow(2, attempt));
+      continue;
+    }
     const code = response.getResponseCode();
     const text = response.getContentText();
     if (code === 429 || code >= 500) {

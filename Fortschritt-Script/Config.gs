@@ -336,10 +336,28 @@ function patchPipedrive(path, payload) {
  * Retry-Wrapper: bei 429/5xx bis zu 3 Versuche mit steigender Wartezeit (2s, dann 4s), bei 4xx
  * SOFORT abbrechen -- ein 4xx wird durchs Warten nicht besser.
  */
-function callPipedriveWithRetry(doFetch, path) {
+function callPipedriveWithRetry(doFetch, path, wiederholbar) {
   const maxAttempts = 3;
+  const darfWiederholen = wiederholbar !== false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = doFetch();
+    // NETZWERKFEHLER-RETRY (15.09.2026): muteHttpExceptions faengt nur HTTP-Statuscodes ab,
+    // KEINE Netzwerkfehler. Bei einer Zeitueberschreitung wirft UrlFetchApp.fetch() selbst
+    // ("Exception: Timeout: <url>"), bevor es ueberhaupt eine Response gibt -- das lief an der
+    // Statuscode-Schleife unten vorbei und riss den ganzen Lauf ab. Zuerst am 11.09.2026 in
+    // Sheet-Sync/syncNeueZeilen() aufgeschlagen, das Muster steckte in allen Projekten.
+    // wiederholbar=false fuer POST-Aufrufe, die etwas ANLEGEN: ein Timeout heisst nicht, dass
+    // die Gegenseite es nicht doch ausgefuehrt hat, ein Retry erzeugte dort ein Duplikat.
+    // GET und PATCH sind unkritisch -- nochmal lesen bzw. denselben Wert nochmal setzen.
+    let response;
+    try {
+      response = doFetch();
+    } catch (e) {
+      if (!darfWiederholen || attempt === maxAttempts) {
+        throw new Error(`Pipedrive-Netzwerkfehler bei "${path}": ${e.message}`);
+      }
+      Utilities.sleep(1000 * Math.pow(2, attempt));
+      continue;
+    }
     const code = response.getResponseCode();
     if (code === 200) return JSON.parse(response.getContentText());
     if (code === 429 || code >= 500) {

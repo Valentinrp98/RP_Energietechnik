@@ -204,7 +204,7 @@ function postPipedriveV1(path, payload) {
     contentType: 'application/json',
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
-  }), path);
+  }), path, false);  // false = POST legt an (v1 /notes), Retry nach Timeout waere eine Duplikat-Notiz
 }
 
 /** Notiz-Inhalt ist HTML -- Feldwerte sind Freitext und könnten < oder & enthalten. */

@@ -130,7 +130,23 @@ function fetchSlackJson(method, params, payload) {
       optionen.contentType = 'application/json; charset=utf-8';
       optionen.payload = JSON.stringify(payload);
     }
-    const response = UrlFetchApp.fetch(url, optionen);
+    // NETZWERKFEHLER-RETRY (15.09.2026): muteHttpExceptions deckt nur HTTP-Statuscodes ab.
+    // Bei Zeitueberschreitung wirft UrlFetchApp.fetch() selbst ("Exception: Timeout: <url>"),
+    // noch bevor es eine Response gibt -- das lief an der Statuscode-Pruefung vorbei und riss
+    // den ganzen Lauf ab (zuerst am 11.09.2026 in Sheet-Sync/syncNeueZeilen()).
+    // POST-Aufrufe, die etwas ANLEGEN, werden bewusst NICHT wiederholt: ein Timeout heisst
+    // nicht, dass die Gegenseite es nicht doch ausgefuehrt hat -- das Retry waere ein Duplikat.
+    // chat.postMessage ist ein POST mit payload -- nach einem Timeout NICHT wiederholen,
+    // sonst steht der Geburtstagspost zweimal im Channel. Lesende Calls (users.list,
+    // users.profile.get) haben keinen payload und duerfen wiederholt werden.
+    let response;
+    try {
+      response = UrlFetchApp.fetch(url, optionen);
+    } catch (e) {
+      if (payload || versuch === 3) throw new Error('Slack-Netzwerkfehler bei ' + method + ': ' + e.message);
+      Utilities.sleep(versuch * 2000);
+      continue;
+    }
     const code = response.getResponseCode();
     if (code === 429) {
       const retryAfter = Number(response.getHeaders()['Retry-After'] || response.getHeaders()['retry-after'] || 2);

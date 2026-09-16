@@ -331,7 +331,26 @@ function patchCustomFieldsVerified(dealId, customFields) {
 function callPipedriveWithRetry(doFetch, path, rohAntwort) {
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = doFetch();
+    // NETZWERKFEHLER-RETRY (15.09.2026): muteHttpExceptions faengt nur HTTP-Statuscodes ab,
+    // KEINE Netzwerkfehler. Bei Zeitueberschreitung wirft UrlFetchApp.fetch() selbst
+    // ("Exception: Timeout: <url>"), noch bevor es eine Response gibt -- das lief an der
+    // Statuscode-Schleife unten vorbei und riss den ganzen Lauf ab. Zuerst am 11.09.2026 in
+    // Sheet-Sync/syncNeueZeilen() aufgeschlagen, das Muster steckte in allen Projekten.
+    // Ueber diesen Helfer laufen nur GET und PATCH (fetchPipedrive, fetchPipedriveRaw,
+    // patchPipedrive) -- beide gefahrlos wiederholbar. Die POST-Aufrufe des Projekts
+    // (Webhook-Registrierung, Feld-Setup) sind Einmal-Funktionen und gehen direkt an
+    // UrlFetchApp, nicht hier durch. Kommt hier je ein anlegender POST dazu, braucht er ein
+    // wiederholbar=false wie in Ordnererstellung/SetterInfoNotiz.gs -- sonst Duplikate.
+    let response;
+    try {
+      response = doFetch();
+    } catch (e) {
+      if (attempt === maxAttempts) {
+        throw new Error(`Pipedrive-Netzwerkfehler bei "${path}": ${e.message}`);
+      }
+      Utilities.sleep(1000 * Math.pow(2, attempt));
+      continue;
+    }
     const code = response.getResponseCode();
     if (code === 200) {
       const json = JSON.parse(response.getContentText());
