@@ -38,12 +38,166 @@ function checkConfiguration() {
     }
   }
 
+  // AUSGEBAUT 17.09.2026. Vorher prueften diese Zeilen genau eine Sache: ob ein Pipedrive-Feldcode
+  // existiert. Alles andere -- ob der Anthropic-Key gueltig ist, ob die Modell-ID stimmt, ob die
+  // Kundenordner ueberhaupt die Zielunterordner haben -- fiel erst im Lauf auf, dateiweise, nach
+  // dem Bezahlen. Ein Preflight, der den haeufigsten Ausfall nicht sieht, erzieht dazu, ihn zu
+  // ueberspringen. Die folgenden Bloecke pruefen deshalb genau die Pfade, die im Lauf Geld kosten.
+
+  // (a) Das Checklisten-Feld, falls konfiguriert. Ein falscher field_code oder eine Options-ID aus
+  // einem geloeschten Feld faellt sonst erst LIVE auf -- also genau dann, wenn geschrieben wird.
+  if (probleme.length === 0 && DOKUMENTE_ERKANNT_FIELD_KEY) {
+    try {
+      const dealFields = fetchPipedrive('dealFields?limit=500');
+      const feld = dealFields.find(f => f.field_code === DOKUMENTE_ERKANNT_FIELD_KEY);
+      if (!feld) {
+        probleme.push(`DOKUMENTE_ERKANNT_FIELD_KEY "${DOKUMENTE_ERKANNT_FIELD_KEY}" existiert nicht in dealFields.`);
+      } else {
+        const gueltigeIds = (feld.options || []).map(o => String(o.id));
+        Object.keys(DOKUMENTE_ERKANNT_OPTION_IDS).forEach(kategorie => {
+          if (gueltigeIds.indexOf(String(DOKUMENTE_ERKANNT_OPTION_IDS[kategorie])) === -1) {
+            probleme.push(`Options-ID ${DOKUMENTE_ERKANNT_OPTION_IDS[kategorie]} (${kategorie}) gehoert nicht zu "${feld.field_name}" -- findeDokumenteFeldKonfiguration() nochmal laufen lassen.`);
+          }
+        });
+        Object.keys(ZIEL_UNTERORDNER).forEach(kategorie => {
+          if (!DOKUMENTE_ERKANNT_OPTION_IDS[kategorie]) {
+            probleme.push(`Kategorie "${kategorie}" hat keine Options-ID -- sie wuerde LIVE stillschweigend nicht in der Checkliste landen.`);
+          }
+        });
+      }
+    } catch (e) {
+      probleme.push(`Check "Dokumente erkannt" fehlgeschlagen: ${e}`);
+    }
+  }
+
+  // (b) Die Ordnerstruktur der Pilot-Deals, lesend. Fehlt "3_Stromrechnung", laeuft der Deal seit
+  // dem Preflight in processDeal() zwar nicht mehr ins Geld -- aber hier sieht man es, BEVOR man
+  // den Lauf startet, und bekommt gesagt, welcher Deal gemeint ist.
   if (probleme.length === 0) {
-    Logger.log('checkConfiguration: alles passt.');
+    PILOT_DEAL_IDS.forEach(dealId => {
+      try {
+        const deal = fetchPipedrive(`deals/${dealId}`);
+        const link = (deal.custom_fields || {})[KUNDENORDNER_LINK_FIELD_KEY];
+        if (!link) {
+          probleme.push(`Deal ${dealId}: Kundenordner-Link ist nicht gesetzt.`);
+          return;
+        }
+        const ordner = oeffneOrdnerAusLink(link);
+        const cache = baueZielOrdnerCache(ordner);
+        const fehlend = Object.keys(cache).filter(n => !cache[n]);
+        if (fehlend.length > 0) {
+          probleme.push(`Deal ${dealId} ("${ordner.getName()}"): Zielunterordner fehlen -- ${fehlend.join(', ')}.`);
+        }
+      } catch (e) {
+        probleme.push(`Deal ${dealId}: Kundenordner nicht lesbar -- ${e}`);
+      }
+    });
+  }
+
+  // (c) Der Anthropic-Pfad, echt statt vermutet. Ein Text-Call mit erzwungenem Tool-Use kostet
+  // Bruchteile eines Cents und beweist vier Dinge auf einmal: Key gueltig, Modell-ID existiert,
+  // das Modell macht erzwungene Tool-Calls mit, Antwortformat parsebar. Der Key selbst wird dabei
+  // nirgends ausgegeben -- nur, dass er funktioniert.
+  if (probleme.length === 0) {
+    try {
+      const test = anthropicSelbsttest();
+      const kosten = berechneKosten(test.usage);
+      Logger.log(`Anthropic-Selbsttest OK -- Modell "${test.modell}", ${test.usage.input_tokens}/${test.usage.output_tokens} Token, ${kosten.eur.toFixed(5)} EUR.`);
+    } catch (e) {
+      probleme.push(`Anthropic-Selbsttest fehlgeschlagen (Key/Modell "${CLAUDE_MODEL}" pruefen): ${e}`);
+    }
+  }
+
+  if (probleme.length === 0) {
+    Logger.log(`checkConfiguration: alles passt. Modus: ${DRY_RUN ? 'DRY (schreibt nichts)' : 'LIVE (schreibt nach Drive' + (DOKUMENTE_ERKANNT_FIELD_KEY ? ' UND Pipedrive' : '') + ')'}.`);
   } else {
     Logger.log(`checkConfiguration: ${probleme.length} Problem(e):\n- ${probleme.join('\n- ')}`);
   }
   return probleme;
+}
+
+// Geschaetzte Output-Token pro Klassifikation: das Tool-Schema hat vier Felder, davon zwei kurze
+// Freitexte. Gemessene Laeufe liegen bei 100-200; 150 ist die Mitte. Der Output faellt gegenueber
+// dem Input kaum ins Gewicht (ein Bild sind ~1.600 Input-Token), die Schaetzung muss hier also
+// nicht genauer sein als die Groessenordnung.
+const GESCHAETZTE_OUTPUT_TOKENS = 150;
+
+/**
+ * Was wuerde ein Echtlauf kosten? Beantwortet die Frage, OHNE einen einzigen bezahlten Call zu
+ * machen: laeuft dieselbe Auswahl-Logik wie processDeal() (Format, Groesse, schon einsortiert)
+ * und schickt die uebrigen Dateien an /v1/messages/count_tokens -- laut Doku kostenlos und mit
+ * eigenem Rate-Limit-Topf.
+ *
+ * Das ist der Schritt, der bisher gefehlt hat: "erst messen, dann scharf schalten" ging vorher nur
+ * ueber einen DRY-Lauf, und der kostet dasselbe wie der Echtlauf, weil er klassifiziert. Hier
+ * kostet das Messen nichts.
+ *
+ * Schreibt nichts -- nicht nach Drive, nicht nach Pipedrive.
+ */
+function kostenVoranschlag() {
+  starteLauf('kostenVoranschlag');
+  try {
+    let summeInput = 0, dateienZuZahlen = 0, uebersprungen = 0, unbekannt = 0;
+
+    PILOT_DEAL_IDS.forEach(dealId => {
+      const deal = fetchPipedrive(`deals/${dealId}`);
+      const link = (deal.custom_fields || {})[KUNDENORDNER_LINK_FIELD_KEY];
+      if (!link) {
+        logRow(dealId, null, null, 'SOFT_ERROR', 'Kundenordner-Link fehlt -- nicht schaetzbar');
+        return;
+      }
+      const zielOrdnerCache = baueZielOrdnerCache(oeffneOrdnerAusLink(link));
+
+      holeDealFiles(dealId).forEach(datei => {
+        if (laufzeitFastAufgebraucht()) return;
+
+        const mimeType = ermittleMimeTyp(datei.name);
+        if (!mimeType) {
+          uebersprungen++;
+          logRow(dealId, datei.name, null, 'übersprungen', begruendeNichtUnterstuetzt(datei.name));
+          return;
+        }
+        const groesse = Number(datei.file_size);
+        if (Number.isFinite(groesse) && groesse > MAX_DATEI_BYTES) {
+          uebersprungen++;
+          logRow(dealId, datei.name, null, 'übersprungen', `${(groesse / 1048576).toFixed(1)} MB -- ueber MAX_DATEI_BYTES`);
+          return;
+        }
+        const schonIn = findeBereitsEinsortiert(zielOrdnerCache, `${datei.name} (Pipedrive-Datei ${datei.id})`);
+        if (schonIn) {
+          uebersprungen++;
+          logRow(dealId, datei.name, null, 'übersprungen', `liegt bereits in "${schonIn}" -- wuerde im Echtlauf nichts kosten`);
+          return;
+        }
+
+        const blob = downloadPipedriveFile(datei.id, datei.name);
+        const tokens = schaetzeInputTokens(Utilities.base64Encode(blob.getBytes()), mimeType, datei.name);
+        if (tokens === null) {
+          unbekannt++;
+          logRow(dealId, datei.name, null, 'SOFT_ERROR', 'Token-Zaehlung fehlgeschlagen -- nicht in der Summe enthalten');
+          return;
+        }
+        summeInput += tokens;
+        dateienZuZahlen++;
+        const kosten = berechneKostenAusTokens(tokens, GESCHAETZTE_OUTPUT_TOKENS);
+        const warnung = tokens > MAX_INPUT_TOKENS_PRO_DATEI
+          ? ` -- ueber MAX_INPUT_TOKENS_PRO_DATEI (${MAX_INPUT_TOKENS_PRO_DATEI}), wuerde im Echtlauf NICHT klassifiziert`
+          : '';
+        logRow(dealId, datei.name, null, 'SCHAETZUNG', `${tokens} Input-Token, ~${kosten.eur.toFixed(4)} EUR${warnung}`);
+      });
+    });
+
+    const gesamt = berechneKostenAusTokens(summeInput, dateienZuZahlen * GESCHAETZTE_OUTPUT_TOKENS);
+    const text = `${dateienZuZahlen} Dateien wuerden klassifiziert, ${uebersprungen} nicht (Format/Groesse/schon abgelegt)` +
+      (unbekannt ? `, ${unbekannt} nicht schaetzbar` : '') +
+      ` | ~${summeInput} Input-Token | ~${gesamt.eur.toFixed(4)} EUR fuer einen Echtlauf`;
+    logRow(null, null, null, 'VORANSCHLAG', text);
+    Logger.log(`kostenVoranschlag: ${text}`);
+    Logger.log('Kosten dieser Schaetzung selbst: 0 EUR (count_tokens ist laut Anthropic-Doku kostenlos).');
+    return { dateien: dateienZuZahlen, inputTokens: summeInput, eur: gesamt.eur };
+  } finally {
+    flushLog();
+  }
 }
 
 /**

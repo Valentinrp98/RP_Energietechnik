@@ -74,9 +74,53 @@ const MAX_LAUFZEIT_MS = 4.5 * 60 * 1000;
 // und ~1500 Token/Seite sind 60 Calls grob 10 Cent; der Pilot soll nicht unbemerkt teurer werden.
 const MAX_CLAUDE_CALLS_PRO_LAUF = 60;
 
-/** true, sobald die 6-Minuten-Grenze von Apps Script bedrohlich nah ist. */
+// Obergrenze Input-Token pro Datei -- die zweite Kostenbremse neben MAX_DATEI_BYTES, und die
+// wichtigere. Bytes sagen bei PDFs fast nichts ueber den Preis: laut Doku (platform.claude.com,
+// geprueft 17.09.2026) kostet EINE PDF-Seite 1.500-3.000 Text-Token PLUS die Bild-Token derselben
+// Seite, weil jede Seite zusaetzlich als Bild gerendert wird. Ein 1-MB-PDF mit 40 Seiten ist damit
+// ein Vielfaches teurer als ein 6-MB-Foto. Bilder brauchen diese Bremse nicht: die deckelt Claude
+// selbst durch Auto-Downscaling (Groessenordnung 1.600 Token pro Bild bei Haiku 4.5), PDFs nicht --
+// dort skaliert der Preis linear mit der Seitenzahl.
+// 30.000 Token sind rund 3 US-Cent Input und entsprechen grob 7-10 Seiten. Eine Stromrechnung liegt
+// normal bei 2-6 Seiten; was drueber liegt, ist selten das, wonach wir suchen.
+const MAX_INPUT_TOKENS_PRO_DATEI = 30000;
+
+// Ab welcher Konfidenz eine Datei automatisch abgelegt werden darf. 'niedrig' gemeldete Dateien
+// wandern statt in den Zielordner als entscheidbare Zeile ins Log -- mit Kategorie, erkannten
+// Merkmalen und Begruendung, damit ein Mensch in 30 Sekunden Ja/Nein sagen kann.
+// Auf 'hoch' stellen, wenn der DRY-Vollauf zeigt, dass 'mittel' zu oft danebenliegt.
+const KONFIDENZ_MINIMUM = 'mittel';
+
+/**
+ * true, sobald die 6-Minuten-Grenze von Apps Script bedrohlich nah ist.
+ * _laufStart === 0 heisst "starteLauf() wurde nie aufgerufen" (z.B. checkConfiguration()).
+ * Ohne diesen Sonderfall waere Date.now() - 0 immer groesser als jedes Limit -- die Funktion
+ * wuerde dann "Zeit ist um" melden, bevor irgendetwas begonnen hat.
+ */
 function laufzeitFastAufgebraucht() {
+  if (_laufStart === 0) return false;
   return (Date.now() - _laufStart) > MAX_LAUFZEIT_MS;
+}
+
+/** Wieviel vom selbstgesetzten Zeitbudget noch uebrig ist. Siehe Sonderfall oben. */
+function verbleibendeLaufzeitMs() {
+  if (_laufStart === 0) return MAX_LAUFZEIT_MS;
+  return Math.max(0, MAX_LAUFZEIT_MS - (Date.now() - _laufStart));
+}
+
+/**
+ * Schlafen, aber nie ueber das Laufzeitbudget hinaus.
+ * Der Grund: ein retry-after-Header darf bis zu 30s fordern, und drei Retries in Folge koennen
+ * damit fast eine Minute fressen. Wenn dafuer keine Zeit mehr ist, ist Abbrechen ehrlicher als
+ * Warten -- beim harten 6-Minuten-Kill von Apps Script gaebe es kein finally und damit auch
+ * keinen geschriebenen Log; so bleibt im Sheet stehen, woran es lag.
+ */
+function schlafeBegrenzt(wartezeitMs, kontext) {
+  const rest = verbleibendeLaufzeitMs();
+  if (rest < wartezeitMs + 5000) {
+    throw new Error(`Abbruch bei ${kontext}: naechster Versuch braucht ${Math.round(wartezeitMs / 1000)}s Wartezeit, es sind aber nur noch ${Math.round(rest / 1000)}s Laufzeit uebrig`);
+  }
+  Utilities.sleep(wartezeitMs);
 }
 
 // ===== HILFSFUNKTIONEN (Pipedrive) =====
@@ -132,7 +176,7 @@ function callPipedriveWithRetry(doFetch, path, wiederholbar) {
       if (!darfWiederholen || attempt === maxAttempts) {
         throw new Error(`Pipedrive-Netzwerkfehler bei "${path}": ${e.message}`);
       }
-      Utilities.sleep(1000 * Math.pow(2, attempt));
+      schlafeBegrenzt(1000 * Math.pow(2, attempt), `Pipedrive "${path}"`);
       continue;
     }
     const code = response.getResponseCode();
@@ -143,7 +187,7 @@ function callPipedriveWithRetry(doFetch, path, wiederholbar) {
       }
       // KORREKTUR 16.09.2026: hier stand "2s, 4s, 8s". Real sind es 2s und 4s -- beim dritten
       // Versuch wird nicht mehr geschlafen, sondern geworfen. Befund D17 im Repo-CLAUDE.md.
-      Utilities.sleep(1000 * Math.pow(2, attempt)); // 2s, 4s (beim 3. Versuch: throw statt sleep)
+      schlafeBegrenzt(1000 * Math.pow(2, attempt), `Pipedrive "${path}"`); // 2s, 4s (beim 3. Versuch: throw statt sleep)
       continue;
     }
     throw new Error(`Pipedrive API-Fehler ${code} bei "${path}": ${response.getContentText()}`);
@@ -162,6 +206,13 @@ let _laufId = '-';
 let _laufFunktion = '-';
 let _laufStart = 0;
 
+// Laufende Summen fuer die Schlusszeile. Bisher stand am Ende eines Laufs nur, WIEVIELE Dateien
+// verarbeitet wurden -- was er gekostet hat, musste man aus den Einzelzeilen zusammenaddieren.
+// Genau diese Zahl entscheidet aber, ob der Pilot auf alle Deals ausgerollt wird.
+let _laufTokensIn = 0;
+let _laufTokensOut = 0;
+let _laufKostenUsd = 0;
+
 function starteLauf(funktionsName) {
   _laufId = Utilities.getUuid().slice(0, 8);
   _laufFunktion = funktionsName;
@@ -170,6 +221,9 @@ function starteLauf(funktionsName) {
   // behaelt: ohne das haette ein zweiter Aufruf im selben Durchlauf (z.B. testEinzelDeal nach
   // pilotLauf) das Call-Limit schon aufgebraucht vorgefunden.
   _claudeCallsDieserLauf = 0;
+  _laufTokensIn = 0;
+  _laufTokensOut = 0;
+  _laufKostenUsd = 0;
   Logger.log(`[${_laufId}] ${funktionsName} gestartet (${DRY_RUN ? 'DRY' : 'LIVE'})`);
   return _laufId;
 }
@@ -195,6 +249,11 @@ function getLogSheet() {
 /** usage: optionales {input_tokens, output_tokens} aus der Claude-Antwort. */
 function logRow(dealId, dateiname, kategorie, ergebnis, detail, usage) {
   const kosten = usage ? berechneKosten(usage) : null;
+  if (kosten) {
+    _laufTokensIn += usage.input_tokens || 0;
+    _laufTokensOut += usage.output_tokens || 0;
+    _laufKostenUsd += kosten.usd;
+  }
   _logBuffer.push([
     new Date(), _laufId, _laufFunktion, DRY_RUN ? 'DRY' : 'LIVE',
     dealId || '', dateiname || '', kategorie || '', ergebnis,
@@ -206,15 +265,26 @@ function logRow(dealId, dateiname, kategorie, ergebnis, detail, usage) {
 
 /** Kosten aus Claude-Token-Usage nach den Preiskonstanten oben in diesem File. */
 function berechneKosten(usage) {
-  const usd = (usage.input_tokens / 1e6) * CLAUDE_PREIS_USD_PRO_1M_INPUT
-    + (usage.output_tokens / 1e6) * CLAUDE_PREIS_USD_PRO_1M_OUTPUT;
+  return berechneKostenAusTokens(usage.input_tokens || 0, usage.output_tokens || 0);
+}
+
+/**
+ * Wie berechneKosten(), aber mit freien Token-Zahlen -- gebraucht fuer den Kostenvoranschlag,
+ * bei dem es noch gar keine usage gibt, weil bewusst nichts bezahlt wurde.
+ */
+function berechneKostenAusTokens(inputTokens, outputTokens) {
+  const usd = (inputTokens / 1e6) * CLAUDE_PREIS_USD_PRO_1M_INPUT
+    + (outputTokens / 1e6) * CLAUDE_PREIS_USD_PRO_1M_OUTPUT;
   return { usd, eur: usd * USD_ZU_EUR };
 }
 
 function logLaufEnde(status, summary) {
   const dauer = Math.round((Date.now() - _laufStart) / 1000);
-  logRow(null, null, null, status, `${JSON.stringify(summary)} -- ${dauer}s`);
-  Logger.log(`[${_laufId}] ${_laufFunktion} ${status}: ${JSON.stringify(summary)} (${dauer}s)`);
+  const eur = _laufKostenUsd * USD_ZU_EUR;
+  const kostenText = `${_claudeCallsDieserLauf} Claude-Calls, ${_laufTokensIn} In-/${_laufTokensOut} Out-Token, ${eur.toFixed(4)} EUR`;
+  logRow(null, null, null, status, `${JSON.stringify(summary)} -- ${kostenText} -- ${dauer}s`);
+  Logger.log(`[${_laufId}] ${_laufFunktion} ${status}: ${JSON.stringify(summary)}`);
+  Logger.log(`[${_laufId}] Kosten: ${kostenText} (${dauer}s Laufzeit)`);
 }
 
 function flushLog() {
