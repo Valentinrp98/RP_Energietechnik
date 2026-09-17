@@ -56,6 +56,29 @@ const USD_ZU_EUR = 0.92;
 // Wenn true: nichts wird in Drive geschrieben, nur klassifiziert und geloggt was passieren würde.
 const DRY_RUN = true;
 
+// Groessengrenze pro Datei, geprueft BEVOR heruntergeladen wird (v1-Metadaten liefern file_size).
+// Verifiziert an der Vision-Doku (platform.claude.com/docs, Stand 16.09.2026): die direkte Claude
+// API erlaubt 10 MB base64 pro Bild -- die verbreiteten "5 MB" gelten nur fuer Bedrock/Vertex.
+// base64 blaeht 4/3 auf, also sind 7,5 MB Rohdatei die reale Grenze; mit Sicherheitsabstand 7 MB.
+// Bewusst NICHT auf Claudes Auto-Downscaling verlassen: das greift bei zu grossen *Abmessungen*,
+// die Byte-Grenze bleibt hart.
+const MAX_DATEI_BYTES = 7 * 1024 * 1024;
+
+// Apps Script bricht eine Ausfuehrung nach 6 Minuten hart ab -- mitten im Lauf, ohne finally.
+// Bei einem harten Abbruch waere der gepufferte Log weg UND das Anthropic-Geld fuer die bereits
+// klassifizierten Dateien trotzdem ausgegeben. Deshalb vor jeder neuen Datei pruefen und sauber
+// aussteigen. 4,5 Min laesst Luft fuer eine laufende Klassifikation + flushLog().
+const MAX_LAUFZEIT_MS = 4.5 * 60 * 1000;
+
+// Obergrenze Anthropic-Calls pro Lauf -- Notbremse gegen einen Deal mit 300 Fotos. Bei Haiku 4.5
+// und ~1500 Token/Seite sind 60 Calls grob 10 Cent; der Pilot soll nicht unbemerkt teurer werden.
+const MAX_CLAUDE_CALLS_PRO_LAUF = 60;
+
+/** true, sobald die 6-Minuten-Grenze von Apps Script bedrohlich nah ist. */
+function laufzeitFastAufgebraucht() {
+  return (Date.now() - _laufStart) > MAX_LAUFZEIT_MS;
+}
+
 // ===== HILFSFUNKTIONEN (Pipedrive) =====
 // fetchPipedrive/callPipedriveWithRetry 1:1 aus Ordnererstellung-bei-Gewonnen/Config.gs übernommen.
 
@@ -92,17 +115,35 @@ function fetchPipedriveV1(path) {
   }), path);
 }
 
-function callPipedriveWithRetry(doFetch, path) {
+function callPipedriveWithRetry(doFetch, path, wiederholbar) {
   const maxAttempts = 3;
+  const darfWiederholen = wiederholbar !== false;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = doFetch();
+    // NACHGEZOGEN 16.09.2026: Commit 556fb57 ("Alle Projekte: Retry auch bei Netzwerk-Timeouts")
+    // hat 11 Projekte angefasst und AUSGERECHNET dieses uebersprungen -- es stand nicht in der
+    // Liste. muteHttpExceptions faengt nur HTTP-Statuscodes, KEINE Netzwerkfehler: bei einer
+    // Zeitueberschreitung wirft UrlFetchApp.fetch() selbst ("Exception: Timeout: <url>"), bevor
+    // es eine Response gibt -- das lief an der Statuscode-Schleife unten vorbei.
+    // wiederholbar=false fuer POST-Aufrufe, die etwas ANLEGEN (hier aktuell keiner).
+    let response;
+    try {
+      response = doFetch();
+    } catch (e) {
+      if (!darfWiederholen || attempt === maxAttempts) {
+        throw new Error(`Pipedrive-Netzwerkfehler bei "${path}": ${e.message}`);
+      }
+      Utilities.sleep(1000 * Math.pow(2, attempt));
+      continue;
+    }
     const code = response.getResponseCode();
-    if (code === 200) return JSON.parse(response.getContentText()).data;
+    if (code === 200 || code === 201) return JSON.parse(response.getContentText()).data;
     if (code === 429 || code >= 500) {
       if (attempt === maxAttempts) {
         throw new Error(`Pipedrive API-Fehler ${code} bei "${path}" nach ${maxAttempts} Versuchen: ${response.getContentText()}`);
       }
-      Utilities.sleep(1000 * Math.pow(2, attempt)); // 2s, 4s, 8s
+      // KORREKTUR 16.09.2026: hier stand "2s, 4s, 8s". Real sind es 2s und 4s -- beim dritten
+      // Versuch wird nicht mehr geschlafen, sondern geworfen. Befund D17 im Repo-CLAUDE.md.
+      Utilities.sleep(1000 * Math.pow(2, attempt)); // 2s, 4s (beim 3. Versuch: throw statt sleep)
       continue;
     }
     throw new Error(`Pipedrive API-Fehler ${code} bei "${path}": ${response.getContentText()}`);
@@ -125,6 +166,10 @@ function starteLauf(funktionsName) {
   _laufId = Utilities.getUuid().slice(0, 8);
   _laufFunktion = funktionsName;
   _laufStart = Date.now();
+  // Zuruecksetzen ist noetig, weil Apps Script den globalen Zustand innerhalb einer Ausfuehrung
+  // behaelt: ohne das haette ein zweiter Aufruf im selben Durchlauf (z.B. testEinzelDeal nach
+  // pilotLauf) das Call-Limit schon aufgebraucht vorgefunden.
+  _claudeCallsDieserLauf = 0;
   Logger.log(`[${_laufId}] ${funktionsName} gestartet (${DRY_RUN ? 'DRY' : 'LIVE'})`);
   return _laufId;
 }

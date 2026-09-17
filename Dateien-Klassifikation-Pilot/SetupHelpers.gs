@@ -100,18 +100,28 @@ function testEinzelDeal() {
 /** Iteriert alle Pilot-Deals (siehe PILOT_DEAL_IDS in Config.gs). Respektiert DRY_RUN. */
 function pilotLauf() {
   starteLauf('pilotLauf');
-  const summary = { verarbeitet: 0, unsicher: 0, fehler: 0 };
+  const summary = { verarbeitet: 0, unsicher: 0, fehler: 0, uebersprungen: 0, abgebrochen: 0 };
   // try/finally wie in testEinzelDeal(): ohne das verliert ein Fehler bei Deal 3 die bereits
   // bezahlten Kosten-Zeilen von Deal 1 und 2. Zusaetzlich wird jeder Deal einzeln gefangen, damit
   // ein kaputter Deal nicht die restlichen mitnimmt -- der Lauf soll durchlaufen und am Ende sagen,
   // was schiefging.
   try {
     PILOT_DEAL_IDS.forEach(dealId => {
+      // Bei erschoepfter Laufzeit gar nicht erst den naechsten Deal anfangen: ein mittendrin
+      // hart abgebrochener Deal hinterlaesst halb einsortierte Dateien und einen verlorenen
+      // Log-Puffer. Lieber sauber aussteigen und im Log sagen, was offen blieb.
+      if (laufzeitFastAufgebraucht()) {
+        summary.abgebrochen++;
+        logRow(dealId, null, null, 'ABBRUCH', 'Laufzeit-Limit erreicht -- Deal nicht begonnen');
+        return;
+      }
       try {
         const ergebnisProDeal = processDeal(dealId);
         summary.verarbeitet += ergebnisProDeal.verarbeitet;
         summary.unsicher += ergebnisProDeal.unsicher;
         summary.fehler += ergebnisProDeal.fehler;
+        summary.uebersprungen += ergebnisProDeal.uebersprungen || 0;
+        if (ergebnisProDeal.abgebrochen) summary.abgebrochen++;
       } catch (e) {
         summary.fehler++;
         logRow(dealId, null, null, 'HARD_ERROR', `Deal abgebrochen: ${e.message}`);
