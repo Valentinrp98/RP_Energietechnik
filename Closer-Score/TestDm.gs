@@ -75,3 +75,97 @@ function closerName(closerId) {
   return name + gemappt;
 }
 
+
+// ============================================================
+// HEUTIGE CLOSES — Testlauf fuer die Deals von heute
+// ============================================================
+// Warum eine eigene Funktion: der Echtbetrieb wartet 48 h Reifezeit ab und
+// merkt sich im Zustand, wer schon dran war. Fuer "zeig mir die von heute"
+// ist beides im Weg. Diese Funktion umgeht Reifezeit UND Zustand komplett
+// und schickt sofort — Empfaenger wie ueberall in dieser Datei hart Valentin.
+//
+// ⚠️ WELCHER ZEITSTEMPEL "heute geclosed" bedeutet, ist NICHT eindeutig:
+//   won_time          unbrauchbar, wird bei RP schon bei der Anlage gesetzt (Befund D20)
+//   update_time       jede Feldaenderung zaehlt, also auch ein Nachtrag an einem alten Deal
+//   stage_change_time der Stufenwechsel in der Fulfillment-Pipeline
+//   add_time          Anlage des Deals
+// Deshalb wird NICHT geraten: als Treffer gilt, wenn IRGENDEINER davon auf den
+// gesuchten Tag faellt, und das Log zeigt fuer jeden Deal alle vier nebeneinander.
+// Damit siehst du in 30 Sekunden, welcher Zeitstempel der richtige Marker ist —
+// und der kann dann fest verdrahtet werden.
+
+function testeHeutigeCloses() {
+  const TAGE_ZURUECK = 0;   // 0 = heute, 1 = gestern, 2 = vorgestern ...
+  const MAX_DMS = 10;       // Sicherheitsgrenze, damit ein weiter Rueckblick kein Slack-Bombardement wird
+
+  const stichtag = new Date();
+  stichtag.setDate(stichtag.getDate() - TAGE_ZURUECK);
+  const tag = tagesSchluessel(stichtag);
+  Logger.log('Suche qualifizierte Deals mit einem Zeitstempel am %s (Europe/Vienna).', tag);
+
+  const qualifiziert = holeFulfillmentDeals().filter(function (d) {
+    return istBefuellt((d.custom_fields || {})[FELD_SEVDESK_SUMMARY], 'text');
+  });
+  Logger.log('%s qualifizierte Deals insgesamt.', String(qualifiziert.length));
+
+  const treffer = qualifiziert.filter(function (d) {
+    return zeitstempelFelder(d).some(function (z) { return z.tag === tag; });
+  });
+
+  if (treffer.length === 0) {
+    Logger.log('Kein einziger qualifizierter Deal hat am %s einen Zeitstempel.', tag);
+    Logger.log('Entweder ist heute noch nichts durchgelaufen, oder der sevdesk-Sync hat');
+    Logger.log('Verkaufte_Artikel_Summary noch nicht geschrieben — ohne das Feld zaehlt ein');
+    Logger.log('Deal hier nicht als Close. Zum Gegenpruefen: TAGE_ZURUECK auf 1 setzen.');
+    return;
+  }
+
+  Logger.log('\n%s Treffer. Zeitstempel im Vergleich (fett waere der, der auf %s passt):', String(treffer.length), tag);
+  Logger.log('| Deal | Titel | add_time | update_time | stage_change_time | won_time |');
+  Logger.log('|---|---|---|---|---|---|');
+  treffer.forEach(function (d) {
+    const z = zeitstempelFelder(d);
+    const zelle = function (name) {
+      const f = z.filter(function (x) { return x.name === name; })[0];
+      if (!f || !f.roh) return '—';
+      return (f.tag === tag ? '**' + f.roh + '**' : f.roh);
+    };
+    Logger.log('| %s | %s | %s | %s | %s | %s |', String(d.id), d.title,
+               zelle('add_time'), zelle('update_time'), zelle('stage_change_time'), zelle('won_time'));
+  });
+
+  const verschickt = treffer.slice(0, MAX_DMS);
+  if (treffer.length > MAX_DMS) {
+    Logger.log('\n⚠️ %s Treffer, aber nur die ersten %s werden verschickt (MAX_DMS).', String(treffer.length), String(MAX_DMS));
+  }
+  Logger.log('\nSchicke %s echte DMs an Valentin (%s):', String(verschickt.length), VALENTIN_USER_ID);
+  verschickt.forEach(function (d) {
+    sendeTestDm(bewerteDeal(d), 'Close vom ' + tag);
+  });
+  Logger.log('\nFertig. Kein Zustand gesetzt — der Echtbetrieb meldet diese Deals spaeter trotzdem.');
+}
+
+// Alle vier Zeitstempel eines Deals, jeweils roh und als Tagesschluessel.
+function zeitstempelFelder(deal) {
+  return ['add_time', 'update_time', 'stage_change_time', 'won_time'].map(function (name) {
+    const roh = deal[name] || null;
+    return { name: name, roh: roh, tag: roh ? tagesSchluessel(alsDatum(roh)) : null };
+  });
+}
+
+// Pipedrive liefert je nach Endpunkt "2026-09-22T08:15:00Z" oder
+// "2026-09-22 08:15:00". Das zweite Format parst JS nicht zuverlaessig —
+// deshalb wird es vorher auf ISO gebracht.
+function alsDatum(wert) {
+  if (!wert) return null;
+  let s = String(wert);
+  if (s.indexOf('T') === -1) s = s.replace(' ', 'T');
+  if (!/[Zz]$|[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function tagesSchluessel(datum) {
+  if (!datum) return null;
+  return Utilities.formatDate(datum, 'Europe/Vienna', 'yyyy-MM-dd');
+}
