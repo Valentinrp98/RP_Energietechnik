@@ -21,7 +21,15 @@
 // true = Simulation. Es wird gelesen, gescored und geloggt, aber KEINE DM
 // verschickt und der Zustand NICHT fortgeschrieben. Der DRY-Vollauf ist das
 // Messinstrument: erst messen, dann scharf schalten.
-const DRY_RUN = true;
+const DRY_RUN = false;
+
+// TESTWOCHE ab 22.09.2026. Solange das true ist, geht JEDE DM an Valentin —
+// egal was in CLOSER_SLACK_IDS steht. Der Text nennt im Fuss, an wen sie im
+// Echtbetrieb gegangen waere. Damit laeuft das Script eine Woche scharf mit,
+// ohne dass ein Closer etwas sieht.
+// Zum Scharfschalten: auf false setzen. Vorher CLOSER_SLACK_IDS befuellen,
+// sonst landet weiterhin alles bei Valentin (dann aber mit Mapping-Warnung).
+const TEST_ALLES_AN_MICH = true;
 
 // Reifezeit: so lange nach der Erst-Sichtung wird gewartet, bevor gescored
 // wird. Fotos und Notizen kommen oft am Tag danach nach — sofort messen

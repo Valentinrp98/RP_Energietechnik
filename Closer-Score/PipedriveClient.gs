@@ -82,3 +82,24 @@ function toQueryString(params) {
     .map(function (key) { return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]); })
     .join('&');
 }
+
+
+// Pipedrive-User-ID -> Name, mit Cache fuer die Laufzeit. Ohne den Cache
+// zoege ein Vollauf ueber 86 Deals 86 einzelne /users-Abrufe nach sich.
+// /users ist v1-only.
+var _userNamenCache = {};
+function pipedriveUserName(userId) {
+  if (userId === null || userId === undefined) return null;
+  const schluessel = String(userId);
+  if (_userNamenCache[schluessel] !== undefined) return _userNamenCache[schluessel];
+  let name = null;
+  try {
+    const json = fetchPipedriveJson('/users/' + schluessel, {}, PIPEDRIVE_BASE_V1);
+    name = (json.data && json.data.name) || null;
+  } catch (e) {
+    // Ein fehlender Name darf keine DM verhindern — der Aufrufer faellt auf
+    // die nackte ID zurueck.
+  }
+  _userNamenCache[schluessel] = name;
+  return name;
+}

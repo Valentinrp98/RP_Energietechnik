@@ -94,10 +94,14 @@ function baueNachricht(ergebnis) {
   return zeilen.join('\n');
 }
 
-// Wer bekommt die DM? Der Closer aus CLOSER_FELD, wenn er in CLOSER_SLACK_IDS
-// steht. Sonst Valentin mit Hinweis — damit ein fehlender Mapping-Eintrag
-// auffaellt, statt die Meldung still verschwinden zu lassen.
+// Wer bekommt die DM? In der Testwoche immer Valentin. Danach der Closer aus
+// CLOSER_FELD, wenn er in CLOSER_SLACK_IDS steht — sonst wieder Valentin mit
+// Hinweis, damit ein fehlender Mapping-Eintrag auffaellt statt die Meldung
+// still verschwinden zu lassen.
 function bestimmeEmpfaenger(ergebnis) {
+  if (TEST_ALLES_AN_MICH) {
+    return { slackId: VALENTIN_USER_ID, zusatz: '\n\n_🧪 Testwoche: ' + echterEmpfaengerText(ergebnis) + ' Bis dahin siehst nur du das._' };
+  }
   const slackId = CLOSER_SLACK_IDS[ergebnis.closerId];
   if (slackId) return { slackId: slackId, zusatz: '' };
   return {
@@ -105,4 +109,17 @@ function bestimmeEmpfaenger(ergebnis) {
     zusatz: '\n\n⚠️ _Kein Slack-Mapping für Pipedrive-User `' + ergebnis.closerId +
             '` — deshalb ging diese Meldung an dich statt an den Closer. Eintrag in `Closer-Score/Config.gs` → `CLOSER_SLACK_IDS` ergänzen._'
   };
+}
+
+// Beschreibt im Klartext, wer die DM nach der Testwoche bekaeme — inklusive
+// des Falls, dass der Closer noch gar kein Slack-Mapping hat.
+function echterEmpfaengerText(ergebnis) {
+  if (ergebnis.closerId === null || ergebnis.closerId === undefined) {
+    return 'Im Echtbetrieb wäre kein Empfänger bestimmbar (' + CLOSER_FELD + ' ist leer).';
+  }
+  const name = pipedriveUserName(ergebnis.closerId) || ('Pipedrive-User ' + ergebnis.closerId);
+  if (!CLOSER_SLACK_IDS[ergebnis.closerId]) {
+    return 'Im Echtbetrieb gedacht für ' + name + ' — der hat aber noch kein Slack-Mapping.';
+  }
+  return 'Im Echtbetrieb ginge das an ' + name + '.';
 }

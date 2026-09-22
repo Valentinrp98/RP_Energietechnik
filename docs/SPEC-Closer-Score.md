@@ -73,12 +73,17 @@ Das Script hält in einer ScriptProperty einen kleinen Zustand pro Deal:
 
 ### Erstinbetriebnahme
 
-Beim allerersten Lauf würden ~55 Bestands-Deals gleichzeitig eingetragen und 48 h später
-gleichzeitig eine DM auslösen. Deshalb **einmalig `seedeBestandOhneDM()` laufen lassen**: das
-trägt alle aktuell qualifizierten Deals als „bereits gesendet" ein, ohne etwas zu verschicken.
-Danach bekommt nur noch, wer neu ankommt, eine DM.
+**Der erste Lauf mit leerem Zustand seedet sich selbst.** Alles, was dann schon in der Pipeline
+liegt, wird stumm als „bereits gemeldet" eingetragen — ohne DM. Das ist Bestand: Deals, bei denen
+48 h später niemand mehr etwas nachträgt. Ohne diese Regel fiele zwei Tage nach dem
+Scharfschalten eine Welle von ~86 DMs auf einmal an.
 
----
+`seedeBestandOhneDM()` macht dasselbe von Hand und bleibt als Werkzeug drin, ist aber für den
+normalen Start nicht mehr nötig.
+
+> Nebenwirkung, bewusst in Kauf genommen: geht die ScriptProperty verloren, gilt der laufende
+> Bestand wieder als erledigt und bekommt keine DM mehr. Der sichere Fehlerfall — lieber eine
+> DM zu wenig als 86 zu viel.
 
 ## 3. Die Bewertung
 
@@ -202,6 +207,18 @@ Ist gar nichts offen, entfällt die ganze Gliederung und es steht nur ein Dank d
 **DM-Technik:** die **User-ID (`U…`) direkt als `channel`** übergeben. Kein `conversations.open`,
 kein Zusatz-Scope — `chat:write` reicht. Slack antwortet auch bei Fehlern mit HTTP 200, der Erfolg
 steht in `json.ok`. (Muster aus `Lieferkalender-Slack/Config.gs`, Bot „Ernst".)
+
+### Testwoche ab 22.09.2026
+
+`TEST_ALLES_AN_MICH = true` in `Config.gs`. Solange das steht, geht **jede** DM an Valentin —
+auch dann, wenn `CLOSER_SLACK_IDS` längst befüllt wäre. Im Fuß der Nachricht steht, an wen sie
+im Echtbetrieb gegangen wäre:
+
+> 🧪 _Testwoche: Im Echtbetrieb ginge das an Marco Benhammadi. Bis dahin siehst nur du das._
+
+Damit läuft das Script eine Woche **scharf** mit (`DRY_RUN = false`) — echter Trigger, echter
+Zustand, echte DMs — ohne dass ein Closer etwas sieht. Zum Scharfschalten später nur diesen
+einen Schalter auf `false` setzen; vorher muss `CLOSER_SLACK_IDS` stehen.
 
 ### Closer → Slack-Mapping
 

@@ -69,13 +69,9 @@ function sendeTestDm(ergebnis, was) {
 // Nur fuer die Fussnote: wer waere im Echtbetrieb dran? Ein Namensaufruf ist
 // den einen zusaetzlichen GET wert, "Pipedrive-User 12345678" sagt nichts.
 function closerName(closerId) {
-  if (closerId === null || closerId === undefined) return 'niemanden (Feld leer)';
-  try {
-    const json = fetchPipedriveJson('/users/' + closerId, {}, PIPEDRIVE_BASE_V1);
-    const name = json.data && json.data.name;
-    const gemappt = CLOSER_SLACK_IDS[closerId] ? '' : ' — ⚠️ noch ohne Slack-Mapping, ginge also ebenfalls an dich';
-    return (name || ('Pipedrive-User ' + closerId)) + gemappt;
-  } catch (e) {
-    return 'Pipedrive-User ' + closerId;
-  }
+  if (closerId === null || closerId === undefined) return 'niemanden (' + CLOSER_FELD + ' ist leer)';
+  const name = pipedriveUserName(closerId) || ('Pipedrive-User ' + closerId);
+  const gemappt = CLOSER_SLACK_IDS[closerId] ? '' : ' — ⚠️ noch ohne Slack-Mapping, ginge also ebenfalls an dich';
+  return name + gemappt;
 }
+

@@ -11,7 +11,8 @@
 
 function laufCloserScore() {
   const start = Date.now();
-  Logger.log('=== Closer-Score %s ===', DRY_RUN ? '(DRY_RUN — es wird NICHTS verschickt)' : '(scharf)');
+  Logger.log('=== Closer-Score %s ===', DRY_RUN ? '(DRY_RUN — es wird NICHTS verschickt)'
+             : (TEST_ALLES_AN_MICH ? '(scharf, aber TESTWOCHE — jede DM geht an Valentin)' : '(scharf)'));
 
   const deals = holeFulfillmentDeals();
   Logger.log('%s Deals in Pipeline %s.', String(deals.length), String(PIPELINE_ID));
@@ -22,9 +23,16 @@ function laufCloserScore() {
   Logger.log('%s davon mit befülltem Verkaufte_Artikel_Summary (= sevdesk-Kunde stimmt).', String(qualifizierte.length));
 
   const zustand = ladeZustand();
+  // Erstlauf = leerer Zustand. Dann ist ALLES, was gerade in der Pipeline liegt,
+  // Bestand: Deals, bei denen 48 h spaeter niemand mehr etwas nachtraegt. Die
+  // werden stumm als erledigt eingetragen statt beobachtet — sonst faellt zwei
+  // Tage nach dem Scharfschalten eine Welle von ~86 DMs auf einmal an.
+  // Gleiches Ergebnis wie seedeBestandOhneDM(), nur ohne dass man daran denken muss.
+  const erstlauf = Object.keys(zustand).length === 0;
+  if (erstlauf) Logger.log('Erstlauf (Zustand leer): der gesamte Bestand wird stumm als erledigt eingetragen, es geht dafür KEINE DM raus.');
   const neuerZustand = {};
   const jetzt = Date.now();
-  let neuBeobachtet = 0, gesendet = 0, wartet = 0, schonErledigt = 0;
+  let neuBeobachtet = 0, gesendet = 0, wartet = 0, schonErledigt = 0, gebestandet = 0;
 
   qualifizierte.forEach(function (deal) {
     if (Date.now() - start > MAX_LAUFZEIT_MS) return; // weicher Ausstieg, Rest kommt morgen
@@ -33,6 +41,11 @@ function laufCloserScore() {
 
     // Neu gesichtet: Reifezeit starten, noch keine DM.
     if (!alt) {
+      if (erstlauf) {
+        neuerZustand[id] = { f: jetzt, s: jetzt };
+        gebestandet++;
+        return;
+      }
       neuerZustand[id] = { f: jetzt };
       neuBeobachtet++;
       Logger.log('  neu beobachtet: Deal %s "%s" — DM frühestens in %s h', String(deal.id), deal.title, String(REIFEZEIT_MS / 3600000));
@@ -79,6 +92,9 @@ function laufCloserScore() {
     speichereZustand(neuerZustand);
   }
 
+  if (gebestandet > 0) {
+    Logger.log('%s Bestands-Deals stumm als erledigt eingetragen. Ab jetzt bekommt nur eine DM, wer neu im Fulfillment ankommt.', String(gebestandet));
+  }
   Logger.log('Fertig: %s neu beobachtet, %s in Reifezeit, %s DMs verschickt, %s bereits gemeldet, %s aus dem Zustand entfallen (nicht mehr in Pipeline %s). Laufzeit %s s.',
              String(neuBeobachtet), String(wartet), String(gesendet), String(schonErledigt), String(Math.max(0, entfallen)), String(PIPELINE_ID), String(Math.round((Date.now() - start) / 1000)));
 }
@@ -167,6 +183,10 @@ function pruefeTokens() {
   });
   Logger.log('CLOSER_SLACK_IDS: %s Einträge%s', String(Object.keys(CLOSER_SLACK_IDS).length),
              Object.keys(CLOSER_SLACK_IDS).length === 0 ? ' — ⚠️ alle DMs gehen an Valentin' : '');
+  Logger.log('DRY_RUN: %s | TEST_ALLES_AN_MICH: %s', String(DRY_RUN), String(TEST_ALLES_AN_MICH));
+  Logger.log(DRY_RUN ? '→ Es geht gar nichts raus.'
+             : (TEST_ALLES_AN_MICH ? '→ Es geht scharf raus, aber ausschließlich an dich (' + VALENTIN_USER_ID + ').'
+                                   : '→ ⚠️ ECHTBETRIEB: DMs gehen an die Closer.'));
 }
 
 // Taeglicher Trigger. Uhrzeit bewusst am Vormittag: die DM soll im Arbeitstag
