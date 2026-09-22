@@ -104,6 +104,13 @@ function laufCloserScore() {
       return;
     }
     sendeDm(empfaenger.slackId, text);
+    // Kopie an Valentin, wenn die Nachricht wirklich bei einem Closer gelandet
+    // ist - nicht, wenn sie mangels Mapping ohnehin schon bei ihm liegt.
+    if (KOPIE_AN_VALENTIN && empfaenger.slackId !== VALENTIN_USER_ID) {
+      sendeDm(VALENTIN_USER_ID, '📨 *Ging raus an ' +
+              (pipedriveUserName(ergebnis.closerId) || ('Pipedrive-User ' + ergebnis.closerId)) + '*' +
+              '\n\n' + text);
+    }
     neuerZustand[id] = { f: alt.f, s: jetzt };
     gesendet++;
   });

@@ -227,7 +227,7 @@ steht in `json.ok`. (Muster aus `Lieferkalender-Slack/Config.gs`, Bot „Ernst".
    **DM-Channel-ID (`D…`)** aus der Sende-Antwort, nicht die User-ID.
 3. `pruefeFreigaben()` läuft alle 15 Minuten und entscheidet je Vorlage.
 
-Zustandseintrag: `{ f: <erstSichtung>, v: <ts der Vorlage>, c: <channel>, s: <gesendet> }`.
+Zustandseintrag: `{ f: <erstSichtung>, v: <ts der Vorlage>, c: <channel>, p: <Punkte der Vorlage>, s: <gesendet> }`.
 Sobald entschieden ist, schrumpft er wieder auf `{f, s}` — nur offene Vorlagen tragen die
 zwei Zusatzfelder, damit die ScriptProperty nicht zuläuft.
 
@@ -241,6 +241,16 @@ zwei Zusatzfelder, damit die ScriptProperty nicht zuläuft.
 
 **Frist:** Ohne Reaktion verfällt eine Vorlage nach 7 Tagen (`FREIGABE_FRIST_MS`) still. Eine
 Rückmeldung, die zwei Wochen später beim Closer aufschlägt, erzieht niemanden mehr.
+
+**Kopie an Valentin** (`KOPIE_AN_VALENTIN = true`): Sobald eine Nachricht wirklich beim
+Closer landet, kommt eine Bestätigung `✅ Raus an \<Name\> (Datum Uhrzeit)` — im Freigabe-Modus
+als **Antwort im Thread der Vorlage**, damit sie direkt unter dem hängt, was freigegeben wurde.
+Der Wortlaut wird dabei *nicht* wiederholt, er steht eine Nachricht weiter oben. Ausnahme: hat
+sich der Score zwischen Vorlage und Freigabe geändert (der Closer hat nachgetragen), hängt die
+tatsächlich verschickte Fassung mit dran — dafür steht die Punktzahl der Vorlage als `p` im
+Zustandseintrag. Im Modus `'direkt'` gibt es keine Vorlage, dort kommt die Kopie als eigene DM
+`📨 Ging raus an \<Name\>` samt vollem Text. Scheitert die Kopie, bleibt die Zustellung an den
+Closer trotzdem gültig — sie ist ja schon draußen.
 
 **Beim Freigeben wird neu gescored**, statt die alte Nachricht aufzuheben: was der Closer
 zwischenzeitlich nachgetragen hat, soll ihm zugutekommen.

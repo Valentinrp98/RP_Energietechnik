@@ -35,7 +35,9 @@ function legeZurFreigabeVor(ergebnis) {
   }
   // channel aus der Antwort, NICHT die User-ID: reactions.get will die
   // DM-Channel-ID (D...), und die kennt man erst nach dem Senden.
-  return { v: antwort.ts, c: antwort.channel };
+  // p = Punktzahl der Vorlage. Nur dafuer da, spaeter zu erkennen, ob sich der
+  // Score bis zur Freigabe noch geaendert hat.
+  return { v: antwort.ts, c: antwort.channel, p: ergebnis.punkte };
 }
 
 // Laeuft als eigener Trigger. Holt fuer jede offene Vorlage die Reaktionen und
@@ -76,7 +78,9 @@ function pruefeFreigaben() {
         geaendert = true;
         return;
       }
-      sendeDm(ziel, baueNachricht(ergebnis));
+      const text = baueNachricht(ergebnis);
+      sendeDm(ziel, text);
+      meldeZustellung(eintrag, ergebnis, ziel, text);
       zustand[id] = { f: eintrag.f, s: jetzt };
       geaendert = true;
       freigegeben++;
@@ -137,4 +141,34 @@ function scoreNeu(dealId) {
   if (!deal) return null;
   if (deal.pipeline_id !== PIPELINE_ID) return null;
   return bewerteDeal(deal);
+}
+
+// Bestaetigt Valentin die Zustellung - als Antwort im Thread der Vorlage, damit
+// sie direkt unter dem haengt, was er freigegeben hat.
+//
+// Der Wortlaut wird NICHT noch einmal mitgeschickt: er steht unveraendert eine
+// Nachricht weiter oben. Ausnahme ist der Fall, der wirklich neu ist - wenn der
+// Closer zwischen Vorlage und Freigabe noch etwas nachgetragen hat und der Score
+// deshalb abweicht. Dann sieht Valentin, was tatsaechlich rausgegangen ist.
+function meldeZustellung(eintrag, ergebnis, zielSlackId, text) {
+  if (!KOPIE_AN_VALENTIN) return;
+  const uhrzeit = Utilities.formatDate(new Date(), 'Europe/Vienna', 'dd.MM. HH:mm');
+  const name = pipedriveUserName(ergebnis.closerId) || ('Pipedrive-User ' + ergebnis.closerId);
+
+  let meldung = '✅ *Raus an ' + name + '* (' + uhrzeit + ')';
+  const vorher = eintrag.p;
+  if (vorher !== undefined && vorher !== ergebnis.punkte) {
+    meldung += '\n\n' + '⚠️ _Der Score hat sich seit der Vorlage geändert: ' + vorher + ' → ' +
+               ergebnis.punkte + ' Punkte. Es wurde also nachgetragen. Das ist der Wortlaut, der rausging:_' +
+               '\n\n' + text;
+  }
+
+  try {
+    // channel ist die DM-Channel-ID der Vorlage, thread_ts ihr Zeitstempel.
+    sendeDm(eintrag.c, meldung, eintrag.v);
+  } catch (e) {
+    // Die Nachricht beim Closer ist schon draussen - eine fehlgeschlagene
+    // Bestaetigung darf das nicht rueckgaengig aussehen lassen.
+    Logger.log('  ⚠️ Zustellung an %s lief, aber die Kopie an dich schlug fehl: %s', zielSlackId, e.message);
+  }
 }

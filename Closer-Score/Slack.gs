@@ -42,13 +42,17 @@ function fetchSlackJson(method, params, payload) {
 
 // DM an einen Menschen: die USER-ID (U...) direkt als `channel` uebergeben.
 // Kein conversations.open, kein im:write — chat:write reicht.
-function sendeDm(slackUserId, text) {
-  return fetchSlackJson('chat.postMessage', null, {
+function sendeDm(slackUserId, text, threadTs) {
+  const payload = {
     channel: slackUserId,
     text: text,
     unfurl_links: false,
     unfurl_media: false
-  });
+  };
+  // Mit thread_ts haengt die Nachricht unter einer frueheren statt neben ihr.
+  // channel muss dann die Channel-ID dieser frueheren Nachricht sein.
+  if (threadTs) payload.thread_ts = threadTs;
+  return fetchSlackJson('chat.postMessage', null, payload);
 }
 
 // ============================================================

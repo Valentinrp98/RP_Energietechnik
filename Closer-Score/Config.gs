@@ -42,6 +42,12 @@ const FREIGABE_NEIN = ['x', '-1', 'no_entry', 'no_entry_sign', 'wastebasket'];
 // Wie lange eine Vorlage auf eine Reaktion wartet. Danach verfaellt sie still —
 // eine DM, die zwei Wochen spaeter beim Closer aufschlaegt, erzieht niemanden
 // mehr, sie irritiert nur.
+// Kopie an Valentin, sobald eine Nachricht wirklich beim Closer gelandet ist.
+// Im Freigabe-Modus kommt sie als Antwort im Thread der Vorlage - so steht die
+// Zustellung direkt unter dem, was freigegeben wurde, statt als loser Schnipsel
+// weiter unten im Verlauf.
+const KOPIE_AN_VALENTIN = true;
+
 const FREIGABE_FRIST_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Wie oft nach neuen Reaktionen geschaut wird. Freigaben sind nicht
