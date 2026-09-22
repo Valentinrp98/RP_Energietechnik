@@ -103,3 +103,15 @@ function pipedriveUserName(userId) {
   _userNamenCache[schluessel] = name;
   return name;
 }
+
+// Ein einzelner Deal samt custom_fields. Gibt null zurueck, statt zu werfen,
+// wenn es ihn nicht mehr gibt — der Aufrufer entscheidet dann selbst.
+function holeEinenDeal(dealId) {
+  try {
+    const json = fetchPipedriveJson('/deals/' + dealId, {});
+    return json.data || null;
+  } catch (e) {
+    Logger.log('Deal %s nicht abrufbar: %s', String(dealId), e.message);
+    return null;
+  }
+}

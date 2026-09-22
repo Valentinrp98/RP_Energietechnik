@@ -11,8 +11,8 @@
 
 function laufCloserScore() {
   const start = Date.now();
-  Logger.log('=== Closer-Score %s ===', DRY_RUN ? '(DRY_RUN — es wird NICHTS verschickt)'
-             : (TEST_ALLES_AN_MICH ? '(scharf, aber TESTWOCHE — jede DM geht an Valentin)' : '(scharf)'));
+  Logger.log('=== Closer-Score — Modus "%s" %s ===', BETRIEBSMODUS,
+             DRY_RUN ? '(DRY_RUN — es wird NICHTS verschickt)' : '(scharf)');
 
   const deals = holeFulfillmentDeals();
   Logger.log('%s Deals in Pipeline %s.', String(deals.length), String(PIPELINE_ID));
@@ -32,7 +32,7 @@ function laufCloserScore() {
   if (erstlauf) Logger.log('Erstlauf (Zustand leer): der gesamte Bestand wird stumm als erledigt eingetragen, es geht dafür KEINE DM raus.');
   const neuerZustand = {};
   const jetzt = Date.now();
-  let neuBeobachtet = 0, gesendet = 0, wartet = 0, schonErledigt = 0, gebestandet = 0;
+  let neuBeobachtet = 0, gesendet = 0, wartet = 0, schonErledigt = 0, gebestandet = 0, vorgelegt = 0, wartetAufFreigabe = 0;
 
   qualifizierte.forEach(function (deal) {
     if (Date.now() - start > MAX_LAUFZEIT_MS) return; // weicher Ausstieg, Rest kommt morgen
@@ -49,6 +49,14 @@ function laufCloserScore() {
       neuerZustand[id] = { f: jetzt };
       neuBeobachtet++;
       Logger.log('  neu beobachtet: Deal %s "%s" — DM frühestens in %s h', String(deal.id), deal.title, String(REIFEZEIT_MS / 3600000));
+      return;
+    }
+
+    // Vorlage liegt zur Freigabe: unveraendert mitnehmen. Ueber sie entscheidet
+    // pruefeFreigaben(), nicht dieser Lauf.
+    if (alt.v && !alt.s) {
+      neuerZustand[id] = alt;
+      wartetAufFreigabe++;
       return;
     }
 
@@ -69,6 +77,21 @@ function laufCloserScore() {
 
     // Jetzt wird gescored.
     const ergebnis = bewerteDeal(deal);
+
+    // Modus 'freigabe': die Nachricht geht als Vorlage an Valentin. Erst seine
+    // Reaktion stellt sie zu - das erledigt pruefeFreigaben() in Freigabe.gs.
+    if (BETRIEBSMODUS === 'freigabe') {
+      Logger.log('  %s Deal %s "%s": %s/%s Punkte → Vorlage zur Freigabe',
+                 ergebnis.ampel, String(deal.id), ergebnis.titel, String(ergebnis.punkte), String(ergebnis.maximum));
+      if (DRY_RUN) { neuerZustand[id] = alt; return; }
+      const marke = legeZurFreigabeVor(ergebnis);
+      // Ohne ts waere die Reaktion nicht auffindbar - dann lieber den Eintrag
+      // offen lassen und es morgen noch einmal versuchen.
+      neuerZustand[id] = marke ? { f: alt.f, v: marke.v, c: marke.c } : alt;
+      if (marke) vorgelegt++;
+      return;
+    }
+
     const empfaenger = bestimmeEmpfaenger(ergebnis);
     const text = baueNachricht(ergebnis) + empfaenger.zusatz;
 
@@ -94,6 +117,9 @@ function laufCloserScore() {
 
   if (gebestandet > 0) {
     Logger.log('%s Bestands-Deals stumm als erledigt eingetragen. Ab jetzt bekommt nur eine DM, wer neu im Fulfillment ankommt.', String(gebestandet));
+  }
+  if (BETRIEBSMODUS === 'freigabe') {
+    Logger.log('Freigabe-Modus: %s neue Vorlagen an dich, %s warten noch auf deine Reaktion.', String(vorgelegt), String(wartetAufFreigabe));
   }
   Logger.log('Fertig: %s neu beobachtet, %s in Reifezeit, %s DMs verschickt, %s bereits gemeldet, %s aus dem Zustand entfallen (nicht mehr in Pipeline %s). Laufzeit %s s.',
              String(neuBeobachtet), String(wartet), String(gesendet), String(schonErledigt), String(Math.max(0, entfallen)), String(PIPELINE_ID), String(Math.round((Date.now() - start) / 1000)));
@@ -183,10 +209,16 @@ function pruefeTokens() {
   });
   Logger.log('CLOSER_SLACK_IDS: %s Einträge%s', String(Object.keys(CLOSER_SLACK_IDS).length),
              Object.keys(CLOSER_SLACK_IDS).length === 0 ? ' — ⚠️ alle DMs gehen an Valentin' : '');
-  Logger.log('DRY_RUN: %s | TEST_ALLES_AN_MICH: %s', String(DRY_RUN), String(TEST_ALLES_AN_MICH));
-  Logger.log(DRY_RUN ? '→ Es geht gar nichts raus.'
-             : (TEST_ALLES_AN_MICH ? '→ Es geht scharf raus, aber ausschließlich an dich (' + VALENTIN_USER_ID + ').'
-                                   : '→ ⚠️ ECHTBETRIEB: DMs gehen an die Closer.'));
+  Logger.log('DRY_RUN: %s | BETRIEBSMODUS: %s', String(DRY_RUN), BETRIEBSMODUS);
+  if (DRY_RUN) {
+    Logger.log('→ Es geht gar nichts raus.');
+  } else if (BETRIEBSMODUS === 'test') {
+    Logger.log('→ Alles geht an dich (' + VALENTIN_USER_ID + '), niemals an einen Closer.');
+  } else if (BETRIEBSMODUS === 'freigabe') {
+    Logger.log('→ Du bekommst jede Nachricht zuerst als Vorlage. Erst ✅ schickt sie an den Closer.');
+  } else {
+    Logger.log('→ ⚠️ ECHTBETRIEB: DMs gehen direkt an die Closer.');
+  }
 }
 
 // Taeglicher Trigger. Uhrzeit bewusst am Vormittag: die DM soll im Arbeitstag
@@ -195,6 +227,15 @@ function installiereTrigger() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'laufCloserScore') ScriptApp.deleteTrigger(t);
   });
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'pruefeFreigaben') ScriptApp.deleteTrigger(t);
+  });
   ScriptApp.newTrigger('laufCloserScore').timeBased().atHour(9).everyDays(1).create();
   Logger.log('Trigger installiert: laufCloserScore, täglich gegen 09:00 (Europe/Vienna).');
+  if (BETRIEBSMODUS === 'freigabe') {
+    ScriptApp.newTrigger('pruefeFreigaben').timeBased().everyMinutes(FREIGABE_PRUEFUNG_MINUTEN).create();
+    Logger.log('Trigger installiert: pruefeFreigaben, alle %s Minuten.', String(FREIGABE_PRUEFUNG_MINUTEN));
+  } else {
+    Logger.log('Kein Freigabe-Trigger — BETRIEBSMODUS ist "%s".', BETRIEBSMODUS);
+  }
 }

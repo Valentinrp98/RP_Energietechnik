@@ -23,13 +23,31 @@
 // Messinstrument: erst messen, dann scharf schalten.
 const DRY_RUN = false;
 
-// TESTWOCHE ab 22.09.2026. Solange das true ist, geht JEDE DM an Valentin —
-// egal was in CLOSER_SLACK_IDS steht. Der Text nennt im Fuss, an wen sie im
-// Echtbetrieb gegangen waere. Damit laeuft das Script eine Woche scharf mit,
-// ohne dass ein Closer etwas sieht.
-// Zum Scharfschalten: auf false setzen. Vorher CLOSER_SLACK_IDS befuellen,
-// sonst landet weiterhin alles bei Valentin (dann aber mit Mapping-Warnung).
-const TEST_ALLES_AN_MICH = true;
+// BETRIEBSMODUS — loest den frueheren Schalter TEST_ALLES_AN_MICH ab (22.09.2026).
+//
+//   'test'      Jede DM geht an Valentin, fertig. Keine Freigabe, nichts erreicht
+//               je einen Closer. Zum Anschauen des Nachrichtenformats.
+//   'freigabe'  Valentin bekommt die Nachricht zuerst als Vorlage. Setzt er eine
+//               Freigabe-Reaktion drauf, geht sie an den Closer; bei einer
+//               Ablehnungs-Reaktion wird sie verworfen. Ohne Reaktion passiert
+//               nichts. <- der laufende Modus
+//   'direkt'    Sofort an den Closer, ohne Zwischenstopp.
+const BETRIEBSMODUS = 'freigabe';
+
+// Welche Reaktion heisst was. Mehrere erlaubt, damit man nicht raten muss,
+// welches Hakerl gemeint ist. Slack liefert die Namen ohne Doppelpunkte.
+const FREIGABE_JA   = ['white_check_mark', 'heavy_check_mark', 'ballot_box_with_check', '+1', 'ok_hand'];
+const FREIGABE_NEIN = ['x', '-1', 'no_entry', 'no_entry_sign', 'wastebasket'];
+
+// Wie lange eine Vorlage auf eine Reaktion wartet. Danach verfaellt sie still —
+// eine DM, die zwei Wochen spaeter beim Closer aufschlaegt, erzieht niemanden
+// mehr, sie irritiert nur.
+const FREIGABE_FRIST_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Wie oft nach neuen Reaktionen geschaut wird. Freigaben sind nicht
+// zeitkritisch; alle 15 Minuten kostet ~96 Laeufe am Tag und bleibt weit
+// unter jedem Kontingent.
+const FREIGABE_PRUEFUNG_MINUTEN = 15;
 
 // Reifezeit: so lange nach der Erst-Sichtung wird gewartet, bevor gescored
 // wird. Fotos und Notizen kommen oft am Tag danach nach — sofort messen

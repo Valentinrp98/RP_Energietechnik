@@ -94,25 +94,26 @@ function baueNachricht(ergebnis) {
   return zeilen.join('\n');
 }
 
-// Wer bekommt die DM? In der Testwoche immer Valentin. Danach der Closer aus
-// CLOSER_FELD, wenn er in CLOSER_SLACK_IDS steht — sonst wieder Valentin mit
-// Hinweis, damit ein fehlender Mapping-Eintrag auffaellt statt die Meldung
-// still verschwinden zu lassen.
+// Wer bekommt die DM im Modus 'direkt'? Der Closer aus CLOSER_FELD, wenn er in
+// CLOSER_SLACK_IDS steht - sonst Valentin mit Hinweis, damit ein fehlender
+// Mapping-Eintrag auffaellt statt die Meldung still verschwinden zu lassen.
+// Im Modus 'test' geht alles an Valentin; im Modus 'freigabe' laeuft die
+// Zustellung ueber Freigabe.gs und diese Funktion wird gar nicht aufgerufen.
 function bestimmeEmpfaenger(ergebnis) {
-  if (TEST_ALLES_AN_MICH) {
-    return { slackId: VALENTIN_USER_ID, zusatz: '\n\n_🧪 Testwoche: ' + echterEmpfaengerText(ergebnis) + ' Bis dahin siehst nur du das._' };
+  if (BETRIEBSMODUS === 'test') {
+    return { slackId: VALENTIN_USER_ID, zusatz: '\n\n' + '_🧪 Testmodus: ' + echterEmpfaengerText(ergebnis) + ' Bis dahin siehst nur du das._' };
   }
   const slackId = CLOSER_SLACK_IDS[ergebnis.closerId];
   if (slackId) return { slackId: slackId, zusatz: '' };
   return {
     slackId: VALENTIN_USER_ID,
-    zusatz: '\n\n⚠️ _Kein Slack-Mapping für Pipedrive-User `' + ergebnis.closerId +
+    zusatz: '\n\n' + '⚠️ _Kein Slack-Mapping für Pipedrive-User `' + ergebnis.closerId +
             '` — deshalb ging diese Meldung an dich statt an den Closer. Eintrag in `Closer-Score/Config.gs` → `CLOSER_SLACK_IDS` ergänzen._'
   };
 }
 
-// Beschreibt im Klartext, wer die DM nach der Testwoche bekaeme — inklusive
-// des Falls, dass der Closer noch gar kein Slack-Mapping hat.
+// Beschreibt im Klartext, wer die DM im Echtbetrieb bekaeme - inklusive des
+// Falls, dass der Closer noch gar kein Slack-Mapping hat.
 function echterEmpfaengerText(ergebnis) {
   if (ergebnis.closerId === null || ergebnis.closerId === undefined) {
     return 'Im Echtbetrieb wäre kein Empfänger bestimmbar (' + CLOSER_FELD + ' ist leer).';

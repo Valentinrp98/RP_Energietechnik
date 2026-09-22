@@ -208,19 +208,53 @@ Ist gar nichts offen, entfällt die ganze Gliederung und es steht nur ein Dank d
 kein Zusatz-Scope — `chat:write` reicht. Slack antwortet auch bei Fehlern mit HTTP 200, der Erfolg
 steht in `json.ok`. (Muster aus `Lieferkalender-Slack/Config.gs`, Bot „Ernst".)
 
-### Testwoche ab 22.09.2026
+### Betriebsmodus und Freigabe
 
-`TEST_ALLES_AN_MICH = true` in `Config.gs`. Solange das steht, geht **jede** DM an Valentin —
-auch dann, wenn `CLOSER_SLACK_IDS` längst befüllt wäre. Im Fuß der Nachricht steht, an wen sie
-im Echtbetrieb gegangen wäre:
+`BETRIEBSMODUS` in `Config.gs` — löst den früheren Schalter `TEST_ALLES_AN_MICH` ab (22.09.2026):
 
-> 🧪 _Testwoche: Im Echtbetrieb ginge das an Marco Benhammadi. Bis dahin siehst nur du das._
+| Modus | Was passiert |
+|---|---|
+| `'test'` | Jede DM geht an Valentin, fertig. Erreicht nie einen Closer. |
+| `'freigabe'` | **Der laufende Modus.** Valentin bekommt die Nachricht zuerst als Vorlage. ✅ schickt sie an den Closer, ❌ verwirft sie, keine Reaktion = nichts passiert. |
+| `'direkt'` | Sofort an den Closer. |
 
-Damit läuft das Script eine Woche **scharf** mit (`DRY_RUN = false`) — echter Trigger, echter
-Zustand, echte DMs — ohne dass ein Closer etwas sieht. Zum Scharfschalten später nur diesen
-einen Schalter auf `false` setzen; vorher muss `CLOSER_SLACK_IDS` stehen.
+**So läuft die Freigabe:**
 
-### Closer → Slack-Mapping
+1. Der Tageslauf scored einen fälligen Deal und schickt die fertige Nachricht als Vorlage an
+   Valentin — mit Kopfzeile „so ginge das an \<Name\>" und der Fußzeile, was die Reaktionen tun.
+2. Slack liefert dabei `channel` und `ts` zurück. **Beides wandert in den Zustand** — ohne sie
+   findet man die Reaktion später nicht wieder. Wichtig: `reactions.get` will die
+   **DM-Channel-ID (`D…`)** aus der Sende-Antwort, nicht die User-ID.
+3. `pruefeFreigaben()` läuft alle 15 Minuten und entscheidet je Vorlage.
+
+Zustandseintrag: `{ f: <erstSichtung>, v: <ts der Vorlage>, c: <channel>, s: <gesendet> }`.
+Sobald entschieden ist, schrumpft er wieder auf `{f, s}` — nur offene Vorlagen tragen die
+zwei Zusatzfelder, damit die ScriptProperty nicht zuläuft.
+
+**Reaktionen** (`FREIGABE_JA` / `FREIGABE_NEIN` in `Config.gs`): ✅ ✔️ ☑️ 👍 👌 heißen ja,
+❌ 👎 ⛔ 🚫 🗑️ heißen nein. Liegt beides drauf, gewinnt das Nein — im Zweifel nicht verschicken.
+
+> ⚠️ Geprüft wird **nur der Emoji-Name, nicht wer reagiert hat.** Laut Slack-Doku enthält das
+> `users`-Array einer Reaktion immer den authentifizierten User (hier: den Bot) und nicht
+> zwingend alle anderen — eine Absenderprüfung wäre also unzuverlässig. In einer 1:1-DM mit dem
+> Bot kann ohnehin nur Valentin reagieren.
+
+**Frist:** Ohne Reaktion verfällt eine Vorlage nach 7 Tagen (`FREIGABE_FRIST_MS`) still. Eine
+Rückmeldung, die zwei Wochen später beim Closer aufschlägt, erzieht niemanden mehr.
+
+**Beim Freigeben wird neu gescored**, statt die alte Nachricht aufzuheben: was der Closer
+zwischenzeitlich nachgetragen hat, soll ihm zugutekommen.
+
+**Scope:** `reactions.get` braucht `reactions:read` am Bot-Token — zusätzlich zu `chat:write`.
+Fehlt er, nennt der Fehlertext von `fetchSlackJson()` benötigten und vorhandenen Scope.
+
+**Warum Abfrage statt Slack-Event:** `reaction_added` als Event bräuchte einen öffentlich
+erreichbaren Endpunkt. Apps Script antwortet auf jeden Aufruf zuerst mit HTTP 302, was Slack als
+Fehlschlag wertet — dasselbe Problem, das bei den Pipedrive-Webhooks einen Cloudflare-Worker als
+Relay nötig machte. Für eine Freigabe, die auch eine Viertelstunde später noch richtig ist,
+lohnt der Aufwand nicht.
+
+### Closer → Slack-Mapping### Closer → Slack-Mapping
 
 Hart hinterlegte Tabelle in `Config.gs` (`CLOSER_SLACK_IDS`: Pipedrive-User-ID → Slack-User-ID).
 Bewusst keine Auflösung über `users:read.email` — das wäre ein zusätzlicher Scope für eine
@@ -240,7 +274,7 @@ Valentin (`U0BM9J0KPQT`), damit nichts still verschwindet.
 | | |
 |---|---|
 | Projekt | `RP-Google-Scripts/Closer-Score/` |
-| Trigger | täglich, 1× (Vorschlag 09:00) — `installiereTrigger()` |
+| Trigger | täglich, 1× (Vorschlag 09:00) — `installiereTrigger()` (legt beide Trigger an: Tageslauf 09:00 + Freigabe-Prüfung alle 15 Min) |
 | Schreibt nach Pipedrive | **nie.** Ausschließlich GET. |
 | Schreibt nach Slack | ja, das ist die einzige Schreiboperation überhaupt |
 | ScriptProperties | `PIPEDRIVE_API_TOKEN`, `SLACK_BOT_TOKEN`, `CLOSER_SCORE_STATE` (vom Script selbst) |
@@ -252,7 +286,7 @@ Valentin (`U0BM9J0KPQT`), damit nichts still verschwindet.
 3. `testeLauf()` bei `DRY_RUN = true` — zeigt für jeden qualifizierten Deal Score, Ampel,
    Mängelliste und die DM im Wortlaut, verschickt nichts.
 4. `seedeBestandOhneDM()` einmalig.
-5. `DRY_RUN = false`, `installiereTrigger()`.
+5. `DRY_RUN = false`, `installiereTrigger()` (legt beide Trigger an: Tageslauf 09:00 + Freigabe-Prüfung alle 15 Min).
 
 ---
 
