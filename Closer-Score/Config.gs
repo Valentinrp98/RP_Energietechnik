@@ -105,10 +105,13 @@ const VALENTIN_USER_ID = 'U0BM9J0KPQT';
 //   creator_user_id  5 verschiedene: Marco 74x, André 8x, Manuel 2x,
 //                    Sean 1x, Sergen 1x — bei 0 von 86 Deals leer.
 //
-// ⚠️ OFFEN: creator_user_id ist streng genommen "wer den Deal ANGELEGT hat",
-// nicht "wer verkauft hat". Dass Marco auf 74 von 86 kommt, passt zu einem
-// Anlage-Account, nicht zu einer Verkaufsverteilung. Solange das nicht geklaert
-// ist, ist dieses Feld die beste verfuegbare Naeherung — nicht die Wahrheit.
+// ❌ WIDERLEGT am 23.09.2026: creator_user_id ist "wer den Deal ANGELEGT hat"
+// und eben NICHT "wer verkauft hat". Der Beweis ist Deal 6777 (Glauninger):
+// creator_user_id = Marco, in #sales hat aber Sven Mlinar den Auftrag gepostet.
+// Marco legt die Deals an - daher die 84%. Dieses Feld taugt damit NICHT als
+// Empfaenger. Die verlaessliche Quelle ist der #sales-Kanal, siehe
+// SalesKanal.gs. CLOSER_FELD bleibt nur noch als Vergleichswert fuer
+// pruefeSalesKanal() stehen.
 const CLOSER_FELD = 'creator_user_id';
 
 // Pipedrive-User-ID (Wert aus CLOSER_FELD) -> Slack-User-ID.
@@ -123,11 +126,13 @@ const CLOSER_FELD = 'creator_user_id';
 // der Firmen-E-Mail zwischen Pipedrive und Slack. Bei Personalwechsel nicht von
 // Hand pflegen, sondern die Funktion nochmal laufen lassen.
 //
-// Gegengeprüft am 23.09.2026: creator_user_id meint tatsächlich den Verkäufer.
-// Dass 84% auf Marco stehen, ist echte Verteilung und kein Feldfehler - Marco
-// macht derzeit den Großteil der Abschlüsse. Mit Sven und Jonathan verteilt es
-// sich. Eine künftige Schieflage in dieser Statistik ist also ein Hinweis auf
-// die Vertriebslage, nicht auf einen Bug.
+// ⚠️ Dieses Mapping ist NICHT mehr der Weg zum Empfänger.
+// Am Vormittag des 23.09.2026 stand hier, die 84%-Dominanz von Marco sei echte
+// Verteilung. Das war falsch: der Blick in #sales hat gezeigt, dass Marco die
+// Deals nur anlegt. Die Zuordnung läuft jetzt über SalesKanal.gs, wo der Autor
+// der Auftrags-Meldung direkt die Slack-ID liefert.
+// Der Block bleibt stehen, weil pruefeSalesKanal() beide Seiten
+// gegenüberstellt - und als Notnagel, falls der Kanal mal nicht lesbar ist.
 const CLOSER_SLACK_IDS = {
   21708253: 'U06TCB95A9Y',   // Marco Benhammadi  (81 von 96 Deals)
   21716129: 'U07030XUKJ8',   // André Rechberger  (8)
