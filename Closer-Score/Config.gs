@@ -195,19 +195,34 @@ const SCORE_FELDER = [
 const GRUPPE_FINANZIERUNG_DETAILS = 'Förderung & Finanzierung';
 const GRUPPE_CHECKLISTE = 'Unterlagen & Notizen';
 
-// Punkte je Gruppe: Dach & Anlage 15 | Förderung & Finanzierung 6 (9 mit
-// Finanzierungs-Details) | Unterlagen & Notizen 7. Summe 28 bzw. 31.
+// Punkte je Gruppe: Dach & Anlage 15 | Förderung & Finanzierung 6 |
+// Unterlagen & Notizen 7. Summe 28.
+// (Bis 23.09.2026 kamen bei Finanzierungs-Deals 3 Punkte fuer die Detailfelder
+// dazu, Maximum 31 — siehe FINANZIERUNG_DETAILS_ZAEHLEN weiter unten.)
 
 // ⚠️ Nur DACH 1. Die 2_/3_-Felder (Mehrfach-Dach, live seit 27.08.) bleiben
 // bewusst aussen vor: es gibt kein Feld "Anzahl Daecher", also waeren bei jedem
 // Ein-Dach-Deal — also fast allen — Dach 2 und 3 leer und der Score dauerhaft rot.
 
-// Finanzierung: die drei Detailfelder werden NUR verlangt, wenn in
-// "Finanzierung gewünscht?" Ja (305) steht. Bei Nein (304) oder
-// "nur als Vergleich" (306) entfallen sie komplett — sie zaehlen dann weder
-// als erreicht noch als moeglich, das Maximum sinkt von 31 auf 28.
+// Finanzierung: gewertet wird nur noch, OB in "Finanzierung gewünscht?" etwas
+// steht — Ja, Nein oder "nur als Vergleich". Das sind die 3 Punkte des Feldes
+// selbst, mehr nicht.
+//
+// ⬇ Aenderung 23.09.2026, von Valentin so vorgegeben: die drei Detailfelder
+// (F-Rate, F-Laufzeit, F-Anzahlung) zaehlen NICHT mehr mit, auch nicht bei
+// "Ja". Vorher standen sie bei jedem Finanzierungs-Deal als Luecke in der
+// Nachricht. Sie stehen zum Zeitpunkt der Uebergabe oft noch gar nicht fest —
+// die Kondition kommt erst von easyleasing/UNIQA zurueck. Dem Closer etwas
+// vorzuhalten, das er nicht liefern kann, ist genau die Art Rauschen, die den
+// ganzen Score unglaubwuerdig macht.
+//
+// Das Maximum ist damit fuer JEDEN Deal 28 — kein 28/31 mehr.
 // Rechenweg: 7 Felder a 3 = 21, + Must-knows 2 + Projektnotizen 2 = 25,
-// + Checkliste max 3 = 28 (ohne Finanzierung), + F-Details 3 = 31 (mit).
+// + Checkliste max 3 = 28.
+//
+// Zurueckdrehen: FINANZIERUNG_DETAILS_ZAEHLEN auf true. Dann gilt wieder die
+// alte Regel (Details nur bei Ja, Maximum 31).
+const FINANZIERUNG_DETAILS_ZAEHLEN = false;
 const FINANZIERUNG_FELD = '8be8531405aa97034d8774d994903acca30f62af';
 const FINANZIERUNG_JA_ID = 305;
 
@@ -232,14 +247,17 @@ const CHECKLISTE_PFLICHT = [
   { id: 309, label: 'Zählerkasten' }
 ];
 
-// Ampel-Schwellen PROZENTUAL vom jeweils gueltigen Maximum, damit ein Deal ohne
-// Finanzierung (Max 28) nicht haerter bewertet wird als einer mit (Max 31).
+// Ampel-Schwellen PROZENTUAL vom jeweils gueltigen Maximum. Seit dem Wegfall
+// der Finanzierungs-Details (23.09.2026) ist das Maximum immer 28, die
+// Prozentrechnung bleibt aber stehen: sie kostet nichts und traegt sofort
+// wieder, falls je ein Posten dazukommt, der nur manche Deals betrifft.
 // ⚠️ Korrektur 16.09.2026: der DRY-Vollauf hat gezeigt, dass die Maxima 28/31
 // sind, nicht 25/28 — die urspruengliche Rechnung hatte die Checkliste vergessen.
 // Die ANTEILE bleiben unveraendert, nur ihre Begruendung war falsch.
-// Gruen ab 89 %: 25 von 28 (ohne Finanzierung) bzw. 28 von 31 (mit).
-// Gelb  ab 68 %: 19 von 28 (ohne Finanzierung) bzw. 22 von 31 (mit).
-// (21/31 = 67,7 % liegt knapp UNTER der Schwelle — nachgerechnet, nicht geschaetzt.)
+// ⬇ Seit 23.09.2026 gibt es das Maximum 31 nicht mehr, siehe
+//    FINANZIERUNG_DETAILS_ZAEHLEN weiter oben. Es gilt nur noch die 28er-Spalte.
+// Gruen ab 89 %: 25 von 28.  (frueher zusaetzlich 28 von 31 bei Finanzierung)
+// Gelb  ab 68 %: 19 von 28.  (frueher zusaetzlich 22 von 31 bei Finanzierung)
 const AMPEL_GRUEN_ANTEIL = 25 / 28; // 0.8928...
 const AMPEL_GELB_ANTEIL  = 19 / 28; // 0.6785...
 

@@ -2,11 +2,12 @@
 // BEWERTUNG — aus einem Deal wird Punktzahl, Ampel und Maengelliste
 // ============================================================
 
-// Maximum: 28 Punkte ohne Finanzierung, 31 mit.
+// Maximum: 28 Punkte. (Bis 23.09.2026 waren es 31, wenn Finanzierung "Ja" war
+// — die Detailfelder zaehlen seither nicht mehr, siehe Config.gs.)
 //   7 Felder a 3 Punkte                                             = 21
 //   Must knows + Projektdoku-Notizen a 2                            =  4
 //   Fotos-Checkliste 0-3                                            =  3  -> 28
-//   F-Rate/F-Laufzeit/F-Anzahlung 0-3 (nur bei "Finanzierung: Ja")  =  3  -> 31
+//   F-Rate/F-Laufzeit/F-Anzahlung (abgeschaltet)                     =  0
 // (Bis 16.09.2026 stand hier faelschlich 28/25 — die Checkliste war in der
 //  Summe vergessen. Gerechnet hat der Code immer richtig.)
 //
@@ -30,11 +31,15 @@ function bewerteDeal(deal) {
     }
   });
 
-  // ---- Finanzierungs-Details, nur wenn "Ja" ----
-  // Bei Nein (304) oder "nur als Vergleich" (306) entfallen sie komplett: sie
-  // zaehlen weder als erreicht noch als moeglich. Genau so von Valentin
-  // vorgegeben ("wenn finanzierung nein brauch ich das andere auch nicht").
-  if (optionIds(cf[FINANZIERUNG_FELD]).indexOf(FINANZIERUNG_JA_ID) !== -1) {
+  // ---- Finanzierungs-Details ----
+  // Standardmaessig AUS (FINANZIERUNG_DETAILS_ZAEHLEN = false, seit 23.09.2026):
+  // gewertet wird nur, ob "Finanzierung gewuenscht?" ueberhaupt beantwortet ist.
+  // Rate, Laufzeit und Anzahlung stehen bei der Uebergabe oft noch nicht fest,
+  // sie als Luecke zu melden war Rauschen.
+  // Ist der Schalter an, gilt die alte Regel: Details nur bei "Ja" (305), bei
+  // Nein (304) oder "nur als Vergleich" (306) entfallen sie komplett.
+  if (FINANZIERUNG_DETAILS_ZAEHLEN &&
+      optionIds(cf[FINANZIERUNG_FELD]).indexOf(FINANZIERUNG_JA_ID) !== -1) {
     maximum += FINANZIERUNG_DETAILS.length;
     const fehlendeDetails = [];
     FINANZIERUNG_DETAILS.forEach(function (feld) {
