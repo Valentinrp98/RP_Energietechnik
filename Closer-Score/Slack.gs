@@ -98,33 +98,31 @@ function baueNachricht(ergebnis) {
   return zeilen.join('\n');
 }
 
-// Wer bekommt die DM im Modus 'direkt'? Der Closer aus CLOSER_FELD, wenn er in
-// CLOSER_SLACK_IDS steht - sonst Valentin mit Hinweis, damit ein fehlender
-// Mapping-Eintrag auffaellt statt die Meldung still verschwinden zu lassen.
+// Wer bekommt die DM im Modus 'direkt'? Der Autor der #sales-Meldung.
+// Ist keiner zu ermitteln - kein Treffer, Kanal nicht lesbar, oder der Closer
+// ist ausgeschieden -, geht die Meldung mit dem Grund an Valentin. Sie soll
+// auffallen, nicht still verschwinden.
 // Im Modus 'test' geht alles an Valentin; im Modus 'freigabe' laeuft die
 // Zustellung ueber Freigabe.gs und diese Funktion wird gar nicht aufgerufen.
 function bestimmeEmpfaenger(ergebnis) {
+  const e = ergebnis.empfaenger || {};
   if (BETRIEBSMODUS === 'test') {
-    return { slackId: VALENTIN_USER_ID, zusatz: '\n\n' + '_🧪 Testmodus: ' + echterEmpfaengerText(ergebnis) + ' Bis dahin siehst nur du das._' };
+    return { slackId: VALENTIN_USER_ID, zusatz: '\n\n' + '_\ud83e\uddea Testmodus: ' + echterEmpfaengerText(ergebnis) + ' Bis dahin siehst nur du das._' };
   }
-  const slackId = CLOSER_SLACK_IDS[ergebnis.closerId];
-  if (slackId) return { slackId: slackId, zusatz: '' };
+  if (e.slackId) return { slackId: e.slackId, zusatz: '' };
   return {
     slackId: VALENTIN_USER_ID,
-    zusatz: '\n\n' + '⚠️ _Kein Slack-Mapping für Pipedrive-User `' + ergebnis.closerId +
-            '` — deshalb ging diese Meldung an dich statt an den Closer. Eintrag in `Closer-Score/Config.gs` → `CLOSER_SLACK_IDS` ergänzen._'
+    zusatz: '\n\n' + '\u26a0\ufe0f _' + (e.hinweis || 'Kein Empf\u00e4nger bestimmbar.') +
+            ' Deshalb ging diese Meldung an dich statt an den Closer._'
   };
 }
 
-// Beschreibt im Klartext, wer die DM im Echtbetrieb bekaeme - inklusive des
-// Falls, dass der Closer noch gar kein Slack-Mapping hat.
+// Beschreibt im Klartext, wer die DM im Echtbetrieb bekaeme.
 function echterEmpfaengerText(ergebnis) {
-  if (ergebnis.closerId === null || ergebnis.closerId === undefined) {
-    return 'Im Echtbetrieb wäre kein Empfänger bestimmbar (' + CLOSER_FELD + ' ist leer).';
+  const e = ergebnis.empfaenger || {};
+  if (e.slackId) {
+    return 'Im Echtbetrieb ginge das an ' + (e.name || e.slackId) +
+           ' \u2014 laut #sales-Meldung zu "' + e.kunde + '" (' + e.sicherheit + ').';
   }
-  const name = pipedriveUserName(ergebnis.closerId) || ('Pipedrive-User ' + ergebnis.closerId);
-  if (!CLOSER_SLACK_IDS[ergebnis.closerId]) {
-    return 'Im Echtbetrieb gedacht für ' + name + ' — der hat aber noch kein Slack-Mapping.';
-  }
-  return 'Im Echtbetrieb ginge das an ' + name + '.';
+  return 'Im Echtbetrieb w\u00e4re kein Empf\u00e4nger bestimmbar: ' + (e.hinweis || '\u2014');
 }

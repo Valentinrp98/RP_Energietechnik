@@ -108,7 +108,7 @@ function laufCloserScore() {
     // ist - nicht, wenn sie mangels Mapping ohnehin schon bei ihm liegt.
     if (KOPIE_AN_VALENTIN && empfaenger.slackId !== VALENTIN_USER_ID) {
       sendeDm(VALENTIN_USER_ID, '📨 *Ging raus an ' +
-              (pipedriveUserName(ergebnis.closerId) || ('Pipedrive-User ' + ergebnis.closerId)) + '*' +
+              ((ergebnis.empfaenger || {}).name || empfaenger.slackId) + '*' +
               '\n\n' + text);
     }
     neuerZustand[id] = { f: alt.f, s: jetzt };
@@ -198,10 +198,10 @@ function testeLauf() {
     verteilung[e.ampel]++;
     const emp = bestimmeEmpfaenger(e);
     zeilen.push('| ' + String(e.dealId) + ' | ' + e.titel + ' | ' + e.ampel + ' | ' + String(e.punkte) + '/' + String(e.maximum) +
-                ' | ' + String(e.closerId) + ' | ' + emp.slackId + ' |');
+                ' | ' + ((e.empfaenger || {}).name || '—') + ' | ' + emp.slackId + ' |');
     Logger.log('\n===== Deal %s =====\n%s', String(e.dealId), baueNachricht(e) + emp.zusatz);
   });
-  Logger.log('\n| Deal | Titel | Ampel | Punkte | Closer | DM an |');
+  Logger.log('\n| Deal | Titel | Ampel | Punkte | Closer laut #sales | DM an |');
   Logger.log('|---|---|---|---|---|---|');
   for (let i = 0; i < zeilen.length; i += 40) Logger.log(zeilen.slice(i, i + 40).join('\n'));
   Logger.log('\nVerteilung: 🟢 %s · 🟡 %s · 🔴 %s', String(verteilung['🟢']), String(verteilung['🟡']), String(verteilung['🔴']));
@@ -214,8 +214,13 @@ function pruefeTokens() {
     const wert = props.getProperty(name);
     Logger.log('%s: %s', name, wert ? '✅ gesetzt (' + wert.length + ' Zeichen)' : '❌ FEHLT');
   });
-  Logger.log('CLOSER_SLACK_IDS: %s Einträge%s', String(Object.keys(CLOSER_SLACK_IDS).length),
-             Object.keys(CLOSER_SLACK_IDS).length === 0 ? ' — ⚠️ alle DMs gehen an Valentin' : '');
+  try {
+    Logger.log('#sales lesbar: ✅ %s Auftrags-Meldungen der letzten %s Tage',
+               String(salesIndex().length), String(SALES_TAGE_ZURUECK));
+  } catch (e) {
+    Logger.log('#sales lesbar: ❌ %s', e.message);
+    Logger.log('   → Ohne den Kanal geht JEDE Meldung an Valentin. pruefeSalesKanal() sagt, was fehlt.');
+  }
   Logger.log('DRY_RUN: %s | BETRIEBSMODUS: %s', String(DRY_RUN), BETRIEBSMODUS);
   if (DRY_RUN) {
     Logger.log('→ Es geht gar nichts raus.');

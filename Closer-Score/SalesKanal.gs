@@ -100,13 +100,19 @@ function kundeAusMeldung(text) {
   return name.join(' ').replace(/[,;.]+$/, '').trim() || null;
 }
 
-// Umlaute falten, Satzzeichen weg, klein. "Schönewolf" und "Schoenewolf"
-// sollen sich treffen — im Kanal wird frei getippt, in Pipedrive steht der
-// Name aus dem Formular.
+// Umlaute falten, Akzente weg, Satzzeichen weg, klein. "Schönewolf" und
+// "Schoenewolf" sollen sich treffen — im Kanal wird frei getippt, in Pipedrive
+// steht der Name aus dem Formular.
+//
+// Reihenfolge ist wichtig: die deutschen Umlaute werden ZUERST zu ae/oe/ue
+// aufgeloest, weil das im Deutschen die richtige Schreibung ist. Erst danach
+// faellt der Rest der Diakritika per NFD weg — sonst waere aus "Božena" das
+// unbrauchbare "bo ena" geworden (Messung 23.09.2026, Deal 7090).
 function normalisiereName(s) {
   return String(s || '')
     .toLowerCase()
     .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 }
@@ -124,44 +130,58 @@ function nameTokens(s) {
 // allen Kandidaten ins Log, damit ein Mensch in 30 Sekunden entscheiden kann.
 function closerAusSales(deal) {
   const titel = deal.title || '';
-  const zielNorm = normalisiereName(titel);
   const zielTokens = nameTokens(titel);
-  if (zielTokens.length === 0) return { fehler: 'Deal-Titel "' + titel + '" ergibt keinen vergleichbaren Namen.' };
+  if (zielTokens.length === 0) {
+    return { fehler: 'Deal-Titel "' + titel + '" ergibt keinen vergleichbaren Namen.' };
+  }
+  const zielNorm = zielTokens.join(' ');
+  const zielNach = zielTokens[zielTokens.length - 1];
 
-  const genau = [];
-  const teilweise = [];
+  // Drei Stufen, absteigend nach Verlaesslichkeit. Gesucht wird immer in der
+  // besten Stufe, die ueberhaupt Treffer hat — ein exakter Treffer schlaegt
+  // jeden ungefaehren, auch wenn der zeitlich naeher liegt.
+  const genau = [], stark = [], schwach = [];
 
   salesIndex().forEach(function (m) {
-    if (m.kundeNorm === zielNorm) { genau.push(m); return; }
-    // Jedes Token des kuerzeren Namens muss im laengeren vorkommen. Damit
-    // trifft "Ehepaar Klösch" auf "Klösch" und "SEL Bekmez" auf "Bekmez",
-    // ohne dass ein einzelner Vorname zwei Kunden verbindet.
     const mTokens = nameTokens(m.kunde);
     if (mTokens.length === 0) return;
-    const kurz = mTokens.length <= zielTokens.length ? mTokens : zielTokens;
-    const lang = mTokens.length <= zielTokens.length ? zielTokens : mTokens;
-    const alleDrin = kurz.every(function (t) { return lang.indexOf(t) !== -1; });
-    if (alleDrin) teilweise.push(m);
+
+    if (mTokens.join(' ') === zielNorm) { genau.push(m); return; }
+
+    // Der Nachname muss IMMER dabei sein. Ohne diese Bedingung hat ein bloss
+    // gleicher Vorname zwei Kunden verbunden: "Harald Lamprecht" bekam
+    // 5 Treffer von 5 verschiedenen Leuten (Messung 23.09.2026).
+    // Beide Richtungen pruefen, weil im Kanal auch "Pozderie George" steht.
+    const mNach = mTokens[mTokens.length - 1];
+    const nachnameTrifft = mNach === zielNach ||
+                           zielTokens.indexOf(mNach) !== -1 ||
+                           mTokens.indexOf(zielNach) !== -1;
+    if (!nachnameTrifft) return;
+
+    const gemeinsam = mTokens.filter(function (t) { return zielTokens.indexOf(t) !== -1; });
+    if (gemeinsam.length >= 2) stark.push(m);   // Vor- UND Nachname
+    else schwach.push(m);                        // nur der Nachname
   });
 
-  const auswahl = genau.length ? genau : teilweise;
-  const sicherheit = genau.length ? 'genau' : 'teilweise';
+  const auswahl = genau.length ? genau : (stark.length ? stark : schwach);
+  const sicherheit = genau.length ? 'genau' : (stark.length ? 'stark' : 'nur Nachname');
 
   if (auswahl.length === 0) {
     return { fehler: 'Keine #sales-Meldung zu "' + titel + '" in den letzten ' + SALES_TAGE_ZURUECK + ' Tagen.' };
   }
 
-  // Mehrere Treffer: der zeitlich naechste am Abschluss gewinnt — aber nur,
-  // wenn sie sich auf denselben Autor einigen. Sonst wird nicht geraten.
-  if (auswahl.length > 1) {
-    const autoren = {};
-    auswahl.forEach(function (m) { autoren[m.autor] = true; });
-    if (Object.keys(autoren).length > 1) {
-      return {
-        fehler: auswahl.length + ' #sales-Meldungen passen auf "' + titel + '", von verschiedenen Leuten.',
-        kandidaten: auswahl
-      };
-    }
+  // Mehrere Treffer derselben Stufe: solange sie vom selben Menschen kommen,
+  // ist die Antwort eindeutig, egal welcher gemeint war. Widersprechen sie
+  // sich, wird nicht geraten — der Fall geht mit allen Kandidaten ins Log.
+  const autoren = {};
+  auswahl.forEach(function (m) { autoren[m.autor] = true; });
+  if (Object.keys(autoren).length > 1) {
+    return {
+      fehler: auswahl.length + ' #sales-Meldungen passen auf "' + titel + '" (' + sicherheit +
+              '), von verschiedenen Leuten: ' +
+              Object.keys(autoren).map(slackName).join(', ') + '.',
+      kandidaten: auswahl
+    };
   }
 
   const abschluss = deal.won_time ? new Date(deal.won_time).getTime() : Date.now();
@@ -170,6 +190,44 @@ function closerAusSales(deal) {
   });
   const m = auswahl[0];
   return { slackId: m.autor, kunde: m.kunde, zeit: m.zeit, sicherheit: sicherheit };
+}
+
+// ---------- Ehemalige ----------
+// Wer die Firma verlassen hat, soll keine Rueckmeldung mehr bekommen. Der
+// Slack-Account existiert oft noch, die DM kaeme also an — und ins Leere.
+// Solche Deals gehen mit Hinweis an Valentin.
+const EHEMALIGE = {
+  'U0BF6FD51FV': 'Manuel Wimmer'
+};
+
+// ---------- Der eine Einstiegspunkt ----------
+// Alles, was wissen will "wer bekommt die DM?", fragt hier. Rueckgabe immer
+// mit `quelle` und `hinweis`, damit ein fehlender Empfaenger im Log und in der
+// Nachricht an Valentin erklaert dasteht statt still zu verschwinden.
+function bestimmeCloser(deal) {
+  let sales;
+  try {
+    sales = closerAusSales(deal);
+  } catch (e) {
+    // Kanal nicht lesbar (Scope weg, Bot rausgeworfen). Der Score soll daran
+    // nicht scheitern — er landet dann eben bei Valentin.
+    return { slackId: null, quelle: 'kanal-fehler',
+             hinweis: 'Der #sales-Kanal ist nicht lesbar: ' + e.message };
+  }
+  if (sales.fehler) return { slackId: null, quelle: 'ohne-meldung', hinweis: sales.fehler };
+
+  if (EHEMALIGE[sales.slackId]) {
+    return { slackId: null, quelle: 'ehemalig',
+             hinweis: EHEMALIGE[sales.slackId] + ' hat den Auftrag in #sales gepostet, ist aber nicht mehr in der Firma.' };
+  }
+  return {
+    slackId: sales.slackId,
+    name: slackName(sales.slackId),
+    kunde: sales.kunde,
+    sicherheit: sales.sicherheit,
+    quelle: 'sales',
+    hinweis: ''
+  };
 }
 
 // ---------- Messinstrument ----------

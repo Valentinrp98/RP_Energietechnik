@@ -27,7 +27,9 @@ const SLACK_NACH_MAIL = {
   'ramon@rp-energietechnik.at':    'U0BHKLB6GUU',   // Ramon Beyeler
   'jonathan@rp-energietechnik.at': 'U0BH9M1QTD1',   // Jonathan Rössner
   'sven@rp-energietechnik.at':     'U0BPY5FKQ5C',   // Sven Mlinar
-  'florian@rp-energietechnik.at':  'U0C27EY6KT5'    // florian
+  'florian@rp-energietechnik.at':  'U0C27EY6KT5',   // florian
+  'anja@rp-energietechnik.at':     'U06V006TH39',   // Anja, KAM
+  'manuel@rp-energietechnik.at':   'U0BF6FD51FV'    // Manuel Wimmer — ehemalig, siehe EHEMALIGE
 };
 
 function baueCloserMapping() {

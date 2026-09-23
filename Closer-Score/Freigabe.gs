@@ -22,7 +22,12 @@
 // Schickt die Vorlage an Valentin und gibt zurueck, was man zum Wiederfinden
 // der Reaktion braucht. null heisst: Vorlage ging nicht raus.
 function legeZurFreigabeVor(ergebnis) {
-  const kopf = '📋 *Freigabe* — so ginge die Rueckmeldung an ' + closerName(ergebnis.closerId) + ':\n\n';
+  const e = ergebnis.empfaenger || {};
+  const kopf = e.slackId
+    ? '📋 *Freigabe* — so ginge die Rueckmeldung an *' + (e.name || e.slackId) + '*' +
+      '\n_laut #sales-Meldung zu "' + e.kunde + '" (' + e.sicherheit + ')_\n\n'
+    : '📋 *Freigabe* — ⚠️ *kein Empfänger ermittelbar*\n_' + (e.hinweis || '—') +
+      '\nBei ✅ geht nichts raus, du bekommst nur einen Hinweis._\n\n';
   const fuss = '\n\n———\n' +
                '✅ draufsetzen = raus an den Closer  ·  ❌ = verwerfen\n' +
                '_Ohne Reaktion passiert nichts. Nach ' + Math.round(FREIGABE_FRIST_MS / 86400000) +
@@ -68,12 +73,12 @@ function pruefeFreigaben() {
         geaendert = true;
         return;
       }
-      const ziel = CLOSER_SLACK_IDS[ergebnis.closerId];
+      const ziel = (ergebnis.empfaenger || {}).slackId;
       if (!ziel) {
-        Logger.log('  ⚠️ Deal %s freigegeben, aber Pipedrive-User %s hat keinen CLOSER_SLACK_IDS-Eintrag. Nicht verschickt.', id, String(ergebnis.closerId));
-        sendeDm(VALENTIN_USER_ID, '⚠️ Du hast Deal ' + id + ' freigegeben, aber fuer Pipedrive-User `' +
-                ergebnis.closerId + '` steht keine Slack-ID in `Closer-Score/Config.gs` → `CLOSER_SLACK_IDS`. ' +
-                'Die Nachricht ist deshalb nicht rausgegangen.');
+        const grund = (ergebnis.empfaenger || {}).hinweis || 'kein Empfänger bestimmbar';
+        Logger.log('  ⚠️ Deal %s freigegeben, aber kein Empfaenger: %s', id, grund);
+        sendeDm(VALENTIN_USER_ID, '⚠️ Du hast Deal ' + id + ' freigegeben, aber es gibt keinen Empfänger:\n\n_' +
+                grund + '_\n\nDie Nachricht ist deshalb nicht rausgegangen.');
         zustand[id] = { f: eintrag.f, s: jetzt };
         geaendert = true;
         return;
@@ -153,7 +158,7 @@ function scoreNeu(dealId) {
 function meldeZustellung(eintrag, ergebnis, zielSlackId, text) {
   if (!KOPIE_AN_VALENTIN) return;
   const uhrzeit = Utilities.formatDate(new Date(), 'Europe/Vienna', 'dd.MM. HH:mm');
-  const name = pipedriveUserName(ergebnis.closerId) || ('Pipedrive-User ' + ergebnis.closerId);
+  const name = (ergebnis.empfaenger || {}).name || zielSlackId;
 
   let meldung = '✅ *Raus an ' + name + '* (' + uhrzeit + ')';
   const vorher = eintrag.p;

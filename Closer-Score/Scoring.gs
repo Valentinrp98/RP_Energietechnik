@@ -89,7 +89,8 @@ function bewerteDeal(deal) {
   return {
     dealId: deal.id,
     titel: deal.title || ('Deal ' + deal.id),
-    closerId: closerAus(deal),
+    closerId: closerAus(deal),          // nur noch Vergleichswert, NICHT der Empfaenger
+    empfaenger: bestimmeCloser(deal),   // die Wahrheit steht in #sales, siehe SalesKanal.gs
     punkte: punkte,
     maximum: maximum,
     anteil: anteil,
@@ -121,9 +122,11 @@ function fasseGruppenZusammen(erreicht, fehlt) {
   }).filter(function (g) { return g.maximum > 0; }); // eine leere Gruppe taucht nicht auf
 }
 
-// Wer soll die DM bekommen? Nicht mehr fest owner_id, sondern das in
-// CLOSER_FELD hinterlegte Feld — owner_id ist bei 85 von 86 Deals Valentin,
-// weil die Fulfillment-Uebernahme den Deal umhaengt (Diagnose 17.09.2026).
+// ⚠️ NICHT MEHR der Empfaenger. Bis 23.09.2026 stand hier, CLOSER_FELD sage,
+// wer die DM bekommt. Die Messung mit pruefeSalesKanal() hat das widerlegt:
+// bei 63 von 75 zuordenbaren Deals widerspricht creator_user_id dem, was der
+// Closer selbst in #sales gepostet hat. Der Empfaenger kommt jetzt aus
+// bestimmeCloser() (SalesKanal.gs); diese Funktion bleibt als Vergleichswert.
 // Pipedrive liefert User-Referenzen mal als blanke Zahl, mal als Objekt.
 function closerAus(deal) {
   const wert = deal[CLOSER_FELD];
