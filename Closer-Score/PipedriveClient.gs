@@ -54,7 +54,11 @@ function holeFulfillmentDeals() {
     const params = { pipeline_id: PIPELINE_ID, limit: 100 };
     if (cursor) params.cursor = cursor;
     const json = fetchPipedriveJson('/deals', params);
-    (json.data || []).forEach(function (d) { deals.push(d); });
+    // Testdeals gleich hier raus, damit sie in keiner Statistik und keiner
+    // Diagnose mitlaufen und nicht an drei Stellen einzeln gefiltert werden.
+    (json.data || []).forEach(function (d) {
+      if (IGNORIERTE_DEALS.indexOf(d.id) === -1) deals.push(d);
+    });
     cursor = json.additional_data && json.additional_data.next_cursor;
   } while (cursor);
   return deals;

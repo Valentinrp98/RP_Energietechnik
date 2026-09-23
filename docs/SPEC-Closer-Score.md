@@ -264,18 +264,46 @@ Fehlschlag wertet — dasselbe Problem, das bei den Pipedrive-Webhooks einen Clo
 Relay nötig machte. Für eine Freigabe, die auch eine Viertelstunde später noch richtig ist,
 lohnt der Aufwand nicht.
 
-### Closer → Slack-Mapping### Closer → Slack-Mapping
+### Closer → Slack-Mapping
 
-Hart hinterlegte Tabelle in `Config.gs` (`CLOSER_SLACK_IDS`: Pipedrive-User-ID → Slack-User-ID).
-Bewusst keine Auflösung über `users:read.email` — das wäre ein zusätzlicher Scope für eine
-Handvoll Leute.
+`CLOSER_SLACK_IDS` in `Config.gs` (Pipedrive-User-ID → Slack-User-ID), seit 23.09.2026 befüllt.
+Bewusst keine Live-Auflösung über `users:read.email` — das wäre ein zusätzlicher Scope für eine
+Handvoll Leute, die sich zweimal im Jahr ändern.
 
-**Noch leer.** Zum Befüllen:
-1. `listePipedriveUser()` im Script laufen lassen → loggt ID, Name, E-Mail aller Pipedrive-User.
-2. Slack-User-IDs dazu holen (Slack-Profil → „Mitglieds-ID kopieren").
+**Nicht von Hand pflegen:** `baueCloserMapping()` in `Mapping.gs` holt die Pipedrive-User, matcht
+sie über die Firmen-E-Mail gegen `SLACK_NACH_MAIL` und druckt den fertigen Config-Block ins Log.
+Über die E-Mail und nicht über den Namen, weil „Andre" und „André" sonst auseinanderlaufen.
+
+| Pipedrive | Slack | Person | Deals (Stand 23.09.) |
+|---|---|---|---|
+| 21708253 | U06TCB95A9Y | Marco Benhammadi | 81 von 96 |
+| 21716129 | U07030XUKJ8 | André Rechberger | 8 |
+| 26640642 | U0BGM3RRYB0 | Sergen Caf | 3 |
+| 22609153 | U08356D2VFU | Sean Golubovic | 1 |
+| 27727277 | U0BH9M1QTD1 | Jonathan Rössner | 1 |
+
+**Nicht gemappt:** Manuel Wimmer (26488160) ist nicht mehr in der Firma — seine zwei laufenden
+Deals landen mit Hinweis bei Valentin statt bei einem Ex-Kollegen. Sven Mlinar hat noch keinen
+Deal angelegt; seine Slack-ID liegt bereits in `SLACK_NACH_MAIL`, beim ersten Deal genügt ein
+Lauf von `baueCloserMapping()`.
 
 Ein Closer ohne Eintrag bekommt keine DM ins Leere: die Nachricht geht mit einem Hinweis an
 Valentin (`U0BM9J0KPQT`), damit nichts still verschwindet.
+
+> **Befund 23.09.2026 — `creator_user_id` ist gegengeprüft und bleibt.** Dass 84 % der Deals auf
+> Marco stehen, sah nach demselben Feldfehler aus, an dem `owner_id` mit 94 % gescheitert war —
+> ist aber echte Verteilung: Marco macht derzeit den Großteil der Abschlüsse, mit Sven und
+> Jonathan verteilt es sich. Eine künftige Schieflage in dieser Statistik ist damit ein Hinweis
+> auf die Vertriebslage, nicht auf einen Bug. `baueCloserMapping()` warnt trotzdem weiter ab
+> 70 %, weil dieselbe Zahl bei einem späteren Feldwechsel wieder das Alarmsignal wäre.
+
+### Testdeals
+
+`IGNORIERTE_DEALS` in `Config.gs` — angewandt schon in `holeFulfillmentDeals()`, damit ein
+Testdeal in keiner Statistik, keiner Diagnose und keinem Mapping mitläuft und nicht an drei
+Stellen einzeln gefiltert werden muss. Aktuell drin: **7253 „AI TEST"** (Pilot der
+Datei-Klassifikation) — vollständig befüllt und hätte Sean sonst eine Rückmeldung für ein
+Geschäft geschickt, das es nicht gibt.
 
 ---
 

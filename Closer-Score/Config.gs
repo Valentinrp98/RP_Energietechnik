@@ -119,17 +119,34 @@ const CLOSER_FELD = 'creator_user_id';
 // ein zusaetzlicher Scope fuer eine Handvoll Leute.
 // Ein Closer OHNE Eintrag bekommt keine DM ins Leere: die Nachricht geht mit
 // einem Hinweis an Valentin, damit nichts still verschwindet.
-// Diese fuenf tauchen laut Diagnose 17.09.2026 in creator_user_id auf. Die
-// Pipedrive-IDs liefert listePipedriveUser(), die Slack-IDs das Slack-Profil
-// des Kollegen ("Mitglieds-ID kopieren"). Erst wenn beide dastehen, geht die
-// DM an den Richtigen — bis dahin landet alles bei Valentin mit Hinweis.
+// Erzeugt von baueCloserMapping() (Mapping.gs) am 23.09.2026 über den Abgleich
+// der Firmen-E-Mail zwischen Pipedrive und Slack. Bei Personalwechsel nicht von
+// Hand pflegen, sondern die Funktion nochmal laufen lassen.
+//
+// Gegengeprüft am 23.09.2026: creator_user_id meint tatsächlich den Verkäufer.
+// Dass 84% auf Marco stehen, ist echte Verteilung und kein Feldfehler - Marco
+// macht derzeit den Großteil der Abschlüsse. Mit Sven und Jonathan verteilt es
+// sich. Eine künftige Schieflage in dieser Statistik ist also ein Hinweis auf
+// die Vertriebslage, nicht auf einen Bug.
 const CLOSER_SLACK_IDS = {
-  // <Pipedrive-ID>: 'U01ABCDEF',   // Marco Benhammadi   (74 von 86 Deals)
-  // <Pipedrive-ID>: 'U01ABCDEF',   // André Rechberger   (8)
-  // <Pipedrive-ID>: 'U01ABCDEF',   // Manuel Wimmer      (2)
-  // <Pipedrive-ID>: 'U01ABCDEF',   // Sean Golubovic     (1)
-  // <Pipedrive-ID>: 'U01ABCDEF',   // Sergen Caf         (1)
+  21708253: 'U06TCB95A9Y',   // Marco Benhammadi  (81 von 96 Deals)
+  21716129: 'U07030XUKJ8',   // André Rechberger  (8)
+  26640642: 'U0BGM3RRYB0',   // Sergen Caf        (3)
+  22609153: 'U08356D2VFU',   // Sean Golubovic    (1)
+  27727277: 'U0BH9M1QTD1'    // Jonathan Rössner  (1)
+  // Manuel Wimmer (Pipedrive 26488160) ist nicht mehr in der Firma. Seine zwei
+  // noch laufenden Deals landen mit Hinweis bei Valentin - eine Rückmeldung an
+  // einen Ex-Kollegen wäre sinnlos, die Deals selbst laufen aber weiter.
+  // Sven Mlinar fehlt hier noch, weil er bisher keinen Deal angelegt hat. Sobald
+  // der erste kommt, baueCloserMapping() laufen lassen - seine Slack-ID liegt
+  // schon in SLACK_NACH_MAIL (Mapping.gs).
 };
+
+// Deals, die nie gescored werden - egal wie gut sie ausgefuellt sind.
+// 7253 "AI TEST" ist der Pilot-Deal der Datei-Klassifikation. Er ist vollstaendig
+// befuellt und wuerde Sean sonst eine Rueckmeldung fuer ein Geschaeft schicken,
+// das es nicht gibt.
+const IGNORIERTE_DEALS = [7253];
 
 // ---------- Torwaechter ----------
 
