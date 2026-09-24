@@ -95,9 +95,25 @@ waeren vier Zeilen mit Ereignis `vorher`.
 | `{feld}` | Feldname der Regel |
 | `{ordnerlink}` | Kundenordner in Drive |
 
-**Bewusst NICHT dabei:** kWp/Speicher (stehen in "Anlagendetails", Fuellstand
-ungemessen) und Telefonnummer (haengt an der Person, braucht einen Extra-Call).
-Beides steht im Deal — dafuer ist `{deallink}` da.
+Dazu die Platzhalter aus dem Personen-Sweep und vom CT-Termin:
+
+| Platzhalter | Inhalt |
+|---|---|
+| `{vorname}` / `{nachname}` | Name der Person am Deal |
+| `{telefon}` | Telefonnummer der Person (primaere aus `phones[]`) |
+| `{uhrzeit}` | `10:30` — nur bei `CT-Termin` gefuellt |
+| `{um}` | `um 10:30 Uhr`, **leer wenn der Termin keine Uhrzeit hat** |
+| `{cc}` / `{cc_voll}` | Vorname / voller Name des Activity-Owners (= Cash Collector) |
+| `{watext}` | der fertige Kundentext aus Spalte `WA-Text` |
+| `{walink}` | `https://wa.me/43…?text=…` mit genau diesem Text |
+
+**Bewusst NICHT dabei:** kWp/Speicher — stehen in "Anlagendetails",
+Fuellstand ungemessen. Dafuer ist `{deallink}` da.
+
+> **Korrektur 21.09.2026:** hier stand vorher, die Telefonnummer sei bewusst
+> nicht dabei, weil sie einen Extra-Call braucht. Stimmt nicht mehr: sie kommt
+> aus demselben `/persons`-Sweep wie die PLZ, kostet also keinen zusaetzlichen
+> Call. Gebraucht fuer den `wa.me`-Link.
 
 Ein Platzhalter, den es nicht gibt (Tippfehler `{kwpp}`), wird **nicht still
 stehen gelassen**, sondern erzeugt eine Warnung im Log.
@@ -210,6 +226,229 @@ aus der Zeit davor gibt es in `schonGesendet()` eine Bruecke: fehlt der neue
 Schluessel, wird zusaetzlich die alte Form geprueft — aber nur fuer
 `C0C0Q6JML23`, den damals einzigen Channel. Ohne diese Bruecke waere jede heute
 schon gemeldete Erinnerung ein zweites Mal gekommen.
+
+---
+
+## CT-Kundenerinnerung per WhatsApp (21.09.2026)
+
+**CT** = Cash-Collection-Termin. Der Kunde soll am Vortag eine WhatsApp-
+Erinnerung bekommen — ohne dass jemand eine Liste durchgeht.
+
+### Warum kein Pipedrive-Sequence und keine echte Automatik
+
+- **Sequences** zaehlen ab der *Einschreibung*, nicht ab dem Termindatum. Eine
+  Erinnerung "einen Tag vor dem Termin" ist damit nicht baubar, und eine
+  Terminverschiebung merkt die Sequence gar nicht.
+- **WhatsApp Desktop/Web fernsteuern** (Klick-Automat, Browser-Bot) verstoesst
+  gegen die WhatsApp-ToS und riskiert die Sperre der Firmennummer. Nicht gebaut.
+- **WhatsApp Cloud API** (eigene Nummer, von Meta freigegebene Templates,
+  Preis pro Nachricht) ist der saubere Weg fuer echten Auto-Versand — aber eine
+  Registrierung, die Wochen dauert. Laeuft als "Weg B" separat.
+
+### Was stattdessen passiert ("Weg A")
+
+Ernst schickt **Valentin eine DM** mit einem fertigen `wa.me`-Link. Ein Klick
+oeffnet WhatsApp Desktop mit dem vorformulierten Text im Eingabefeld —
+abgeschickt wird erst per Enter. Also:
+
+- **kein manuelles Suchen**: Termin, Kunde, Nummer und Text stehen schon drin
+- **keine ToS-Verletzung**: der Versand ist ein menschlicher Klick
+- **nichts geht ungeprueft nach draussen**
+
+Der Umstieg auf Weg B tauscht nur den Sendeschritt — Erkennung, Texte,
+Doppelpost-Schutz und Log bleiben wie sie sind.
+
+### Woher der CT-Termin kommt
+
+Nicht aus einem Deal-Feld, sondern aus **Pipedrive-Activities**. Dabei drei
+Dinge, die man beim Bauen erst merkt:
+
+1. **Die CT-Activity haengt an der PERSON, nicht am Deal** (`deal_id: null`,
+   `person_id` gesetzt — nachgesehen an Deal 7500 und 7468). Ein
+   `getActivities(deal_id=…)` findet sie also nicht. `ctFuerDeal()` nimmt
+   `deal_id` zuerst und faellt auf `person_id` zurueck.
+2. **Der Activity-`type` ist nicht verlaesslich** — meist `fzweitgesprach`,
+   manchmal `meeting`. Verlaesslich ist nur der Betreff nach
+   Kalenderkonvention `PLZ Name (CT)`. Erkannt wird deshalb am Marker `(CT)`.
+   Activities vom Typ `fzweitgesprach` *ohne* Marker landen als
+   Verdachtsfall im Log, statt still zu verschwinden.
+3. **`/activities` hat keinen Datumsfilter.** Nachgesehen, nicht angenommen:
+   filterbar sind nur `deal_id`, `person_id`, `org_id`, `owner_id`, `done`,
+   `filter_id`, `ids`, `lead_id`, `updated_since/until`. Also werden alle
+   **offenen** Activities geholt (`done=false`, `limit=500`, Cursor) und lokal
+   nach Datum verglichen. Deckel bei `CT_MAX_SEITEN = 40` (= 20 000
+   Activities); wird er erreicht, steht das als Warnung im Laeufe-Tab.
+
+**Der Cash Collector ist der Activity-Owner, nicht der Deal-Owner.** Die
+Fulfillment-Uebernahme setzt `owner_id` bei praktisch allen Deals auf Valentin
+— als Personenkennung damit wertlos. Die Activity behaelt ihren Owner.
+
+### CT-Termin ist ein Pseudo-Feld
+
+`CT-Termin` sieht fuer die Regel-Engine aus wie `Liefertermin` & Co., hat aber
+**keine Snapshot-Spalte**. Absicht: mit Snapshot-Spalte wuerde beim ersten Lauf
+jeder bestehende CT als "gerade gesetzt" gemeldet werden.
+
+Folge: erlaubt sind nur die datumsbasierten Ereignisse **`vorher`** und
+**`am Tag`**. Eine CT-Regel mit `gesetzt`/`verschoben`/`geloescht` wird beim
+Lesen des Tabs **laut abgelehnt** (Log-Warnung), nicht still ignoriert.
+Verschiebungen sind trotzdem gedeckt: das Bezugsdatum steckt im
+Doppelpost-Schluessel, ein verschobener Termin erinnert also am neuen Vortag
+noch einmal.
+
+### Entscheidungen vom 21.09.2026
+
+- **Die DM geht immer an Valentin**, nicht an den jeweiligen Cash Collector.
+  Damit laeuft der Versand aus einer Nummer — die, die der Kunde ohnehin kennt.
+- **Signatur im Kundentext ist die Firma**, nicht `{cc}`. Folgt direkt aus dem
+  ersten Punkt: abgeschickt wird aus Valentins WhatsApp, eine Unterschrift mit
+  fremdem Namen passt nicht zum Absender. Gemessene Verteilung war Marco 7 /
+  Sean 3 / Valentin 1 — es waere also der Regelfall, nicht der Ausnahmefall.
+  `{cc}` bleibt in der **Slack**-Vorlage, dort ist "wer ist zustaendig" genau
+  die richtige Information.
+- **Der Text bestaetigt, er fragt nicht zurueck**: "unser Termin morgen … steht.
+  Wir freuen uns auf Sie!" Kein "falls es nicht passt" — eine Erinnerung, die
+  zum Absagen einlaedt, produziert Absagen.
+
+### Zwei Texte pro Regel
+
+| Spalte | Empfaenger | Inhalt |
+|---|---|---|
+| `Vorlage` | Slack (Valentins DM) | Uebersicht + `{walink}` |
+| `WA-Text` | der **Kunde** | wird in den `wa.me`-Link einkodiert |
+
+Die Spalte `WA-Text` ist **optional** — fehlt sie, laeuft alles Uebrige
+unveraendert weiter. `{walink}` innerhalb des Kundentexts bleibt leer (das waere
+eine Schleife).
+
+### Wenn keine Nummer da ist
+
+`waNummer()` normalisiert oesterreichisch: `+` bleibt, `00` wird abgeschnitten,
+fuehrende `0` wird zu `43`, sonst muss die Nummer schon mit `43` beginnen;
+Ergebnis 10–15 Stellen, sonst `null`. Ohne Nummer gibt es keinen Link — und die
+Slack-Meldung sagt dann **"⚠️ keine WhatsApp-Nummer"** statt einfach nichts.
+Eine fehlende Nummer ist genau die Information, die man braucht.
+
+### Befunde aus dem ersten Probelauf (21.09.2026)
+
+1213 offene Activities auf 3 Seiten, **11 mit `(CT)`-Marker**, 6 Verdachtsfaelle
+ohne Marker, 112 Pipeline-2-Deals davon 11 mit offenem CT. Kein verwaister CT,
+kein Doppel-CT, kein Doppel-Deal. Uhrzeit, Cash Collector (via Activity-Owner)
+und Nummern-Normalisierung stimmen.
+
+Zwei Sachen, die der Lauf aufgedeckt hat:
+
+- **Activity 17306 hat als Betreff nur `"CT"`** — ohne Klammern, also vom Marker
+  `(CT)` nicht erfasst. Steht als Verdachtsfall im Log. Der Regex wird
+  **nicht** stillschweigend gelockert: ob ein nackter Betreff "CT" zaehlt, ist
+  eine Entscheidung ueber die Kalenderkonvention, keine Code-Frage. Die anderen
+  fuenf Verdachtsfaelle sind erkennbar Closing-/Kundentermine.
+- **`encodeURIComponent()` laesst `(` und `)` durch.** In Slacks `<url|label>`
+  harmlos, aber der Link wird auch aus dem Log kopiert, und Terminals wie
+  Markdown-Parser schneiden an einer `)` gern ab. `kodiereWaText()` kodiert
+  `( ) ' ! *` jetzt mit.
+
+### Gegenprobe im Google Kalender (21.09.2026)
+
+Die CT-Termine entstehen im Kalender und werden nach Pipedrive uebertragen.
+Driften die zwei auseinander, merkt es niemand — bis eine Erinnerung mit der
+falschen Uhrzeit beim Kunden landet. Genau der Fall tut weh, weil er nach
+draussen geht.
+
+**Anschalten:** `listeKalender()` laufen lassen, die passende ID in
+`CT_KALENDER_ID` (in `CtKalender.gs`) eintragen, `clasp push`. Leer = Abgleich
+aus; die ID wird **nicht** geraten.
+
+Der Abgleich prueft drei Richtungen:
+
+| Richtung | Befund | Folge |
+|---|---|---|
+| Pipedrive → Kalender | Uhrzeiten widersprechen sich | **keine Erinnerung**, Fall ins Log |
+| Pipedrive → Kalender | am Tag kein passender Termin | nur Hinweis, Erinnerung geht raus |
+| Kalender → Pipedrive | `(CT)`-Termin ohne offene Activity | Warnung im Laeufe-Tab |
+| Verdachtsfall → Kalender | steht am Tag ein `(CT)`-Termin? | Entscheidungsgrundlage im Log |
+
+Warum ein **Widerspruch** stoppt, ein **fehlender Eintrag** aber nicht: bei
+widersprechenden Uhrzeiten ist eine der beiden falsch, und der Kunde richtet
+sich nach der, die er bekommt — lieber keine Nachricht. Fehlt der Eintrag
+dagegen ganz, ist wahrscheinlich der konfigurierte Kalender der falsche, und
+dann duerfen nicht alle Erinnerungen ausfallen. Umschaltbar ueber
+`CT_KALENDER_KONFLIKT_STOPPT`.
+
+Zugeordnet wird ueber den Titel: Kleinschreibung, Umlaute aufgeloest,
+Namensbestandteile ab 4 Zeichen. Kuerzere treffen zu leicht auf fremde Termine.
+Fenster: 7 Tage zurueck bis 90 Tage vor.
+
+> **Achtung beim ersten Lauf:** `CalendarApp` braucht einen neuen
+> OAuth-Scope. Nach dem Push **einmal von Hand im Editor** eine Funktion
+> ausfuehren und zustimmen — sonst laufen die Trigger in
+> "Authorization is required".
+
+### Zwei offene CTs zum selben Kunden
+
+Dann wird **nicht geraten**: keine Erinnerung, und alle Kandidaten (Activity-ID,
+Datum, Uhrzeit, Betreff) landen im Log und im Laeufe-Tab. Aufgeraeumt wird in
+Pipedrive, nicht im Code.
+
+### Eine Person, zwei Deals in Pipeline 2
+
+Der Join laeuft ueber `person_id`. Hat dieselbe Person zwei Deals in Pipeline 2
+und der CT hat keine `deal_id`, haengt er an **beiden** Deals — und weil die
+Deal-ID im Doppelpost-Schluessel steckt, kommt die DM zweimal. Der
+Doppelpost-Schutz kann das nicht sehen, fuer ihn sind es zwei Deals.
+`pruefeDoppelDeals()` meldet genau diesen Fall in den Laeufe-Tab, statt ihn
+auszusitzen. Aufgeraeumt wird in Pipedrive (Doppel-Deal schliessen, oder die
+Activity an einen Deal haengen).
+
+### Was der Selbst-Review am 21.09.2026 gefunden hat
+
+Vier Sachen, alle gefixt — aufgeschrieben, weil es dieselben Muster sind, die
+in diesem Projekt schon zweimal zugeschlagen haben:
+
+1. **`setzeCtMap()` hat die Warnliste geleert**, nachdem `holeCtMap()` sie
+   gefuellt hatte. Die Seitenlimit-Warnung ("es koennen CT-Termine fehlen")
+   erreichte den Laeufe-Tab damit nie — genau der stille Ausfall, gegen den
+   die Warnung gebaut war (vgl. das Cloudflare-Relay, das immer 200 meldete).
+   Zurueckgesetzt wird jetzt am Anfang von `holeCtMap()`.
+2. **Ein Fehler im CT-Abruf riss den ganzen Sweep mit** — also auch die seit
+   11.09. live laufenden Liefertermin-Meldungen. Der CT-Abruf ist jetzt
+   eingekapselt: faellt er aus, entfallen nur die CT-Erinnerungen, der Grund
+   steht im Laeufe-Tab.
+3. **Warnungen wurden mehrfach gezaehlt.** `ctFuerDeal()` laeuft pro Deal x
+   Regel und zusaetzlich in `baueKontext()` — ein Doppel-CT haette "6
+   Zweifelsfaelle" gemeldet, wo es zwei sind. `ctWarnung()` dedupliziert.
+4. **`pruefeKonfiguration()` sagte nichts ueber die CT-Kette.** Prueft jetzt:
+   CT-Regel aktiv? Spalte `WA-Text` da? Kundentext gefuellt? `{walink}` in der
+   Vorlage?
+
+### Inbetriebnahme
+
+1. `ergaenzeWaSpalte()` — legt die Spalte `WA-Text` an
+2. `ergaenzeFehlendeRegeln()` — haengt die zwei CT-Zeilen an
+3. `testeCtLauf()` — Log lesen. Zuerst kommt die Liste **aller** gefundenen
+   CT-Termine (Datum, Uhrzeit, Deal, Kunde, CC, Telefon ok/FEHLT, Activity-ID),
+   nach Datum sortiert — die laesst sich gegen den Kalender gegenlesen. Danach
+   nur die Termine, die *heute* eine Meldung ausloesen wuerden, samt Slack-Text,
+   Kundentext und `wa.me`-Link. Der Link aus dem Log laesst sich im Browser
+   oeffnen; WhatsApp geht mit dem Text auf, abgeschickt wird nichts.
+4. Texte in den Spalten `Vorlage` / `WA-Text` umschreiben — ohne `clasp push`
+5. Fertig. Der bestehende Tages-Trigger um ~07:15 uebernimmt.
+
+> **Korrektur 21.09.2026:** hier stand, die Zeile `CT-Termin / am Tag` sei auf
+> `nein` gesetzt, weil zwei Erinnerungen zum selben Termin schnell eine zu viel
+> seien. Gilt nicht mehr — **beide Zeilen sind scharf**, siehe unten.
+
+**Beide Erinnerungen laufen**: am Vortag und am Tag des Termins. Der Kunde
+bekommt also zwei Nachrichten. Die zwei Regeln blockieren sich nicht — das
+Ereignis steckt im Doppelpost-Schluessel, `vorher` und `am Tag` sind
+verschiedene Schluessel.
+
+Der Tages-Trigger laeuft gegen **07:15**. Bei einem CT um 07:30 kommt die
+"heute"-Erinnerung also rund 15 Minuten vorher — knapp, aber im Datenbestand
+der Ausnahmefall (frueheste gemessene Uhrzeit: 07:30).
+
+Ziel ist bewusst die **DM**, nicht `#ernst-knows`: im `wa.me`-Link steht die
+Telefonnummer des Kunden im Klartext.
 
 ---
 
@@ -353,6 +592,8 @@ Neu ist praktisch nur die Diff-Logik.
 | `Snapshot.gs` | Gedaechtnis + Liefer-Uebersicht |
 | `Meldungen.gs` | Text bauen, Doppelpost-Schutz, senden |
 | `Lauf.gs` | `sweep()` — die Funktion am Trigger |
+| `CtTermine.gs` | CT-Termine aus Pipedrive-Activities + `wa.me`-Link |
+| `CtKalender.gs` | Gegenprobe der CT-Termine im Google Kalender |
 | `Setup.gs` | Setup-, Pruef- und Trigger-Funktionen |
 
 ### Funktionen in `Setup.gs`, die man von Hand aufruft
@@ -360,7 +601,13 @@ Neu ist praktisch nur die Diff-Logik.
 | Funktion | Tut was | Postet? |
 |---|---|---|
 | `legeSheetAnUndZeigeId()` | Sheet + Tabs anlegen | nein |
-| `befuelleRegelnMitStartwerten()` | die 14 Zeilen anlegen — **nur wenn der Tab leer ist** | nein |
+| `befuelleRegelnMitStartwerten()` | alle Startzeilen anlegen — **nur wenn der Tab leer ist** | nein |
+| `ergaenzeWaSpalte()` | Spalte `WA-Text` anhaengen, idempotent | nein |
+| `ergaenzeFehlendeRegeln()` | nur die Startregeln nachziehen, die im Tab fehlen | nein |
+| `aktualisiereCtRegeln()` | die CT-Zeilen auf die aktuellen Startwerte ziehen (Aktiv, Vorlage, `WA-Text`) — **ueberschreibt Handaenderungen**, protokolliert jede Zelle mit Vorher/Nachher | ja, aber nur Sheet |
+| `testeCtLauf()` | zeigt alle CT-Treffer samt Slack-Text, Kundentext und `wa.me`-Link | nein, **liest nur** |
+| `listeKalender()` | alle erreichbaren Kalender mit ID — zum Aussuchen fuer `CT_KALENDER_ID` | nein, **liest nur** |
+| `vorschauCt(tage)` | welche Erinnerungen gehen in den naechsten Tagen raus, pro Versandtag mit Kundentext (Standard 7) | nein, **liest nur** |
 | `setzeVorlagenNeu()` | nur die Spalte `Vorlage` ueberschreiben | nein |
 | `pruefeKonfiguration()` | alle fuenf Checks, legt nichts an | nein |
 | `testePost()` | eine Nachricht mit Testdaten, Praefix `_[TEST, keine echten Daten]_` | **ja**, ignoriert `DRY_RUN` |
@@ -435,6 +682,10 @@ steht bewusst auf 500 statt 100: bei ~7000 Personen sind das 14 Calls statt 70
 - [ ] **Nachrichtentexte von Valentin** — was drinsteht, sind Platzhalter.
       Der Tab "Regeln", Spalte `Vorlage`, ist genau dafuer da: aenderbar ohne
       `clasp push`, auch vom Handy.
+- [ ] **CT-Erinnerung: zaehlt ein nackter Betreff "CT" als CT-Termin?**
+      (Activity 17306, 22.09.2026). Marker bewusst nicht gelockert — sonst
+      faengt er auch "Contracting" oder "CT-Vorbereitung". Einfachster Weg:
+      die Activity in Pipedrive auf `PLZ Name (CT)` umbenennen.
 - [ ] **Pipedrive-Automation A1 pruefen** (`Fortschritt-Script/README.md:241`)
       — falls die schon nach Slack postet, gibt es zwei Absender fuer dieselbe
       Sache. Faellt auf, sobald der erste echte Termin eingetragen wird.

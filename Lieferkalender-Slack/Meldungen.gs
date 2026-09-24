@@ -45,6 +45,11 @@ function baueText(vorlage, kontext) {
 // Klammern um einen leeren Wert ("( )") faellt dieselbe Regel zum Opfer.
 function raeumeZeileAuf(zeile) {
   let z = zeile.replace(/\(\s*\)/g, '').replace(/\[\s*\]/g, '');
+  // Slack-Link mit leerer URL: aus "<{walink}|WhatsApp öffnen>" wird bei
+  // unbrauchbarer Telefonnummer "<|WhatsApp öffnen>" — das rendert Slack als
+  // sichtbaren Muell. Statt es still zu schlucken wird daraus ein Hinweis:
+  // eine fehlende Nummer ist genau die Information, die Valentin braucht.
+  z = z.replace(/<\|[^>]*>/g, '⚠️ keine WhatsApp-Nummer');
   if (z.indexOf('·') !== -1) {
     z = z.split('·')
       .map(function (teil) { return teil.trim(); })
@@ -54,8 +59,14 @@ function raeumeZeileAuf(zeile) {
   return z.replace(/[ \t]+/g, ' ').trim();
 }
 
-function baueKontext(deal, plzMap, feld, altWert, neuWert, tage) {
-  return {
+// userMap/waText sind optional: die uebrigen Regeln dieses Projekts brauchen
+// sie nicht und rufen baueKontext() weiter mit sechs Argumenten auf.
+function baueKontext(deal, plzMap, feld, altWert, neuWert, tage, userMap, waText) {
+  const person = (deal.person_id && plzMap[deal.person_id]) || {};
+  const ct = feld === CT_PSEUDO_FELD ? ctFuerDeal(_ctMapAktuell, deal) : null;
+  const ccName = ct && userMap ? (userMap[String(ct.ownerId)] || '') : '';
+
+  const kontext = {
     dealId: deal.id,
     kunde: deal.title || '',
     plz: plzText(deal, plzMap),
@@ -73,8 +84,40 @@ function baueKontext(deal, plzMap, feld, altWert, neuWert, tage) {
     deallink: DEAL_URL_BASE + deal.id,
     ordnerlink: leseKundenordner(deal),
     bonus_brutto: BONUS_PRO_LIEFERUNG_BRUTTO + ' €',
-    bonus_netto: bonusNettoText()
+    bonus_netto: bonusNettoText(),
+
+    // ---- Person (aus demselben /persons-Sweep wie die PLZ) ----
+    vorname: person.vorname || '',
+    nachname: person.nachname || '',
+    telefon: person.telefon || '',
+
+    // ---- CT-Termin ----
+    uhrzeit: ct ? ct.uhrzeit : '',
+    // Fertige Wendung statt nackter Zahl: ohne due_time wuerde "um {uhrzeit}
+    // Uhr" zu "um Uhr" — ein Satz, den kein Kunde lesen soll. {um} ist dann
+    // einfach leer und raeumeZeileAuf() putzt die Luecke weg.
+    um: ct && ct.uhrzeit ? 'um ' + ct.uhrzeit + ' Uhr' : '',
+    cc: vornameVon(ccName),
+    cc_voll: ccName
   };
+
+  // Der wa.me-Link braucht den fertigen Kundentext, und der Kundentext benutzt
+  // dieselben Platzhalter wie die Slack-Vorlage. Deshalb wird er hier ZWEITER
+  // Schritt gebaut: erst Kontext, dann Text, dann Link, dann Link in den
+  // Kontext zurueck. {walink} im Kundentext selbst waere eine Schleife und
+  // bleibt deshalb leer.
+  kontext.watext = '';
+  kontext.walink = '';
+  if (waText) {
+    const kundentext = baueText(waText, kontext);
+    kontext.watext = kundentext;
+    kontext.walink = baueWaLink(kontext.telefon, kundentext);
+    if (!kontext.walink && kundentext) {
+      Logger.log('⚠️ Deal %s: kein wa.me-Link, Telefonnummer unbrauchbar ("%s").',
+        deal.id, kontext.telefon);
+    }
+  }
+  return kontext;
 }
 
 // Leerer String, solange BONUS_NETTO_FAKTOR nicht gesetzt ist. Die Vorlage

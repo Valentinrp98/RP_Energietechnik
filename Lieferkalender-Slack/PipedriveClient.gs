@@ -85,7 +85,12 @@ function holePersonenPlzMap() {
       const adresse = cf[PERSON_ADRESSE_FIELD_KEY];
       map[p.id] = {
         plzFeld: normalisierePlz(cf[PERSON_PLZ_FIELD_KEY]),
-        plzAdresse: normalisierePlz(plzAusAdressfeld(adresse))
+        plzAdresse: normalisierePlz(plzAusAdressfeld(adresse)),
+        // Name und Telefon kommen im selben Abruf mit — kein zusaetzlicher
+        // Call. Gebraucht fuer die CT-Kundenerinnerung ({vorname}, {walink}).
+        vorname: String(p.first_name || '').trim(),
+        nachname: String(p.last_name || '').trim(),
+        telefon: primaereNummer(p.phones)
       };
     });
     cursor = json.additional_data && json.additional_data.next_cursor;
@@ -110,6 +115,20 @@ function ersteViererZahl(text) {
   return treffer ? treffer[1] : null;
 }
 
+// Person-Telefon heisst in v2 "phones" (Array mit value/label/primary), nicht
+// mehr "phone" wie in v1 — verifiziert im Projekt Telefon-Qualifizierung.
+// primary gewinnt, sonst der erste Eintrag mit Inhalt.
+function primaereNummer(phones) {
+  if (!phones || !phones.length) return '';
+  for (let i = 0; i < phones.length; i++) {
+    if (phones[i] && phones[i].primary && phones[i].value) return String(phones[i].value).trim();
+  }
+  for (let i = 0; i < phones.length; i++) {
+    if (phones[i] && phones[i].value) return String(phones[i].value).trim();
+  }
+  return '';
+}
+
 function normalisierePlz(wert) {
   if (wert === null || wert === undefined || wert === '') return null;
   const nurZiffern = String(wert).replace(/\D/g, '');
@@ -121,6 +140,12 @@ function normalisierePlz(wert) {
 // Ein Datumsfeld liefert entweder "2026-09-14" oder null. Kein Zeitzonenthema,
 // solange nicht in ein Date-Objekt umgewandelt wird — deshalb bleibt es String.
 function leseTerminfeld(deal, feldName) {
+  // Pseudo-Feld: das Datum steht nicht am Deal, sondern in einer Activity.
+  // _ctMapAktuell setzt sweep() einmal pro Lauf (siehe CtTermine.gs).
+  if (feldName === CT_PSEUDO_FELD) {
+    const ct = ctFuerDeal(_ctMapAktuell, deal);
+    return ct ? ct.datum : '';
+  }
   const key = TERMIN_FELDER[feldName];
   const wert = (deal.custom_fields || {})[key];
   if (!wert) return '';

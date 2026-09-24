@@ -14,6 +14,11 @@
 // Lauf vorher ab, bleibt der alte Snapshot stehen und der naechste Lauf sieht
 // dieselbe Aenderung wieder — verpasste Meldung ist besser als verlorene.
 
+// Platzhalter, die Daten von der PERSON brauchen und damit den /persons-Sweep
+// ausloesen. Fehlt hier einer, bleibt er in der Nachricht still leer — deshalb
+// beim Ergaenzen eines Person-Platzhalters diese Liste mitpflegen.
+const PERSON_PLATZHALTER = ['{plz}', '{vorname}', '{nachname}', '{telefon}', '{walink}'];
+
 function sweep() {
   const start = Date.now();
   const sperre = LockService.getScriptLock();
@@ -40,10 +45,63 @@ function sweep() {
     Logger.log('%s Deals in Pipeline %s.', deals.length, PIPELINE_ID);
 
     // Der Personen-Sweep kostet Calls, also nur holen, wenn ihn eine Vorlage
-    // wirklich braucht.
-    const brauchtPlz = regeln.some(function (r) { return r.vorlage.indexOf('{plz}') !== -1; });
-    const plzMap = brauchtPlz ? holePersonenPlzMap() : {};
-    if (brauchtPlz) Logger.log('PLZ-Map: %s Personen.', Object.keys(plzMap).length);
+    // wirklich braucht. Seit der CT-Erinnerung haengen dort auch Name und
+    // Telefon dran — die Liste der Ausloeser ist deshalb laenger als {plz}.
+    const brauchtPerson = regeln.some(function (r) {
+      return PERSON_PLATZHALTER.some(function (p) {
+        return r.vorlage.indexOf(p) !== -1 || (r.waText && r.waText.indexOf(p) !== -1);
+      });
+    });
+    const plzMap = brauchtPerson ? holePersonenPlzMap() : {};
+    if (brauchtPerson) Logger.log('Personen-Map: %s Personen.', Object.keys(plzMap).length);
+
+    // CT-Termine stecken in den Activities, nicht am Deal. Nur abrufen, wenn
+    // ueberhaupt eine Regel darauf zeigt.
+    // Der CT-Abruf ist EINGEKAPSELT: faellt /activities aus (Timeout, 5xx nach
+    // drei Versuchen, Seitenlimit-Fehler), darf das nicht die seit 11.09.
+    // laufenden Liefertermin-Meldungen mitreissen. Ohne CT-Map liefert
+    // leseTerminfeld('CT-Termin') schlicht '' und die CT-Regeln feuern nicht —
+    // sichtbar im Laeufe-Tab, nicht still.
+    const brauchtCt = regeln.some(function (r) { return r.feld === CT_PSEUDO_FELD; });
+    let ctMap = null;
+    if (brauchtCt) {
+      try {
+        ctMap = holeCtMap();
+      } catch (ctFehler) {
+        Logger.log('⚠️ CT-Abruf fehlgeschlagen: %s — CT-Erinnerungen entfallen diesen Lauf.', ctFehler.message);
+        bilanz.hinweis = bilanz.hinweis
+          ? bilanz.hinweis + ' | CT-Abruf fehlgeschlagen: ' + ctFehler.message
+          : 'CT-Abruf fehlgeschlagen: ' + ctFehler.message;
+      }
+    }
+    setzeCtMap(ctMap);
+
+    // Der Kalender-Abgleich ist ein Zusatz zum Zusatz und wird genauso
+    // eingekapselt: faellt CalendarApp aus, laeuft alles Uebrige weiter.
+    let kalMap = null;
+    if (ctMap) {
+      try {
+        kalMap = holeCtKalenderMap();
+      } catch (kalFehler) {
+        Logger.log('⚠️ Kalender-Abgleich fehlgeschlagen: %s — CT-Erinnerungen laufen ohne Gegenprobe.',
+          kalFehler.message);
+        ctWarnung('Kalender-Abgleich fehlgeschlagen: ' + kalFehler.message);
+      }
+    }
+    setzeCtKalenderMap(kalMap);
+
+    if (ctMap) {
+      pruefeCtOhneDeal(ctMap, deals);
+      pruefeDoppelDeals(ctMap, deals);
+      if (kalMap) pruefeKalenderOhnePipedrive(ctMap, deals, plzMap);
+    }
+
+    // Der Cash Collector ist der owner der CT-ACTIVITY, nicht der des Deals —
+    // der Deal haengt nach der Fulfillment-Uebernahme auf Valentin.
+    const brauchtUser = regeln.some(function (r) {
+      return r.vorlage.indexOf('{cc') !== -1 || (r.waText && r.waText.indexOf('{cc') !== -1);
+    });
+    const userMap = brauchtUser ? holeUserMap() : null;
 
     const gesehenIds = {};
     deals.forEach(function (d) { gesehenIds[String(d.id)] = true; });
@@ -91,7 +149,8 @@ function sweep() {
         const schluessel = baueSchluessel(deal.id, regel.feld, regel.ereignis, regel.tage, befund.bezugsdatum, regel.channel);
         if (schonGesendet(gesendet, schluessel, regel.channel)) return;
 
-        const kontext = baueKontext(deal, plzMap, regel.feld, befund.altWert, befund.neuWert, regel.tage);
+        const kontext = baueKontext(deal, plzMap, regel.feld, befund.altWert, befund.neuWert,
+          regel.tage, userMap, regel.waText);
         const text = baueText(regel.vorlage, kontext);
         const logZeile = sendeMeldung(regel, text, schluessel, deal.id);
         if (logZeile) neueLogZeilen.push(logZeile);
@@ -102,6 +161,15 @@ function sweep() {
 
     bilanz.meldungen = treffer;
     Logger.log('%s Meldungen %s.', treffer, DRY_RUN ? 'WUERDEN gesendet' : 'gesendet');
+
+    // Zweifelsfaelle aus dem CT-Join in die Hinweis-Spalte des Laeufe-Tabs.
+    // Nur im Logger waeren sie nach 7 Tagen weg — und ein uebersehener
+    // Doppel-CT heisst, dass ein Kunde keine Erinnerung bekommt.
+    const warnungen = ctWarnungen();
+    if (warnungen.length) {
+      const zusatz = warnungen.length + ' CT-Zweifelsfall/-faelle: ' + warnungen[0];
+      bilanz.hinweis = bilanz.hinweis ? bilanz.hinweis + ' | ' + zusatz : zusatz;
+    }
 
     if (!DRY_RUN) {
       schreibeLogZeilen(neueLogZeilen);

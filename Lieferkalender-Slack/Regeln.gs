@@ -21,6 +21,15 @@ const ERLAUBTE_EREIGNISSE = ['gesetzt', 'verschoben', 'geloescht', 'vorher', 'am
 
 const REGEL_SPALTEN = ['Aktiv', 'Feld', 'Ereignis', 'Tage davor', 'Channel-ID', 'Vorlage'];
 
+// OPTIONALE siebte Spalte, nachgeruestet am 21.09.2026 fuer die
+// CT-Kundenerinnerung per WhatsApp. Steht absichtlich NICHT in REGEL_SPALTEN:
+// spaltenIndex() wirft bei fehlenden Spalten, und dieses Projekt laeuft live im
+// 15-Minuten-Trigger. Als Pflichtspalte haette sie Ernst zwischen clasp push
+// und dem Anlegen der Spalte stillgelegt.
+// Fehlt die Spalte, bleibt {walink} leer — nicht mehr und nicht weniger.
+// Anlegen per ergaenzeWaSpalte() in Setup.gs.
+const REGEL_SPALTE_WA = 'WA-Text';
+
 function leseRegeln() {
   const blatt = SpreadsheetApp.openById(SHEET_ID).getSheetByName(TAB_REGELN);
   if (!blatt) throw new Error('Tab "' + TAB_REGELN + '" fehlt im Sheet ' + SHEET_ID);
@@ -32,6 +41,8 @@ function leseRegeln() {
   }
 
   const spalte = spaltenIndex(werte[0], REGEL_SPALTEN);
+  // Weiche Suche: undefined heisst "Spalte gibt es nicht", nicht "Fehler".
+  const waSpalte = spalteWennDa(werte[0], REGEL_SPALTE_WA);
   const regeln = [];
 
   for (let z = 1; z < werte.length; z++) {
@@ -46,17 +57,30 @@ function leseRegeln() {
     const ereignis = String(zeile[spalte['Ereignis']] || '').trim();
     const channel = String(zeile[spalte['Channel-ID']] || '').trim();
     const vorlage = String(zeile[spalte['Vorlage']] || '').trim();
+    const waText = waSpalte === undefined ? '' : String(zeile[waSpalte] || '').trim();
     const tageRoh = zeile[spalte['Tage davor']];
 
     // Konfigurationsfehler werden laut, nicht still. Eine Regel, die wegen
     // eines Tippfehlers nie feuert, ist der schlimmere Fall — man verlaesst
     // sich auf eine Meldung, die dann nie kommt.
-    if (!TERMIN_FELDER[feld]) {
-      warnRegel(zeilenNr, 'unbekanntes Feld "' + feld + '". Erlaubt: ' + Object.keys(TERMIN_FELDER).join(', '));
+    // Pseudo-Felder kommen nicht aus einem Deal-Datumsfeld, sondern aus einer
+    // eigenen Quelle (CT-Termin -> Activities, siehe CtTermine.gs).
+    const istPseudo = !!PSEUDO_FELDER[feld];
+    if (!TERMIN_FELDER[feld] && !istPseudo) {
+      warnRegel(zeilenNr, 'unbekanntes Feld "' + feld + '". Erlaubt: ' +
+        Object.keys(TERMIN_FELDER).concat(Object.keys(PSEUDO_FELDER)).join(', '));
       continue;
     }
     if (ERLAUBTE_EREIGNISSE.indexOf(ereignis) === -1) {
       warnRegel(zeilenNr, 'unbekanntes Ereignis "' + ereignis + '". Erlaubt: ' + ERLAUBTE_EREIGNISSE.join(', '));
+      continue;
+    }
+    // Ein Pseudo-Feld hat keine Snapshot-Spalte und damit kein Gedaechtnis.
+    // "gesetzt"/"verschoben"/"geloescht" wuerden dort dauerhaft falsch feuern —
+    // deshalb hier laut abgelehnt statt still nie ausgeloest.
+    if (istPseudo && PSEUDO_EREIGNISSE_ERLAUBT.indexOf(ereignis) === -1) {
+      warnRegel(zeilenNr, 'Feld "' + feld + '" kennt kein Ereignis "' + ereignis +
+        '" (kein Snapshot vorhanden). Erlaubt: ' + PSEUDO_EREIGNISSE_ERLAUBT.join(', '));
       continue;
     }
     if (!channel) {
@@ -96,7 +120,8 @@ function leseRegeln() {
       ereignis: ereignis,
       tage: tage,
       channel: channel,
-      vorlage: vorlage
+      vorlage: vorlage,
+      waText: waText
     });
   }
 
@@ -120,6 +145,14 @@ function spaltenIndex(headerZeile, erwartet) {
     throw new Error('Im Tab fehlen die Spalten: ' + fehlend.join(', ') + '. Gefunden: ' + headerZeile.join(' | '));
   }
   return map;
+}
+
+// Wie spaltenIndex(), aber fuer EINE optionale Spalte: undefined statt Fehler.
+function spalteWennDa(headerZeile, name) {
+  for (let i = 0; i < headerZeile.length; i++) {
+    if (String(headerZeile[i]).trim() === name) return i;
+  }
+  return undefined;
 }
 
 function jaWert(wert) {
