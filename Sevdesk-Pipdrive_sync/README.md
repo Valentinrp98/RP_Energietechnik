@@ -42,7 +42,7 @@ Zwei Wege, in dieser Reihenfolge:
 1. **Angebotsnummer** — `sevdesk_angebotsnummer` (`9935f33d1f8c5575da1aa3bdf1c2329bed92398b`) über `/itemSearch/field` mit `match=exact`
 2. **Kundennummer** als Fallback — `sevdesk_kunden_id` (`8926e917db5b38f34fccc43fe74f05a9730e247e`)
 
-Bei Mehrfachtreffern wird über den Deal-Status aufgelöst. Aufträge ohne Treffer werden geparkt, täglich neu versucht und **nach 14 Tagen endgültig aufgegeben**.
+Bei Mehrfachtreffern wird über den Deal-Status aufgelöst. Aufträge ohne Treffer werden geparkt, gestaffelt neu versucht (Park-Tag + Tag 1 stündlich, Tag 2 alle 2 h, Tag 3 alle 3 h, ab Tag 4 täglich -- seit 24.09.2026) und **nach 14 Tagen endgültig aufgegeben**.
 
 > **Duplikat geklärt:** Es gab zwei Angebotsnummer-Felder. Gültig ist `9935f33d…`. Das zweite (`e442e2f3803eedfe77a2e4d7c5e180d33093e067`) ist das abzuräumende Duplikat — die Memory beschreibt es widersprüchlich, maßgeblich ist der Code.
 

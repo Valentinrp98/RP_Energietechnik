@@ -188,11 +188,36 @@ function formatiereBruttoSumme(sumGross) {
 // PIPEDRIVE: passenden Deal finden (zweistufig)
 // ============================================================================
 
-/** Exakte Feldsuche. Gibt alle Deal-IDs zurück, deren Feld exakt dem Wert entspricht. */
+/**
+ * Schneidet fuehrende/nachfolgende Leerzeichen ab und macht aus einem danach leeren Wert `null`.
+ * NEU (23.09.2026, Deal 6777): Die Kundennummer stand dort als "4147 " -- mit Leerzeichen am Ende.
+ * Die Deal-Suche laeuft ueber `itemSearch/field&match=exact`, und exakt heisst exakt: "4147" findet
+ * "4147 " nicht. Der Poller hat den Deal deshalb nie gefunden und auch nichts geloggt -- er kam gar
+ * nicht so weit. Copy-Paste aus sevdesk bringt solche Leerzeichen regelmaessig mit, deshalb wird
+ * hier zentral getrimmt statt an jeder Aufrufstelle.
+ * Deckt auch geschuetzte Leerzeichen (NBSP, \u00a0) ab, die beim Kopieren aus dem Browser entstehen.
+ * @param {*} wert Rohwert aus Pipedrive oder sevdesk
+ * @returns {string|null} getrimmter String, oder null wenn leer/nicht vorhanden
+ */
+function trimFeldwert_(wert) {
+  if (wert === null || wert === undefined) return null;
+  const s = String(wert).replace(/[\s\u00a0]+/g, ' ').trim();
+  return s === '' ? null : s;
+}
+
+/**
+ * Exakte Feldsuche. Gibt alle Deal-IDs zurück, deren Feld exakt dem Wert entspricht.
+ * Der Suchbegriff wird getrimmt (siehe trimFeldwert_). ACHTUNG: das heilt nur Whitespace auf der
+ * SUCH-Seite. Steht das Leerzeichen im Pipedrive-Feld selbst, findet `match=exact` den Deal
+ * weiterhin nicht -- dafuer gibt es bereinigeWhitespaceInSevdeskFeldern().
+ */
 function searchDealsByField(fieldKey, value) {
   if (!fieldKey || fieldKey.indexOf('PLACEHOLDER') === 0) return [];
 
-  const path = `/itemSearch/field?term=${encodeURIComponent(value)}`
+  const term = trimFeldwert_(value);
+  if (term === null) return [];
+
+  const path = `/itemSearch/field?term=${encodeURIComponent(term)}`
     + `&entity_type=deal&field=${fieldKey}&match=exact&return_item_ids=true`;
 
   const data = pipedriveFetch(path, { method: 'get' });
@@ -277,8 +302,107 @@ function getDealCustomFieldValue(dealId, fieldKey) {
   const data = pipedriveFetch(`/deals/${dealId}?custom_fields=${fieldKey}`, { method: 'get' });
   if (!data.success || !data.data) return null;
   const cf = data.data.custom_fields || {};
-  const wert = cf[fieldKey];
-  return (wert !== undefined && wert !== null) ? String(wert) : null;
+  // Getrimmt (23.09.2026): sonst geht ein "4147 " aus Pipedrive ungefiltert in die Gegenprobe
+  // (`kundeCheck !== String(order.customerId)`) und meldet faelschlich einen Kundennummer-Konflikt.
+  return trimFeldwert_(cf[fieldKey]);
+}
+
+// ============================================================================
+// WARTUNG: Whitespace in den sevdesk-Zuordnungsfeldern aufraeumen
+// ============================================================================
+
+/**
+ * Sucht alle Deals, bei denen `sevdesk Kunden-ID` oder `sevdesk Angebotsnummer` fuehrende oder
+ * nachfolgende Leerzeichen enthalten, und schreibt den getrimmten Wert zurueck.
+ *
+ * WARUM eine eigene Funktion und nicht nur trimFeldwert_() beim Suchen:
+ * Der Trim beim Suchbegriff heilt nur Whitespace auf der SUCH-Seite. Die Deal-Suche laeuft ueber
+ * `itemSearch/field&match=exact` -- steht das Leerzeichen im Pipedrive-Feld SELBST, findet die
+ * exakte Suche den Deal weiterhin nicht, egal wie sauber der Suchbegriff ist. Solche Deals sind fuer
+ * den Poller unsichtbar und tauchen deshalb auch im Sync-Log nicht auf (Deal 6777, 23.09.2026).
+ *
+ * SCHREIBT NUR bei `dryRun === false`. Ohne Argument laeuft sie als Trockenlauf und listet nur auf.
+ *
+ * @param {boolean} dryRun `false` = wirklich in Pipedrive schreiben. Alles andere = nur auflisten.
+ * @returns {{geprueft: number, betroffen: Array, geschrieben: number, fehler: number}}
+ */
+function bereinigeWhitespaceInSevdeskFeldern(dryRun) {
+  const scharf = (dryRun === false);
+  const felder = [
+    { key: FIELD_KEYS.sevdesk_kunden_id,      name: 'sevdesk Kunden-ID' },
+    { key: FIELD_KEYS.sevdesk_angebotsnummer, name: 'sevdesk Angebotsnummer' }
+  ].filter(f => f.key && f.key.indexOf('PLACEHOLDER') !== 0);
+
+  const fieldParam = felder.map(f => f.key).join(',');
+  const betroffen = [];
+  let geprueft = 0, geschrieben = 0, fehler = 0;
+  let cursor = null;
+
+  Logger.log(scharf
+    ? '🔴 SCHARF: getrimmte Werte werden nach Pipedrive geschrieben'
+    : '🧪 TROCKENLAUF: es wird nichts geschrieben (bereinigeWhitespaceInSevdeskFeldern(false) schreibt wirklich)');
+
+  // Cursor-Pagination (Pipedrive v2). Bewusst nicht ueber itemSearch: wir suchen ja gerade die
+  // Werte, die die exakte Suche NICHT findet -- der einzige verlaessliche Weg ist, alle Deals
+  // durchzugehen und die Rohwerte selbst anzuschauen.
+  do {
+    const pfad = `/deals?limit=500&custom_fields=${fieldParam}`
+      + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
+    const data = pipedriveFetch(pfad, { method: 'get' });
+    if (!data.success) {
+      Logger.log(`✗ Deal-Abruf fehlgeschlagen: ${JSON.stringify(data).substring(0, 300)}`);
+      return { geprueft, betroffen, geschrieben, fehler: fehler + 1 };
+    }
+
+    (data.data || []).forEach(deal => {
+      geprueft++;
+      const cf = deal.custom_fields || {};
+      const updates = {};
+
+      felder.forEach(f => {
+        const roh = cf[f.key];
+        if (roh === null || roh === undefined) return;
+        const sauber = trimFeldwert_(roh);
+        // Nur anfassen, wenn sich wirklich etwas aendert -- sonst produzieren wir fuer jeden
+        // sauberen Deal einen sinnlosen PATCH und einen Update-Zeitstempel.
+        if (sauber !== String(roh)) {
+          updates[f.key] = sauber;
+          betroffen.push({ dealId: deal.id, feld: f.name, vorher: String(roh), nachher: sauber });
+        }
+      });
+
+      if (Object.keys(updates).length === 0) return;
+
+      const beschreibung = Object.keys(updates)
+        .map(k => `${k}: "${String(cf[k])}" → "${updates[k]}"`).join(' | ');
+
+      if (!scharf) {
+        Logger.log(`🧪 Deal ${deal.id}: ${beschreibung}`);
+        return;
+      }
+
+      const res = pipedriveFetch(`/deals/${deal.id}`, {
+        method: 'patch',
+        contentType: 'application/json',
+        payload: JSON.stringify({ custom_fields: updates })
+      });
+      if (res.success) {
+        geschrieben++;
+        Logger.log(`✓ Deal ${deal.id} bereinigt: ${beschreibung}`);
+        logSyncResult('BEREINIGT', deal.id, null, 'Whitespace in sevdesk-Zuordnungsfeld entfernt', beschreibung);
+      } else {
+        fehler++;
+        Logger.log(`✗ Deal ${deal.id}: PATCH fehlgeschlagen -- ${JSON.stringify(res).substring(0, 200)}`);
+        logSyncResult('ERROR', deal.id, null, 'Whitespace-Bereinigung fehlgeschlagen', beschreibung);
+      }
+    });
+
+    cursor = (data.additional_data && data.additional_data.next_cursor) || null;
+  } while (cursor);
+
+  Logger.log(`— ${geprueft} Deals geprueft, ${betroffen.length} Feldwerte mit Whitespace, `
+    + `${geschrieben} geschrieben, ${fehler} Fehler`);
+  return { geprueft, betroffen, geschrieben, fehler };
 }
 
 // ============================================================================
@@ -424,6 +548,28 @@ function heuteAlsIso() {
 /** Tage zwischen einem yyyy-MM-dd-Datum und heute. */
 function tageSeit(datumIso) {
   return Math.floor((new Date(heuteAlsIso()) - new Date(datumIso)) / 86400000);
+}
+
+// FIX (24.09.2026, Deal 7462 Ehinger): 1x/Tag war zu traege -- typischer Fall ist "Kundennummer
+// wird ein paar Stunden nach dem Angenommen-Setzen in Pipedrive nachgetragen", dann wartete der
+// Auftrag bis zum naechsten Tag. Jetzt gestaffelt nach Kalendertagen seit dem Parken (Valentins Wunsch):
+// Park-Tag + Tag 1 stuendlich, Tag 2 alle 2 h, Tag 3 alle 3 h, ab Tag 4 1x taeglich.
+function parkRetryIntervallStunden_(s) {
+  const tage = tageSeit(s.geparktSeit);
+  if (tage <= 1) return 1;
+  if (tage === 2) return 2;
+  if (tage === 3) return 3;
+  return 24;
+}
+
+/** true, wenn ein (nicht dauerhaft) geparkter Auftrag laut Staffel wieder dran ist.
+ *  `lv` = letzter Versuch in Minuten seit Epoch (kurz gehalten wegen 9-KB-Property-Limit).
+ *  Alteintraege ohne `lv` gelten als sofort faellig. */
+function istParkRetryFaellig_(s) {
+  if (istDauerhaftGeparkt(s)) return false;
+  if (!s.lv) return true;
+  // 2 Min Toleranz, sonst rutscht der Retry beim 5-Min-Takt regelmaessig einen Lauf nach hinten
+  return Math.floor(Date.now() / 60000) - s.lv >= parkRetryIntervallStunden_(s) * 60 - 2;
 }
 
 /** true, wenn ein geparkter Auftrag seit PARK_DAUERHAFT_NACH_TAGEN Tagen ohne Erfolg geparkt ist --
@@ -895,7 +1041,7 @@ function debugDuplikatAngebotsnummer() {
 
 /** Für Einzeltests im Editor: Deal-ID unten eintragen (▷-Button ruft ohne Argumente auf). */
 function testEinzelDealOhneStatusFilter() {
-  const dealId = 6605; // Peter Palinceac -- Kundennummer 4017, Order 2026-570-A haengt seit 31.08. geparkt
+  const dealId = 7462; // Andreas Ehinger -- Kundennummer 4152, keine Angebotsnummer (24.09.)
   const erfolg = syncEinzelDealOhneStatusFilter(dealId);
   Logger.log(erfolg ? '✓ Sync erfolgreich' : '✗ Sync nicht durchgeführt -- siehe Log/Sync-Log-Sheet');
 }
@@ -1387,7 +1533,7 @@ function zeigeGeparkteAuftraege() {
       const match = findTargetDeal(order);
       const dauerhaft = istDauerhaftGeparkt(state[id]);
       Logger.log(`Order ${id}: Angebotsnummer="${order.orderNumber}", Kundennummer="${order.customerId}", ` +
-                 `Versuche=${state[id].versuche}, geparkt seit ${state[id].geparktSeit} (${dauerhaft ? 'DAUERHAFT' : `noch ${PARK_DAUERHAFT_NACH_TAGEN - tageSeit(state[id].geparktSeit)} Tage täglicher Retry`}), ` +
+                 `Versuche=${state[id].versuche}, geparkt seit ${state[id].geparktSeit} (${dauerhaft ? 'DAUERHAFT' : `noch ${PARK_DAUERHAFT_NACH_TAGEN - tageSeit(state[id].geparktSeit)} Tage Retry, aktuell alle ${parkRetryIntervallStunden_(state[id])} h`}), ` +
                  `match=${match.matchedBy || 'KEIN TREFFER'}` +
                  (match.konflikt ? `, KONFLIKT: ${match.konflikt}` : '') +
                  (match.ambiguous ? `, mehrdeutig (Kandidaten: ${match.candidates.join(',')})` : ''));
@@ -1479,7 +1625,7 @@ function syncPendingOrdersUnlocked() {
   const zuSyncen = alleAuftraege.filter(o => {
     const s = state[o.id];
     if (!s) return true;
-    if (s.geparkt) return !istDauerhaftGeparkt(s) && s.gespeichert < heuteAlsIso();
+    if (s.geparkt) return istParkRetryFaellig_(s);
     return s.ts !== (o.update || '');
   });
 
@@ -1526,11 +1672,12 @@ function syncPendingOrdersUnlocked() {
         // geparktSeit bei einem erneuten Fehlschlag NICHT ueberschreiben -- sonst wuerde jeder
         // taegliche Retry die 14-Tage-Uhr wieder auf null setzen und nie dauerhaft geparkt werden.
         const geparktSeit = (state[o.id] && state[o.id].geparktSeit) || heuteAlsIso();
-        state[o.id] = { ts: o.update || '', gespeichert: heuteAlsIso(), versuche, geparkt: true, geparktSeit };
+        state[o.id] = { ts: o.update || '', gespeichert: heuteAlsIso(), versuche, geparkt: true, geparktSeit,
+                        lv: Math.floor(Date.now() / 60000) };
         const dauerhaft = istDauerhaftGeparkt(state[o.id]);
         Logger.log(dauerhaft
           ? `⏹️ Order ${o.id} nach ${versuche} Fehlversuchen über ${PARK_DAUERHAFT_NACH_TAGEN} Tage DAUERHAFT geparkt -- nur noch per entparkeAuftraege() reaktivierbar.`
-          : `⏸️ Order ${o.id} nach ${versuche} Fehlversuchen geparkt -- wird 1x täglich automatisch erneut versucht (bis zu ${PARK_DAUERHAFT_NACH_TAGEN} Tage seit ${geparktSeit}).`);
+          : `⏸️ Order ${o.id} nach ${versuche} Fehlversuchen geparkt -- nächster Versuch in ${parkRetryIntervallStunden_(state[o.id])} h (gestaffelt, bis zu ${PARK_DAUERHAFT_NACH_TAGEN} Tage seit ${geparktSeit}).`);
       } else {
         // ts bewusst NICHT auf o.update setzen -- der Auftrag soll beim naechsten Lauf ueber den
         // Filter oben weiterhin als "zu syncen" gelten, bis er entweder klappt oder geparkt wird.
