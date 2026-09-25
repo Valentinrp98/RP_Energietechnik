@@ -1,8 +1,8 @@
 // ============================================================
 // KONFIGURATION — Closer-Score
 // ============================================================
-// Zweck: Wer einen Deal ins Fulfillment uebergibt, bekommt 48 h spaeter eine
-// Slack-DM mit Ampel, Punktzahl und der Liste dessen, was gefehlt hat.
+// Zweck: Wer einen Deal abschliesst, bekommt am Morgen danach (09:00) eine
+// Slack-DM (bis 25.09.2026: 48 h nach Erst-Sichtung, siehe CLOSE_STICHTAG) mit Ampel, Punktzahl und der Liste dessen, was gefehlt hat.
 // Rein informativ. Es haengt nichts daran — der Effekt ist Erziehung.
 //
 // Bewertet wird der Presale/Closer. ⚠️ Hier stand bis 17.09.2026 "der
@@ -55,10 +55,27 @@ const FREIGABE_FRIST_MS = 7 * 24 * 60 * 60 * 1000;
 // unter jedem Kontingent.
 const FREIGABE_PRUEFUNG_MINUTEN = 15;
 
-// Reifezeit: so lange nach der Erst-Sichtung wird gewartet, bevor gescored
-// wird. Fotos und Notizen kommen oft am Tag danach nach — sofort messen
-// erzeugt ungerechte Rotmeldungen.
-const REIFEZEIT_MS = 48 * 60 * 60 * 1000;
+// ⚠️ Bis 25.09.2026 stand hier REIFEZEIT_MS (48 h ab Erst-Sichtung). Abgeloest:
+// die Erst-Sichtung ist ein Script-Zeitpunkt, kein Geschaeftsereignis — ein
+// neu aufgebauter Zustand hat am 23.09. alle 97 Bestands-Deals gleichzeitig in
+// die Reifezeit geschickt (Welle von ~97 Vorlagen am 26.09.).
+//
+// Jetzt: CLOSES VOM VORTAG. Massgeblich ist das Datum der "Auftrag …"-Meldung
+// in #sales (der Close selbst, gepostet vom Closer). Der 09:00-Lauf legt alle
+// Deals vor, deren Meldung VOR heute liegt und noch nicht vorgelegt wurde.
+// Normalfall: genau die von gestern. Fotos/Notizen vom Abschlusstag sind da
+// schon drin, nachgereicht wird bis zum naechsten Morgen.
+//
+// Nachholfenster: faellt ein Lauf aus (Trigger deaktiviert, wie am 23./24.09.)
+// oder ist Verkaufte_Artikel_Summary am Morgen danach noch leer, kommt der Deal
+// am naechsten Tag nach — aber nur, wenn die Meldung hoechstens so viele Tage
+// alt ist. Aeltere erzieht niemanden mehr.
+const CLOSE_NACHHOL_TAGE = 7;
+
+// #sales-Meldungen VOR diesem Tag werden nie vorgelegt. Das ersetzt das
+// Bestands-Seeding: Umstellung am 25.09.2026, erste Vorlagen am 26.09. fuer
+// die Closes vom 25.09.
+const CLOSE_STICHTAG = '2026-09-25';
 
 // Weicher Ausstieg vor dem 6-Min-Limit, gleiches Muster wie Lieferkalender-Slack.
 const MAX_LAUFZEIT_MS = 4.5 * 60 * 1000;

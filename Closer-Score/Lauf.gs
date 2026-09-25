@@ -1,18 +1,33 @@
 // ============================================================
-// HAUPTLAUF — taeglicher Trigger
+// HAUPTLAUF — taeglicher Trigger (09:00)
 // ============================================================
-// Ablauf:
+// Ablauf (seit 25.09.2026 "Closes vom Vortag", vorher 48-h-Reifezeit):
 //   1. Alle Deals der Fulfillment-Pipeline holen (nur GET).
 //   2. Torwaechter: pipeline_id === 2 (implizit durch den Abruf) UND
 //      Verkaufte_Artikel_Summary befuellt.
-//   3. Neue Qualifizierte in den Zustand eintragen — OHNE DM (Reifezeit laeuft).
-//   4. Wer die Reifezeit hinter sich hat und noch keine DM bekam: scoren, DM, s setzen.
-//   5. Deals, die nicht mehr in Pipeline 2 liegen, aus dem Zustand entfernen.
+//   3. Close-Tag = Datum der "Auftrag …"-Meldung in #sales (SalesKanal.gs).
+//   4. Vorgelegt wird, wessen Close-Tag VOR heute liegt, nicht aelter als
+//      CLOSE_NACHHOL_TAGE und nicht vor CLOSE_STICHTAG — und der noch keine
+//      Vorlage/DM bekam. Normalfall: die Closes von gestern.
+//   5. Deals, die nicht mehr in Pipeline 2 liegen, fallen aus dem Zustand.
 
 function laufCloserScore() {
   const start = Date.now();
   Logger.log('=== Closer-Score — Modus "%s" %s ===', BETRIEBSMODUS,
              DRY_RUN ? '(DRY_RUN — es wird NICHTS verschickt)' : '(scharf)');
+
+  // Ohne #sales gibt es keinen Close-Tag — dann wuerde JEDER Deal still
+  // uebersprungen. Das muss laut werden, nicht leise.
+  try {
+    salesIndex();
+  } catch (e) {
+    Logger.log('❌ #sales nicht lesbar: %s — Lauf abgebrochen, Zustand unveraendert.', e.message);
+    if (!DRY_RUN) {
+      sendeDm(VALENTIN_USER_ID, '⚠️ *Closer-Score:* #sales ist nicht lesbar, heute keine Vorlagen.\n_' +
+              e.message + '_\npruefeSalesKanal() in SalesKanal.gs sagt, was fehlt.');
+    }
+    return;
+  }
 
   const deals = holeFulfillmentDeals();
   Logger.log('%s Deals in Pipeline %s.', String(deals.length), String(PIPELINE_ID));
@@ -22,87 +37,74 @@ function laufCloserScore() {
   });
   Logger.log('%s davon mit befülltem Verkaufte_Artikel_Summary (= sevdesk-Kunde stimmt).', String(qualifizierte.length));
 
-  const zustand = ladeZustand();
-  // Erstlauf = leerer Zustand. Dann ist ALLES, was gerade in der Pipeline liegt,
-  // Bestand: Deals, bei denen 48 h spaeter niemand mehr etwas nachtraegt. Die
-  // werden stumm als erledigt eingetragen statt beobachtet — sonst faellt zwei
-  // Tage nach dem Scharfschalten eine Welle von ~86 DMs auf einmal an.
-  // Gleiches Ergebnis wie seedeBestandOhneDM(), nur ohne dass man daran denken muss.
-  const erstlauf = Object.keys(zustand).length === 0;
-  if (erstlauf) Logger.log('Erstlauf (Zustand leer): der gesamte Bestand wird stumm als erledigt eingetragen, es geht dafür KEINE DM raus.');
-  const neuerZustand = {};
   const jetzt = Date.now();
-  let neuBeobachtet = 0, gesendet = 0, wartet = 0, schonErledigt = 0, gebestandet = 0, vorgelegt = 0, wartetAufFreigabe = 0;
+  const heute = tagesSchluessel(new Date(jetzt));
+  const fensterStart = tagesSchluessel(new Date(jetzt - CLOSE_NACHHOL_TAGE * 86400000));
+  const fruehestens = fensterStart > CLOSE_STICHTAG ? fensterStart : CLOSE_STICHTAG;
+  Logger.log('Vorgelegt werden Closes vom %s bis gestern (heute = %s).', fruehestens, heute);
+
+  const zustand = ladeZustand();
+  const neuerZustand = {};
+  let vorgelegt = 0, gesendet = 0, schonErledigt = 0, wartetAufFreigabe = 0;
+  let heuteGeclosed = 0, zuAlt = 0, ohneMeldung = 0;
 
   qualifizierte.forEach(function (deal) {
     if (Date.now() - start > MAX_LAUFZEIT_MS) return; // weicher Ausstieg, Rest kommt morgen
     const id = String(deal.id);
     const alt = zustand[id];
 
-    // Neu gesichtet: Reifezeit starten, noch keine DM.
-    if (!alt) {
-      if (erstlauf) {
-        neuerZustand[id] = { f: jetzt, s: jetzt };
-        gebestandet++;
-        return;
-      }
-      neuerZustand[id] = { f: jetzt };
-      neuBeobachtet++;
-      Logger.log('  neu beobachtet: Deal %s "%s" — DM frühestens in %s h', String(deal.id), deal.title, String(REIFEZEIT_MS / 3600000));
-      return;
-    }
-
     // Vorlage liegt zur Freigabe: unveraendert mitnehmen. Ueber sie entscheidet
     // pruefeFreigaben(), nicht dieser Lauf.
-    if (alt.v && !alt.s) {
+    if (alt && alt.v && !alt.s) {
       neuerZustand[id] = alt;
       wartetAufFreigabe++;
       return;
     }
-
-    // Schon gemeldet: nur den Eintrag mitnehmen, damit er nicht rausfaellt und
-    // der Deal spaeter ein zweites Mal gemeldet wird.
-    if (alt.s) {
+    // Schon gemeldet/verworfen: mitnehmen, sonst kaeme er ein zweites Mal.
+    if (alt && alt.s) {
       neuerZustand[id] = alt;
       schonErledigt++;
       return;
     }
+    // Eintraege nur mit f (alte Reifezeit-Logik) werden nicht mitgenommen —
+    // sie tragen keine Information mehr.
 
-    // Reifezeit laeuft noch.
-    if (jetzt - alt.f < REIFEZEIT_MS) {
-      neuerZustand[id] = alt;
-      wartet++;
+    const tag = closeTag(deal);
+    if (!tag) { ohneMeldung++; return; }
+    if (tag >= heute) {
+      heuteGeclosed++;
+      Logger.log('  Deal %s "%s": Close heute — Vorlage morgen früh.', id, deal.title);
       return;
     }
+    if (tag < fruehestens) { zuAlt++; return; }
 
-    // Jetzt wird gescored.
     const ergebnis = bewerteDeal(deal);
 
     // Modus 'freigabe': die Nachricht geht als Vorlage an Valentin. Erst seine
     // Reaktion stellt sie zu - das erledigt pruefeFreigaben() in Freigabe.gs.
     if (BETRIEBSMODUS === 'freigabe') {
-      Logger.log('  %s Deal %s "%s": %s/%s Punkte → Vorlage zur Freigabe',
-                 ergebnis.ampel, String(deal.id), ergebnis.titel, String(ergebnis.punkte), String(ergebnis.maximum));
-      if (DRY_RUN) { neuerZustand[id] = alt; return; }
+      Logger.log('  %s Deal %s "%s" (Close %s): %s/%s Punkte → Vorlage zur Freigabe',
+                 ergebnis.ampel, id, ergebnis.titel, tag, String(ergebnis.punkte), String(ergebnis.maximum));
+      if (DRY_RUN) return;
       const marke = legeZurFreigabeVor(ergebnis);
-      // Ohne ts waere die Reaktion nicht auffindbar - dann lieber den Eintrag
-      // offen lassen und es morgen noch einmal versuchen.
-      neuerZustand[id] = marke ? { f: alt.f, v: marke.v, c: marke.c } : alt;
-      if (marke) vorgelegt++;
+      // Ohne ts waere die Reaktion nicht auffindbar - dann nichts eintragen und
+      // es morgen noch einmal versuchen (liegt ja im Nachholfenster).
+      // f = Zeitpunkt der Vorlage: ab da laeuft FREIGABE_FRIST_MS.
+      if (marke) {
+        neuerZustand[id] = { f: jetzt, v: marke.v, c: marke.c, p: marke.p };
+        vorgelegt++;
+      }
       return;
     }
 
     const empfaenger = bestimmeEmpfaenger(ergebnis);
     const text = baueNachricht(ergebnis) + empfaenger.zusatz;
 
-    Logger.log('  %s Deal %s "%s": %s/%s Punkte → DM an %s',
-               ergebnis.ampel, String(deal.id), ergebnis.titel, String(ergebnis.punkte), String(ergebnis.maximum), empfaenger.slackId);
+    Logger.log('  %s Deal %s "%s" (Close %s): %s/%s Punkte → DM an %s',
+               ergebnis.ampel, id, ergebnis.titel, tag, String(ergebnis.punkte), String(ergebnis.maximum), empfaenger.slackId);
     Logger.log('  ---- Nachricht ----\n%s\n  -------------------', text);
 
-    if (DRY_RUN) {
-      neuerZustand[id] = alt; // Zustand NICHT fortschreiben: beim scharfen Lauf soll es wirklich rausgehen
-      return;
-    }
+    if (DRY_RUN) return; // Zustand NICHT fortschreiben: beim scharfen Lauf soll es wirklich rausgehen
     sendeDm(empfaenger.slackId, text);
     // Kopie an Valentin, wenn die Nachricht wirklich bei einem Closer gelandet
     // ist - nicht, wenn sie mangels Mapping ohnehin schon bei ihm liegt.
@@ -111,25 +113,64 @@ function laufCloserScore() {
               ((ergebnis.empfaenger || {}).name || empfaenger.slackId) + '*' +
               '\n\n' + text);
     }
-    neuerZustand[id] = { f: alt.f, s: jetzt };
+    neuerZustand[id] = { f: jetzt, s: jetzt };
     gesendet++;
   });
 
-  const entfallen = Object.keys(zustand).length - Object.keys(neuerZustand).length + neuBeobachtet;
   if (DRY_RUN) {
     Logger.log('DRY_RUN: Zustand bleibt unverändert.');
   } else {
     speichereZustand(neuerZustand);
   }
 
-  if (gebestandet > 0) {
-    Logger.log('%s Bestands-Deals stumm als erledigt eingetragen. Ab jetzt bekommt nur eine DM, wer neu im Fulfillment ankommt.', String(gebestandet));
-  }
   if (BETRIEBSMODUS === 'freigabe') {
     Logger.log('Freigabe-Modus: %s neue Vorlagen an dich, %s warten noch auf deine Reaktion.', String(vorgelegt), String(wartetAufFreigabe));
   }
-  Logger.log('Fertig: %s neu beobachtet, %s in Reifezeit, %s DMs verschickt, %s bereits gemeldet, %s aus dem Zustand entfallen (nicht mehr in Pipeline %s). Laufzeit %s s.',
-             String(neuBeobachtet), String(wartet), String(gesendet), String(schonErledigt), String(Math.max(0, entfallen)), String(PIPELINE_ID), String(Math.round((Date.now() - start) / 1000)));
+  Logger.log('Fertig: %s DMs verschickt, %s bereits gemeldet, %s Close heute (morgen dran), %s Close vor %s (ignoriert), %s ohne #sales-Meldung. Laufzeit %s s.',
+             String(gesendet), String(schonErledigt), String(heuteGeclosed), String(zuAlt), fruehestens,
+             String(ohneMeldung), String(Math.round((Date.now() - start) / 1000)));
+}
+
+// Close-Tag (yyyy-MM-dd, Europe/Vienna) = Datum der #sales-Meldung zum Deal.
+// null = keine Meldung gefunden → der Deal wird nie vorgelegt.
+// Passen mehrere Meldungen von VERSCHIEDENEN Leuten, liefert closerAusSales()
+// einen Fehler mit Kandidaten. Das Datum ist dann trotzdem bestimmbar (die
+// neueste Meldung) — vorgelegt wird mit "kein Empfänger"-Hinweis, damit du
+// in 30 Sekunden entscheidest, statt dass der Deal still verschwindet.
+function closeTag(deal) {
+  const r = closerAusSales(deal);
+  if (r.zeit) return tagesSchluessel(r.zeit);
+  if (r.kandidaten && r.kandidaten.length) {
+    const neueste = r.kandidaten.reduce(function (a, b) { return a.zeit > b.zeit ? a : b; });
+    return tagesSchluessel(neueste.zeit);
+  }
+  return null;
+}
+
+// Nur lesen: welche Deals legt der naechste 09:00-Lauf vor? Kein Versand,
+// kein Zustand. Zaehlt ausserdem die qualifizierten Deals ohne #sales-Meldung.
+function vorschauVortag() {
+  const zustand = ladeZustand();
+  const morgenMs = Date.now() + 86400000;
+  const morgen = tagesSchluessel(new Date(morgenMs));
+  const fensterStart = tagesSchluessel(new Date(morgenMs - CLOSE_NACHHOL_TAGE * 86400000));
+  const fruehestens = fensterStart > CLOSE_STICHTAG ? fensterStart : CLOSE_STICHTAG;
+  Logger.log('Lauf morgen (%s) legt Closes vom %s bis heute vor:', morgen, fruehestens);
+
+  let n = 0, ohne = 0;
+  holeFulfillmentDeals().forEach(function (d) {
+    if (!istBefuellt((d.custom_fields || {})[FELD_SEVDESK_SUMMARY], 'text')) return;
+    const alt = zustand[String(d.id)];
+    if (alt && (alt.v || alt.s)) return;
+    const tag = closeTag(d);
+    if (!tag) { ohne++; return; }
+    if (tag < fruehestens || tag >= morgen) return;
+    const e = bewerteDeal(d);
+    n++;
+    Logger.log('  %s Deal %s "%s" · Close %s · %s/%s · an %s', e.ampel, String(d.id), d.title, tag,
+               String(e.punkte), String(e.maximum), (e.empfaenger || {}).name || '⚠️ kein Empfänger');
+  });
+  Logger.log('→ %s Vorlagen. %s qualifizierte Deals ohne #sales-Meldung (werden nie vorgelegt).', String(n), String(ohne));
 }
 
 // ============================================================

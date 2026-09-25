@@ -48,7 +48,7 @@ Drei Bedingungen, alle drei müssen erfüllt sein:
 |---|---|---|---|
 | 1 | Deal ist im Fulfillment | `pipeline_id === 2` | Die Automatisierung verschiebt den Deal **nur dann**, wenn er korrekt eingetragen ist. Das Ankommen in Pipeline 2 ist damit selbst schon der Beweis. |
 | 2 | sevdesk-Kunde stimmt | `Verkaufte_Artikel_Summary` (`a38455087829e67f22cb5217a44c3cf31f39bcbc`) ist befüllt | Dieses Feld schreibt **ausschließlich** der sevdesk→Pipedrive-Sync, und nur, wenn er über Angebots- oder Kundennummer einen Auftrag gefunden hat. Befüllt heißt: Angebot auf sevdesk angenommen **und** Kunden-ID im Deal passt. |
-| 3 | Reifezeit vorbei | ≥ 48 h seit Erst-Sichtung durch dieses Script | Fotos und Notizen werden oft am Tag danach nachgereicht. Sofort messen erzeugt ungerechte Rotmeldungen. |
+| 3 | ~~Reifezeit vorbei~~ **Close vom Vortag** (seit 25.09.2026) | Datum der `Auftrag …`-Meldung in #sales < heute, ≥ `CLOSE_STICHTAG`, ≤ `CLOSE_NACHHOL_TAGE` alt | ⚠️ Die 48-h-Reifezeit ab Erst-Sichtung ist abgelöst: ein neu aufgebauter Zustand hat am 23.09. alle 97 Bestands-Deals gleichzeitig in die Reifezeit geschickt. Details `Config.gs` bei `CLOSE_NACHHOL_TAGE`. Der Abschnitt „Reifezeit und Zustand" unten ist damit überholt. |
 
 > **Warum nicht `status: "won"`?** Weil der bei RP schon **bei der Anlage** gesetzt wird
 > (Origin Marketplace/Zapier, Befund D20 in `REFERENZ-Pipedrive-AppsScript.md`). `won` und
