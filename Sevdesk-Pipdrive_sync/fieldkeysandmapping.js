@@ -315,6 +315,34 @@ function montageSummaryTeil_(label, c) {
   return label + ' ' + (c.betrag !== null ? c.betrag + '€' : '?');
 }
 
+// Hybrid-WR erkennbar am Namen. Energy Controller = Sigenergy-Hybrid-WR (SigenStor), GEN24 =
+// Fronius-Hybrid. Huawei SUN2000 bewusst NICHT drin -- nicht jede Variante ist hybrid, lieber
+// kein Kennzeichen als ein falsches.
+const WR_HYBRID = /Hybrid|HYD|Energy Controller|GEN24/i;
+
+/**
+ * Kurzname eines Wechselrichters für die Verkaufte_Artikel_Summary (25.09.2026).
+ * Vorher stand dort nur "1x Sigenergy WR 20 kW" -- für die Projektdoku braucht der Montagepartner
+ * Modell (Energy Controller vs. Hybrid-WR) und ob hybrid. Beispiele:
+ *   "SIGENERGY Energy Controller 20kW"                       -> "Energy Controller 20kW (Hybrid)"
+ *   "SIGENERGY Hybrid Wechselrichter 12.0 kW TP2 dreiphasig" -> "Hybrid WR 12.0 kW TP2 3ph"
+ *   "FRONIUS Symo GEN24 10.0 Plus"                           -> "WR Symo GEN24 10.0 Plus (Hybrid)"
+ *   "GROWATT MOD 10KTL"                                      -> "WR MOD 10KTL"
+ * Markenwort vorne fliegt raus (steht normalisiert schon davor), lange Wörter werden gekürzt
+ * wegen 255-Zeichen-Limit. Trailing-Underscore = im Editor nicht als ausführbar gelistet.
+ */
+function wrKurzname_(rawName) {
+  let rest = (rawName || '').trim();
+  const erstesWort = rest.split(/\s+/)[0] || '';
+  if (ARTICLE_PATTERNS.wechselrichter.marken.some(m => m.pattern.test(erstesWort))) {
+    rest = rest.slice(erstesWort.length).trim();
+  }
+  rest = rest.replace(/Wechselrichter/ig, 'WR').replace(/dreiphasig/ig, '3ph').replace(/einphasig/ig, '1ph');
+  if (!/\bWR\b|WR-|Controller/i.test(rest)) rest = 'WR ' + rest;
+  if (WR_HYBRID.test(rawName) && !/Hybrid/i.test(rest)) rest += ' (Hybrid)';
+  return rest.trim();
+}
+
 /**
  * Aggregiert alle Positionen eines Auftrags zu einem Custom-Field-Objekt.
  * @param {Array<{name: string, quantity: number}>} positions
@@ -365,7 +393,8 @@ function aggregatePositions(positions) {
       case 'wechselrichter':
         result.WR_Leistung_kW = c.value;
         if (c.marke) result.System_Marke = c.marke; // WR bestimmt primär die System-Marke
-        summaryParts.push(`${c.quantity}x ${c.marke || '?'} WR ${c.value || ''}`.trim());
+        // Modell + Hybrid-Kennzeichen statt nur "WR 20 kW" (25.09.2026) -- siehe wrKurzname_().
+        summaryParts.push(`${c.quantity}x ${c.marke || '?'} ${wrKurzname_(c.rawName)}`.trim());
         break;
 
       case 'speicher': {

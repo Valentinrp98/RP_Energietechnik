@@ -406,6 +406,148 @@ function bereinigeWhitespaceInSevdeskFeldern(dryRun) {
 }
 
 // ============================================================================
+// WARTUNG: Verkaufte_Artikel_Summary auf allen Deals neu rechnen (25.09.2026)
+// ============================================================================
+//
+// Anlass: WR-Zeile zeigt seit 25.09. Modell + "(Hybrid)" (siehe wrKurzname_ in
+// FieldKeysAndMapping). Der normale Sync fasst einen Auftrag aber nur an, wenn er sich in sevdesk
+// ÄNDERT -- alte Deals behalten sonst für immer die alte Summary.
+//
+// Schreibt NUR das Summary-Feld, keine anderen Artikel-Felder. Bewusst: ein kompletter Re-Sync
+// würde auch Pauschalen/Enums überschreiben, die seither evtl. von Hand korrigiert wurden.
+// Und nur, wenn sich der Text wirklich ändert (kein sinnloser PATCH/Update-Zeitstempel).
+//
+// Wirkung auf andere Scripts (geprüft 25.09.): Closer-Score prüft nur "befüllt ja/nein" -> keine
+// Wirkung. Projektdoku-Generator + Sheet-Sync lesen das Feld nur beim Anlegen bzw. füllen nur
+// LEERE Zellen -> bestehende Docs/Sheet-Zeilen behalten den alten Text.
+//
+// Fortsetzbar: bricht nach MAX_RUNTIME_MS ab und merkt sich die erledigten Deals je Modus in einer
+// Script-Property. Einfach nochmal starten, bis "FERTIG" im Log steht.
+
+const SUMMARY_NACHZIEHEN_KEY = 'SUMMARY_NACHZIEHEN_';
+
+/** ▷ im Editor: nur auflisten, was sich ändern würde. Schreibt nichts nach Pipedrive. */
+function summaryNachziehenTrocken() { summaryNachziehen_(true); }
+
+/** ▷ im Editor: schreibt die neuen Summaries WIRKLICH nach Pipedrive. Erst nach dem Trockenlauf. */
+function summaryNachziehenScharf() { summaryNachziehen_(false); }
+
+/** Setzt den Fortschritt beider Modi zurück (danach beginnt ein Lauf wieder bei Deal 1). */
+function summaryNachziehenReset() {
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty(SUMMARY_NACHZIEHEN_KEY + 'TROCKEN');
+  props.deleteProperty(SUMMARY_NACHZIEHEN_KEY + 'SCHARF');
+  Logger.log('✓ Fortschritt zurückgesetzt.');
+}
+
+function summaryNachziehen_(trocken) {
+  const start = Date.now();
+  const props = PropertiesService.getScriptProperties();
+  const stateKey = SUMMARY_NACHZIEHEN_KEY + (trocken ? 'TROCKEN' : 'SCHARF');
+  const erledigt = JSON.parse(props.getProperty(stateKey) || '[]');
+  const erledigtSet = {};
+  erledigt.forEach(id => { erledigtSet[id] = true; });
+
+  Logger.log(trocken
+    ? '🧪 TROCKENLAUF: nichts wird geschrieben (summaryNachziehenScharf() schreibt wirklich)'
+    : '🔴 SCHARF: neue Summaries werden nach Pipedrive geschrieben');
+  if (erledigt.length) Logger.log(`Fortsetzung: ${erledigt.length} Deals schon erledigt, werden übersprungen.`);
+
+  const fieldParam = [FIELD_KEYS.Verkaufte_Artikel_Summary, FIELD_KEYS.sevdesk_angebotsnummer, FIELD_KEYS.sevdesk_kunden_id].join(',');
+  let geaendert = 0, gleich = 0, nichtZuordenbar = 0, fehler = 0;
+  let cursor = null, abgebrochen = false;
+
+  const merke = id => { erledigt.push(id); erledigtSet[id] = true; };
+
+  outer:
+  do {
+    const pfad = `/deals?limit=500&custom_fields=${fieldParam}` + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
+    const data = pipedriveFetch(pfad, { method: 'get' });
+    if (!data.success) {
+      Logger.log(`✗ Deal-Abruf fehlgeschlagen: ${JSON.stringify(data).substring(0, 300)}`);
+      fehler++;
+      break;
+    }
+
+    for (const deal of (data.data || [])) {
+      const cf = deal.custom_fields || {};
+      const alt = cf[FIELD_KEYS.Verkaufte_Artikel_Summary];
+      if (!alt || erledigtSet[deal.id]) continue; // nur Deals, die schon eine Summary HABEN
+
+      if (Date.now() - start > MAX_RUNTIME_MS) { abgebrochen = true; break outer; }
+
+      try {
+        const ziel = findeOrderIdFuerDeal_(trimFeldwert_(cf[FIELD_KEYS.sevdesk_angebotsnummer]), trimFeldwert_(cf[FIELD_KEYS.sevdesk_kunden_id]));
+        if (!ziel.orderId) {
+          nichtZuordenbar++;
+          Logger.log(`⚠️ Deal ${deal.id}: übersprungen -- ${ziel.grund}`);
+          merke(deal.id);
+          continue;
+        }
+
+        const order = fetchOrderFromSevdesk(ziel.orderId);
+        const s = aggregatePositions(order.positions).summary;
+        const neu = s.length > 255 ? s.substring(0, 252) + '...' : s; // gleiche Kappung wie writeArticleFieldsToDeal
+
+        if (!neu || neu === String(alt)) {
+          gleich++;
+          merke(deal.id);
+          continue;
+        }
+
+        if (!trocken) {
+          const res = pipedriveFetch(`/deals/${deal.id}`, {
+            method: 'patch',
+            contentType: 'application/json',
+            payload: JSON.stringify({ custom_fields: { [FIELD_KEYS.Verkaufte_Artikel_Summary]: neu } })
+          });
+          if (!res.success) throw new Error(`PATCH fehlgeschlagen: ${JSON.stringify(res).substring(0, 200)}`);
+        }
+        geaendert++;
+        Logger.log(`${trocken ? '🧪' : '✓'} Deal ${deal.id} (${order.orderNumber})\n   ALT: ${alt}\n   NEU: ${neu}`);
+        logSyncResult(trocken ? 'SUMMARY_DRY' : 'SUMMARY_NEU', deal.id, order.orderNumber, '-', `ALT: ${alt} || NEU: ${neu}`);
+        merke(deal.id);
+      } catch (e) {
+        // Bewusst NICHT merken -- beim nächsten Lauf nochmal versuchen.
+        fehler++;
+        Logger.log(`✗ Deal ${deal.id}: ${e.message}`);
+      }
+    }
+
+    cursor = (data.additional_data && data.additional_data.next_cursor) || null;
+  } while (cursor);
+
+  props.setProperty(stateKey, JSON.stringify(erledigt));
+  Logger.log(`— ${abgebrochen ? '⏸ ZEITLIMIT, bitte nochmal starten' : 'FERTIG'}: ${geaendert} ${trocken ? 'würden sich ändern' : 'geändert'}, `
+    + `${gleich} unverändert, ${nichtZuordenbar} nicht zuordenbar, ${fehler} Fehler (insgesamt ${erledigt.length} erledigt)`);
+}
+
+/**
+ * sevdesk-Order-ID zu einem Deal, gleiche Regeln wie syncEinzelDealUeberAngebotsnummer_/
+ * ...Kundennummer_: bei mehreren Treffern gewinnt GENAU ein "Angenommen", sonst nichts.
+ * Über die Kundennummer nur Aufträge mit Status "Angenommen" (Kundennummer ≠ bestimmter Auftrag).
+ * @returns {{orderId: (number|null), grund: (string|undefined)}}
+ */
+function findeOrderIdFuerDeal_(angebotsnummer, kundennummer) {
+  if (angebotsnummer) {
+    const treffer = sevdeskFetch(`/Order?orderNumber=${encodeURIComponent(angebotsnummer)}`).objects || [];
+    if (treffer.length === 1) return { orderId: treffer[0].id };
+    const angenommen = treffer.filter(o => Number(o.status) === SEVDESK_STATUS_ANGENOMMEN);
+    if (angenommen.length === 1) return { orderId: angenommen[0].id };
+    return { orderId: null, grund: `${treffer.length} sevdesk-Aufträge zu Angebotsnummer "${angebotsnummer}"` };
+  }
+  if (kundennummer) {
+    const kontakte = sevdeskFetch(`/Contact?customerNumber=${encodeURIComponent(kundennummer)}`).objects || [];
+    if (kontakte.length !== 1) return { orderId: null, grund: `${kontakte.length} sevdesk-Kontakte zu Kundennummer "${kundennummer}"` };
+    const treffer = sevdeskFetch(`/Order?contact[id]=${kontakte[0].id}&contact[objectName]=Contact`).objects || [];
+    const angenommen = treffer.filter(o => Number(o.status) === SEVDESK_STATUS_ANGENOMMEN);
+    if (angenommen.length === 1) return { orderId: angenommen[0].id };
+    return { orderId: null, grund: `${angenommen.length} angenommene Aufträge zu Kundennummer "${kundennummer}"` };
+  }
+  return { orderId: null, grund: 'weder Angebotsnummer noch Kundennummer am Deal' };
+}
+
+// ============================================================================
 // PIPEDRIVE: Deal mit Artikel-Daten füllen
 // ============================================================================
 
