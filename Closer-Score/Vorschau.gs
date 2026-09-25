@@ -15,7 +15,7 @@
 // Der Torwaechter wird hier bewusst nur GEMELDET und nicht angewandt. Sonst
 // koennte man ausgerechnet die Deals nicht anschauen, bei denen etwas klemmt.
 
-const VORSCHAU_DEAL_ID = 6777;   // Gerhard Glauninger
+const VORSCHAU_DEAL_ID = 3878;   // Sieglinde Moser (Close 25.09.)
 
 function legeDealVor() {
   if (BETRIEBSMODUS !== 'freigabe') {

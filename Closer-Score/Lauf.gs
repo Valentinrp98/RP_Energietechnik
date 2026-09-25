@@ -16,6 +16,11 @@ function laufCloserScore() {
   Logger.log('=== Closer-Score — Modus "%s" %s ===', BETRIEBSMODUS,
              DRY_RUN ? '(DRY_RUN — es wird NICHTS verschickt)' : '(scharf)');
 
+  if (!VORLAGEN_AM_WOCHENENDE && istWochenende(new Date())) {
+    Logger.log('Wochenende — keine Vorlagen. Montag kommen Fr/Sa/So gesammelt.');
+    return;
+  }
+
   // Ohne #sales gibt es keinen Close-Tag — dann wuerde JEDER Deal still
   // uebersprungen. Das muss laut werden, nicht leise.
   try {
@@ -149,6 +154,11 @@ function closeTag(deal) {
 
 // Nur lesen: welche Deals legt der naechste 09:00-Lauf vor? Kein Versand,
 // kein Zustand. Zaehlt ausserdem die qualifizierten Deals ohne #sales-Meldung.
+// Sa/So in Europe/Vienna ('u' = 1 Mo … 7 So).
+function istWochenende(datum) {
+  return Number(Utilities.formatDate(datum, 'Europe/Vienna', 'u')) >= 6;
+}
+
 function vorschauVortag() {
   const zustand = ladeZustand();
   const morgenMs = Date.now() + 86400000;
@@ -156,6 +166,9 @@ function vorschauVortag() {
   const fensterStart = tagesSchluessel(new Date(morgenMs - CLOSE_NACHHOL_TAGE * 86400000));
   const fruehestens = fensterStart > CLOSE_STICHTAG ? fensterStart : CLOSE_STICHTAG;
   Logger.log('Lauf morgen (%s) legt Closes vom %s bis heute vor:', morgen, fruehestens);
+  if (!VORLAGEN_AM_WOCHENENDE && istWochenende(new Date(morgenMs))) {
+    Logger.log('⚠️ Morgen ist Wochenende — der Lauf pausiert, diese Liste kommt erst Montag (plus was bis dahin dazukommt).');
+  }
 
   let n = 0, ohne = 0;
   holeFulfillmentDeals().forEach(function (d) {

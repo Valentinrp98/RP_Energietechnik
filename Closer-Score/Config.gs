@@ -2,7 +2,7 @@
 // KONFIGURATION — Closer-Score
 // ============================================================
 // Zweck: Wer einen Deal abschliesst, bekommt am Morgen danach (09:00) eine
-// Slack-DM (bis 25.09.2026: 48 h nach Erst-Sichtung, siehe CLOSE_STICHTAG) mit Ampel, Punktzahl und der Liste dessen, was gefehlt hat.
+// Slack-DM (Sa/So pausiert → Montag gesammelt; bis 25.09.2026: 48 h nach Erst-Sichtung, siehe CLOSE_STICHTAG) mit Ampel, Punktzahl und der Liste dessen, was gefehlt hat.
 // Rein informativ. Es haengt nichts daran — der Effekt ist Erziehung.
 //
 // Bewertet wird der Presale/Closer. ⚠️ Hier stand bis 17.09.2026 "der
@@ -76,6 +76,11 @@ const CLOSE_NACHHOL_TAGE = 7;
 // Bestands-Seeding: Umstellung am 25.09.2026, erste Vorlagen am 26.09. fuer
 // die Closes vom 25.09.
 const CLOSE_STICHTAG = '2026-09-25';
+
+// Sa/So keine Vorlagen: der 09:00-Lauf steigt aus, ohne den Zustand anzufassen.
+// Am Montag kommen dann Fr/Sa/So gesammelt (liegt im Nachholfenster).
+const VORLAGEN_AM_WOCHENENDE = false;
+
 
 // Weicher Ausstieg vor dem 6-Min-Limit, gleiches Muster wie Lieferkalender-Slack.
 const MAX_LAUFZEIT_MS = 4.5 * 60 * 1000;
