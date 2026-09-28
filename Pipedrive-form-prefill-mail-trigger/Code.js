@@ -44,7 +44,9 @@ const NOTIZEN_INTERN_FIELD_KEY = '2565f8005e57f0b6bad0a36560f9f3213beffe98'; // 
 
 // Options-Mapping: Pipedrive-Options-ID → Formular-Text (nur für enum-Felder)
 const DACHFORM_OPTIONS = { 88: 'Satteldach', 89: 'Walmdach', 90: 'Pultdach', 91: 'Flachdach' };
-const EINDECKUNG_OPTIONS = { 92: 'Ziegeldach', 93: 'Blechdach Trapez', 94: 'Blechdach Falz', 95: 'Welleternit', 96: 'Flachdach (Kies)', 97: 'Flachdach (Beton)', 98: 'Flachdach (begrünt)', 251: 'Zaun', 252: 'Fassade', 253: 'Rhombus Eternit', 254: 'Prefa', 255: 'Sandwichpaneele' };
+// 17.09.2026 nachgezogen: 311/319/320 standen in Pipedrive, hier nicht -- das Formular zeigte für
+// diese Deals die rohe Options-ID statt des Texts. Spiegelt EINDECKUNG_OPTION_IDS in Projektdoku-Generator/Config.js.
+const EINDECKUNG_OPTIONS = { 92: 'Ziegeldach', 93: 'Blechdach Trapez', 94: 'Blechdach Falz', 95: 'Welleternit', 96: 'Flachdach (Kies)', 97: 'Flachdach (Beton)', 98: 'Flachdach (begrünt)', 311: 'Flachdach (Folie)', 251: 'Zaun', 252: 'Fassade', 253: 'Rhombus Eternit', 254: 'Prefa', 255: 'Sandwichpaneele', 319: 'Biberschwanzdach', 320: 'Carport', 407: 'Wandmontage', 410: 'Eternit Doppeldeckung' };
 const UNTERKONSTRUKTION_OPTIONS = { 99: 'Sparren', 100: 'Pfetten' };
 const STOERFLAECHEN_OPTIONS = { 103: 'Ja', 104: 'Nein' };
 const BLITZSCHUTZ_OPTIONS = { 101: 'Ja', 102: 'Nein' };

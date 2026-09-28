@@ -93,11 +93,16 @@ const DACHFORM_FIELD_KEY = '71ee37fc98c338877d435f4d77f409367c013451'; // enum
 const DACHFORM_OPTION_IDS = { 'Satteldach': 88, 'Walmdach': 89, 'Pultdach': 90, 'Flachdach': 91 };
 const DACHFORM_ID_TO_NAME = invertOptionMap(DACHFORM_OPTION_IDS);
 
+// 17.09.2026: 'Flachdach (Folie)' (311), 'Biberschwanzdach' (319) und 'Carport' (320) waren in
+// Pipedrive schon da, standen hier aber nicht -- Doc zeigte die rohe Zahl (resolveEnumLabel-Fallback).
+// checkConfiguration() kann das nicht finden: es prüft nur Script -> Pipedrive, nie umgekehrt.
 const EINDECKUNG_FIELD_KEY = '2e8cc4c7d0592a418a58394a470e3386d125654a'; // enum
 const EINDECKUNG_OPTION_IDS = {
   'Ziegeldach': 92, 'Blechdach Trapez': 93, 'Blechdach Falz': 94, 'Welleternit': 95,
-  'Flachdach (Kies)': 96, 'Flachdach (Beton)': 97, 'Flachdach (begrünt)': 98,
-  'Zaun': 251, 'Fassade': 252, 'Rhombus Eternit': 253, 'Prefa': 254, 'Sandwichpaneele': 255
+  'Flachdach (Kies)': 96, 'Flachdach (Beton)': 97, 'Flachdach (begrünt)': 98, 'Flachdach (Folie)': 311,
+  'Zaun': 251, 'Fassade': 252, 'Rhombus Eternit': 253, 'Prefa': 254, 'Sandwichpaneele': 255,
+  'Biberschwanzdach': 319, 'Carport': 320, 'Wandmontage': 407,
+  'Eternit Doppeldeckung': 410
 };
 const EINDECKUNG_ID_TO_NAME = invertOptionMap(EINDECKUNG_OPTION_IDS);
 
@@ -168,7 +173,9 @@ const DACH2_OPTION_IDS = {
   Eindeckung: {
     'Ziegeldach': 268, 'Blechdach Trapez': 269, 'Blechdach Falz': 270, 'Welleternit': 271,
     'Flachdach (Kies)': 272, 'Flachdach (Beton)': 273, 'Flachdach (begrünt)': 274, 'Flachdach (Folie)': 312,
-    'Zaun': 275, 'Fassade': 276, 'Rhombus Eternit': 277, 'Prefa': 278, 'Sandwichpaneele': 279
+    'Zaun': 275, 'Fassade': 276, 'Rhombus Eternit': 277, 'Prefa': 278, 'Sandwichpaneele': 279,
+    'Biberschwanzdach': 318, 'Carport': 321, 'Wandmontage': 408,
+    'Eternit Doppeldeckung': 411
   },
   Unterkonstruktion: { 'Sparren': 292, 'Pfetten': 293 },
   Stoerflaechen: { 'Ja': 296, 'Nein': 297 },
@@ -194,7 +201,9 @@ const DACH3_OPTION_IDS = {
   Eindeckung: {
     'Ziegeldach': 280, 'Blechdach Trapez': 281, 'Blechdach Falz': 282, 'Welleternit': 283,
     'Flachdach (Kies)': 284, 'Flachdach (Beton)': 285, 'Flachdach (begrünt)': 286, 'Flachdach (Folie)': 313,
-    'Zaun': 287, 'Fassade': 288, 'Rhombus Eternit': 289, 'Prefa': 290, 'Sandwichpaneele': 291
+    'Zaun': 287, 'Fassade': 288, 'Rhombus Eternit': 289, 'Prefa': 290, 'Sandwichpaneele': 291,
+    'Biberschwanzdach': 317, 'Carport': 322, 'Wandmontage': 409,
+    'Eternit Doppeldeckung': 412
   },
   Unterkonstruktion: { 'Sparren': 294, 'Pfetten': 295 },
   Stoerflaechen: { 'Ja': 298, 'Nein': 299 },

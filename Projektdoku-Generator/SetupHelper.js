@@ -70,6 +70,111 @@ function fuegeEindeckungOptionenHinzu() {
   Logger.log('Neue IDs oben in EINDECKUNG_OPTION_IDS (Config.js) nachtragen, sonst kennt das Script die neuen Optionen nicht.');
 }
 
+// ===== Eine Option auf allen drei Dächern gleichzeitig ergänzen (17.09.2026) =====
+// Anlass: "Wandmontage" fehlte als Montageart. fuegeEindeckungOptionenHinzu() oben fasst nur
+// Dach 1 an -- die 2_/3_-Felder (seit 27.08. da, siehe FieldSetup2_3.js) sind eigene dealFields mit
+// EIGENEN Options-IDs und wurden seither per Hand in der Pipedrive-UI nachgezogen. Genau dabei ist
+// Config.js aus dem Tritt geraten: 'Flachdach (Folie)' (311), 'Biberschwanzdach' (319/318/317) und
+// 'Carport' (320/321/322) stehen in Pipedrive, standen aber nicht in den Options-Maps -- im fertigen
+// Doc erscheint dann die rohe Zahl statt des Labels (resolveEnumLabel-Fallback, Config.js).
+// checkConfiguration() findet das nicht: es prüft nur Script -> Pipedrive, nie die Gegenrichtung.
+// Deshalb diese Funktion: ein Lauf, alle drei Felder, IDs am Ende sauber zum Nachtragen im Log.
+
+/** Sicherheitsschalter: true = nur loggen, was passieren würde. Zum scharf Schalten auf false. */
+const DACH_OPTION_ERGAENZEN_DRY_RUN = true;
+
+/** Die zu ergänzende Option. Ein Label pro Lauf -- absichtlich, damit das Log eindeutig bleibt.
+ *  17.09.2026 gelaufen: 'Wandmontage' angelegt als 407 (Dach 1) / 408 (Dach 2) / 409 (Dach 3),
+ *  IDs stehen in Config.js. Der Schalter oben ist danach bewusst wieder auf true -- ein
+ *  versehentlicher ▷-Klick soll nicht die nächste Option live anlegen.
+ *  24.09.2026: auf 'Eternit Doppeldeckung' umgestellt (Kundenwunsch, Dach mit Eternit-Doppeldeckung).
+ *  28.09.2026 gelaufen: 410 (Dach 1) / 411 (Dach 2) / 412 (Dach 3), IDs stehen in Config.js und
+ *  Pipedrive-form-prefill-mail-trigger/Code.js. Schalter wieder auf true. */
+const DACH_OPTION_NEU = 'Eternit Doppeldeckung';
+
+/** Die drei Schwesterfelder. Keys aus Config.js, damit es bei einer Feldänderung an EINER Stelle hängt. */
+const DACH_OPTION_ZIELFELDER = [
+  { dach: 'Dach 1', key: EINDECKUNG_FIELD_KEY, configStelle: 'EINDECKUNG_OPTION_IDS' },
+  { dach: 'Dach 2', key: DACH2_FIELD_KEYS.Eindeckung, configStelle: 'DACH2_OPTION_IDS.Eindeckung' },
+  { dach: 'Dach 3', key: DACH3_FIELD_KEYS.Eindeckung, configStelle: 'DACH3_OPTION_IDS.Eindeckung' }
+];
+
+/**
+ * Ergänzt DACH_OPTION_NEU auf allen Feldern aus DACH_OPTION_ZIELFELDER.
+ *
+ * Drei Fallen, die hier schon einmal Zeit gekostet haben:
+ *  1. Feld-Optionen gehen NUR über die v1-API (v2 hat kein Field-Management, gleicher Grund wie
+ *     bei den Webhooks) -- deshalb ein direkter v1-Call statt fetchPipedrive() aus Config.js.
+ *  2. Der PUT ERSETZT die komplette Options-Liste. Bestehende Optionen müssen mit ihrer id+label
+ *     mitgeschickt werden, sonst löscht Pipedrive sie stillschweigend -- samt der Werte an den Deals.
+ *  3. `?limit=500`, sonst liefert v1 nur die ersten 100 Felder und die 2_/3_-Felder fallen hinten
+ *     runter -- die Funktion meldete dann "Feld nicht gefunden" für real existierende Felder (D12).
+ *
+ * Idempotent über den Label-Vergleich (case-insensitiv) pro Feld: ein zweiter Lauf findet die
+ * Option schon vor und fasst das Feld nicht an. Läuft pro Feld unabhängig -- ein Fehler bei Dach 2
+ * reißt Dach 3 nicht mit, sonst bleibt der Stand nach einem Teilfehler unklar.
+ */
+function fuegeDachOptionAufAllenDreiHinzu() {
+  const token = encodeURIComponent(getApiToken());
+  const basis = `https://${PIPEDRIVE_DOMAIN}.pipedrive.com/api/v1/dealFields`;
+
+  const feldResponse = UrlFetchApp.fetch(`${basis}?api_token=${token}&limit=500`, { muteHttpExceptions: true });
+  const feldData = JSON.parse(feldResponse.getContentText());
+  if (!feldData.success) {
+    throw new Error(`dealFields-Abruf fehlgeschlagen: ${feldResponse.getContentText()}`);
+  }
+  // Ohne den Check würde ein abgeschnittenes Ergebnis ein existierendes Feld als "nicht gefunden"
+  // melden -- Fehlalarm statt Fehlerfund, dasselbe Muster wie in checkConfiguration().
+  const pagination = feldData.additional_data && feldData.additional_data.pagination;
+  if (pagination && pagination.more_items_in_collection) {
+    throw new Error('dealFields ist trotz limit=500 abgeschnitten -- Pagination nachrüsten, sonst sind die Treffer unvollständig.');
+  }
+
+  if (DACH_OPTION_ERGAENZEN_DRY_RUN) {
+    Logger.log('=== DRY RUN === nichts wird nach Pipedrive geschrieben. Zum scharf Schalten DACH_OPTION_ERGAENZEN_DRY_RUN = false.');
+  }
+
+  DACH_OPTION_ZIELFELDER.forEach(ziel => {
+    const feld = feldData.data.find(f => f.key === ziel.key);
+    if (!feld) {
+      Logger.log(`✗ ${ziel.dach}: Feld ${ziel.key} nicht gefunden -- übersprungen.`);
+      return;
+    }
+    const bestehende = feld.options || [];
+    const schonDa = bestehende.find(o => o.label.toLowerCase() === DACH_OPTION_NEU.toLowerCase());
+    if (schonDa) {
+      Logger.log(`○ ${ziel.dach} ("${feld.name}"): "${DACH_OPTION_NEU}" existiert schon (id ${schonDa.id}) -- nichts zu tun.`);
+      return;
+    }
+
+    if (DACH_OPTION_ERGAENZEN_DRY_RUN) {
+      Logger.log(`→ ${ziel.dach} ("${feld.name}", id ${feld.id}): würde "${DACH_OPTION_NEU}" an ${bestehende.length} bestehende Optionen anhängen.`);
+      return;
+    }
+
+    const neueOptionsListe = [
+      ...bestehende.map(o => ({ id: o.id, label: o.label })), // MUSS mit, sonst löscht Pipedrive sie
+      { label: DACH_OPTION_NEU }
+    ];
+    const updateResponse = UrlFetchApp.fetch(`${basis}/${feld.id}?api_token=${token}`, {
+      method: 'put',
+      contentType: 'application/json',
+      payload: JSON.stringify({ options: neueOptionsListe }),
+      muteHttpExceptions: true
+    });
+    const updateData = JSON.parse(updateResponse.getContentText());
+    if (!updateData.success) {
+      Logger.log(`✗ ${ziel.dach} ("${feld.name}"): Update fehlgeschlagen -- ${updateResponse.getContentText()}`);
+      return;
+    }
+    const neu = updateData.data.options.find(o => o.label.toLowerCase() === DACH_OPTION_NEU.toLowerCase());
+    Logger.log(`✓ ${ziel.dach} ("${feld.name}"): "${DACH_OPTION_NEU}" = ${neu ? neu.id : '??'}  -->  in ${ziel.configStelle} (Config.js) eintragen`);
+  });
+
+  Logger.log('Danach: die neuen IDs in Config.js nachtragen (EINDECKUNG_OPTION_IDS / DACH2_OPTION_IDS.Eindeckung / DACH3_OPTION_IDS.Eindeckung)');
+  Logger.log('und in Pipedrive-form-prefill-mail-trigger/Code.js (EINDECKUNG_OPTIONS, nur Dach 1) -- sonst steht im Doc bzw. Formular die rohe Zahl statt "' + DACH_OPTION_NEU + '".');
+}
+
 /**
  * EINMALIG (07.09.2026): legt 4 der Custom-Fields für den geplanten Netzanmeldung-Formular-Baustein
  * an (siehe project_pv_netzanmeldung_formular) -- Neuanlage/Erweiterung (enum) plus 3 schlanke
