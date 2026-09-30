@@ -356,11 +356,26 @@ function fuelleLeereZellenNach(deal, cf, ordnerLink, partner, eintrag, zeile) {
   // eine leere Zelle. Deshalb sind die vier Spalten hier explizit gesperrt, nicht nur ungefüllt.
   const PERSONEN_SPALTEN = [COL.name, COL.adresse, COL.plz, COL.telefon];
   const werte = baueZeilenWerte(deal, cf, ordnerLink, null);
+
+  // AUSNAHME 30.09.2026: Felder mit immerAktuell (Kostenübernahme) werden auch in gefüllten Zellen
+  // nachgezogen, wenn Pipedrive etwas anderes sagt -- beim Closing-Termin ändert sich der Wert
+  // nachträglich, und syncPipedriveToSheetFields() läuft (noch) ohne Timer. Weiterhin null
+  // zusätzliche API-Calls, und es erlischt genauso von selbst: nach dem Schreiben ist die Zelle
+  // gleich. Beide Felder leer in Pipedrive -> Text "offen" (sonst bliebe ein zurückgenommenes
+  // "RP zahlt" stehen).
+  const IMMER_AKTUELL = SYNC_FIELD_CONFIG.filter(f => f.immerAktuell).map(f => f.sheetColumnHeader);
+  const istVeraltet = (header, wert) => {
+    if (IMMER_AKTUELL.indexOf(header) === -1) return false;
+    const col = cacheSpaltenIndex(eintrag, header);
+    if (!col) return false;
+    return String(vorhandene[col - 1] ?? '').trim() !== String(wert).trim();
+  };
+
   // Deal-ID steht per Definition schon drin -- daran haben wir die Zeile ja gefunden.
   const nachzutragen = Object.entries(werte)
-    .filter(([header]) => header !== COL.dealId
+    .filter(([header, wert]) => header !== COL.dealId
                        && PERSONEN_SPALTEN.indexOf(header) === -1
-                       && istLeer(header));
+                       && (istLeer(header) || istVeraltet(header, wert)));
 
   if (!nachzutragen.length) {
     return { code: 'existiert', text: `übersprungen (Zeile ${zeile} existiert bereits, keine leeren Felder)` };
@@ -377,7 +392,12 @@ function fuelleLeereZellenNach(deal, cf, ordnerLink, partner, eintrag, zeile) {
   nachzutragen.forEach(([header, wert]) => {
     const col = cacheSpaltenIndex(eintrag, header);
     if (!col) return;
-    eintrag.sheet.getRange(zeile, col).setValue(wert);
+    const zelle = eintrag.sheet.getRange(zeile, col);
+    const vorher = vorhandene[col - 1];
+    zelle.setValue(wert);
+    // Überschriebene (nicht nur nachgetragene) Zelle wie in syncPipedriveToSheetFields() markieren,
+    // damit der Partner die Änderung sieht.
+    if (String(vorher ?? '').trim() !== '') markiereGeaenderteZelle(zelle, vorher, wert);
     vorhandene[col - 1] = wert; // Lauf-Cache mitziehen, sonst schreibt ein Doppel-Deal zweimal
   });
 

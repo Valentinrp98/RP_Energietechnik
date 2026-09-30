@@ -50,6 +50,40 @@ function fuegeErstellungsdatumSpalteHinzu() {
 }
 
 /**
+ * EINMALIG (30.09.2026): Spalte "Kostenübernahme" ganz rechts anlegen -- NUR bei ALE, Kreuzeder,
+ * Berger (Valentin). Die anderen Sheets bekommen sie bewusst nicht; der Sync schreibt nur dort, wo
+ * es die Spalte gibt. Zeilenumbruch an, weil der Text dreizeilig ist. Befüllt wird beim nächsten
+ * syncNeueZeilen()-Lauf, sobald die Feld-Codes in Config.gs eingetragen sind. Danach
+ * protectDealIdColumn() erneut ausführen, damit die Spalte mitgeschützt ist.
+ */
+function fuegeKostenuebernahmeSpalteHinzu() {
+  ['ALE-Engineering (NÖ, Wien, BGL)', 'Kreuzeder (OÖ, SBG)', 'Berger Elektrotechnik (KTN)'].forEach(partner => {
+    let sheet;
+    try {
+      sheet = openPartnerSheet(partner);
+    } catch (err) {
+      Logger.log(`Übersprungen: "${partner}" -- ${err.message}`);
+      return;
+    }
+    if (findColumnIndexByHeader(sheet, COL.kostenuebernahme)) {
+      Logger.log(`"${partner}": Spalte "${COL.kostenuebernahme}" existiert schon.`);
+      return;
+    }
+    try {
+      const letzte = sheet.getLastColumn();
+      // Grid schon voll (letzte Spalte = letzte Grid-Spalte) -> getRange(…, letzte+1) würfe.
+      if (letzte >= sheet.getMaxColumns()) sheet.insertColumnAfter(letzte);
+      const neueSpalte = letzte + 1;
+      sheet.getRange(1, neueSpalte).setValue(COL.kostenuebernahme);
+      sheet.getRange(1, neueSpalte, sheet.getMaxRows(), 1).setWrap(true);
+      Logger.log(`"${partner}": Spalte "${COL.kostenuebernahme}" als Spalte ${neueSpalte} angelegt.`);
+    } catch (err) {
+      Logger.log(`✗ "${partner}": Spalte nicht angelegt -- ${err.message}`);
+    }
+  });
+}
+
+/**
  * Trägt Adresse/PLZ/Telefon/Anlagengröße/Speicher NACHTRÄGLICH in bereits bestehende Zeilen ein
  * (2026-08-17) -- betrifft alle Zeilen, die VOR Stufe 1 (IDEEN-Felder-und-Aktionen.md) angelegt
  * wurden und deren Spalten deshalb leer sind. createSheetRowForDeal() befüllt das nur bei NEUEN
@@ -290,9 +324,9 @@ function testSyncPipedriveToSheetFuerEinenPartner() {
         const cf = deal.custom_fields || {};
 
         feldSpalten.forEach(({ fieldConfig, col }) => {
-          const pipedriveWert = fieldConfig.combineFrom
-            ? fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean).join('\n---\n')
-            : cf[fieldConfig.pipedriveFieldKey];
+          // Gemeinsame Berechnung (Config.gs) -- sonst landet bei berechneten Feldern
+          // (Kostenübernahme, 30.09.2026) die nackte Options-ID in der Zelle.
+          const pipedriveWert = baueKombiniertenWert(fieldConfig, cf);
           if (pipedriveWert === undefined) return;
           if (fieldConfig.combineFrom && pipedriveWert === '') return;
           const aktuellerWert = werte[i][col - 1];
@@ -309,10 +343,7 @@ function testSyncPipedriveToSheetFuerEinenPartner() {
             ? (alsDatum(pipedriveWert) || pipedriveWert)
             : pipedriveWert;
           zelle.setValue(wertZumSchreiben);
-          zelle.setNote(`↻ Von RP geändert am ${notizZeitstempel()}\n`
-                      + `vorher: ${zeigeWert(aktuellerWert)}\n`
-                      + `neu:    ${zeigeWert(pipedriveWert)}`);
-          zelle.setBackground('#fff2cc');
+          markiereGeaenderteZelle(zelle, aktuellerWert, pipedriveWert);
           summary.geschrieben++;
           logRow('pipedrive→sheet (canary)', dealId, partner, fieldConfig.label, 'geschrieben',
                  `${zeigeWert(aktuellerWert)} -> ${zeigeWert(pipedriveWert)}`);

@@ -38,6 +38,63 @@ const NEUANLAGE_ERWEITERUNG_PRAEFIX_TEXTE = {
   331: 'ANLAGENERWEITERUNG !'
 };
 
+// Valentin, 30.09.2026: Spalte "Kostenübernahme" -- wer zahlt Dach- und Elektromontage. Nur in
+// den Sheets, die die Spalte haben (ALE / Kreuzeder / Berger). Felder legt
+// Sevdesk-Pipdrive_sync/KostenFelderSetup.js an, befüllt (FS / Finanzierung zugesagt -> RP) wird
+// von KostenFuellen.js. Codes + Options-IDs aus kfReport() vom 30.09.2026 (angelegt 11:23).
+const KOSTEN_DACH_FIELD_KEY = '8e0610f4a030dbf2e1f2012bb64c050f5fc9e892';    // "Dachmontage bezahlt von"
+const KOSTEN_ELEKTRO_FIELD_KEY = 'f8f0f9f3234dc98ee660376fe646e2a75475fb84'; // "Elektromontage bezahlt von"
+// Options-ID -> Text. Beide Felder haben eigene Options-IDs, deshalb alle vier hier rein.
+const KOSTEN_OPTION_TEXTE = {
+  422: 'RP', 423: 'Kunde', // Dach
+  424: 'RP', 425: 'Kunde'  // Elektro
+};
+// Grund für "RP zahlt" im Zellentext -- gleiche Regel wie KostenFuellen.js.
+const KOSTEN_AUSFUEHRUNGSART_FIELD_KEY = 'cc80ad5daf0788dba60b3da3931681edd3dd2c87'; // Full Service = 154
+const KOSTEN_FINANZIERUNGSSTATUS_FIELD_KEY = 'ec8aa2fee84efabc5770fae60e13397c3247a146'; // zugesagt = 204
+
+/**
+ * Zellentext "Kostenübernahme", z.B.
+ *   RP zahlt (Full Service)     Kunde zahlt        gemischt
+ *   Dach: RP                    Dach: Kunde        Dach: Kunde
+ *   Elektro: RP                 Elektro: Kunde     Elektro: RP
+ * Ein leeres Feld steht als "offen" da -- auch wenn beide leer sind, damit ein zurückgenommenes
+ * "RP zahlt" (KostenFuellen.js leert die Felder) nicht stehen bleibt.
+ * undefined (= Zelle in Ruhe lassen) nur, solange ein Code oder die Options-Texte fehlen.
+ */
+function baueKostenuebernahmeText(cf) {
+  if (String(KOSTEN_DACH_FIELD_KEY).indexOf('TODO_') === 0 ||
+      String(KOSTEN_ELEKTRO_FIELD_KEY).indexOf('TODO_') === 0 ||
+      Object.keys(KOSTEN_OPTION_TEXTE).length === 0) {
+    return undefined;
+  }
+  const text = (key) => {
+    const id = cf[key];
+    if (id === null || id === undefined || id === '') return null;
+    return KOSTEN_OPTION_TEXTE[String(id)] || null;
+  };
+  const dach = text(KOSTEN_DACH_FIELD_KEY);
+  const elektro = text(KOSTEN_ELEKTRO_FIELD_KEY);
+
+  let kopf;
+  if (!dach && !elektro) {
+    kopf = 'offen';
+  } else if (dach && dach === elektro) {
+    kopf = `${dach} zahlt`;
+    if (dach === 'RP') {
+      const gruende = [];
+      if (String(cf[KOSTEN_AUSFUEHRUNGSART_FIELD_KEY]) === '154') gruende.push('Full Service');
+      // Ohne Ausführungsart zählt Finanzierung nicht als Grund -- gleiche Regel wie KostenFuellen.js.
+      const artGesetzt = String(cf[KOSTEN_AUSFUEHRUNGSART_FIELD_KEY] ?? '') !== '';
+      if (artGesetzt && String(cf[KOSTEN_FINANZIERUNGSSTATUS_FIELD_KEY]) === '204') gruende.push('Finanzierung');
+      if (gruende.length) kopf += ` (${gruende.join(' + ')})`;
+    }
+  } else {
+    kopf = (dach && elektro) ? 'gemischt' : 'teilweise offen';
+  }
+  return `${kopf}\nDach: ${dach || 'offen'}\nElektro: ${elektro || 'offen'}`;
+}
+
 // Stufe 2 (IDEEN-Felder-und-Aktionen.md, R1+R2, die zwei "Anruf-Killer"): TODO, Feldcode erst
 // eintragen nachdem listDealFieldsHelper() geprüft hat, ob unter den 33 Fulfillment-Feldern vom
 // 10.08. schon ein passendes Datumsfeld existiert -- sonst neu in Pipedrive anlegen (Typ: Datum,
@@ -211,7 +268,8 @@ const COL = {
   ordnerLink: 'Link zum Kundenordner',
   dealId: 'Deal-ID',
   sonstigeInfos: 'Sonstige Informationen',
-  erstellungsdatum: 'Erstellungsdatum'
+  erstellungsdatum: 'Erstellungsdatum',
+  kostenuebernahme: 'Kostenübernahme'
 };
 
 /**
@@ -240,6 +298,20 @@ const SYNC_FIELD_CONFIG = [
     combineFrom: [NOTIZEN_INTERN_FIELD_KEY, NOTIZEN_KUNDE_FIELD_KEY],
     // Kurzhinweis als erste Zeile ueber den Notizen -- siehe baueKombiniertenWert() unten.
     praefixVonEnumFeld: { fieldKey: NEUANLAGE_ERWEITERUNG_FIELD_KEY, texte: NEUANLAGE_ERWEITERUNG_PRAEFIX_TEXTE },
+    direction: 'pipedrive_to_sheet'
+  },
+  // Valentin, 30.09.2026: berechnet statt 1:1 -- ein Zellentext aus zwei Pipedrive-Feldern.
+  // pipedriveFieldKey nur fürs TODO_-Gate: die bestehenden Filter (FieldSync.gs, RowCreation.gs,
+  // SetupHelpers.gs) lassen TODO_-Felder aus -- bis der Code eingetragen ist, passiert gar nichts.
+  // Der Filter kennt nur EINEN Key; baueKostenuebernahmeText() prüft zusätzlich Elektro + Options-Texte.
+  // immerAktuell: syncNeueZeilen() überschreibt die Zelle auch, wenn sie schon gefüllt ist
+  // (Closing-Termin ändert den Wert nachträglich; syncPipedriveToSheetFields() hat keinen Timer).
+  {
+    label: 'Kostenübernahme',
+    sheetColumnHeader: COL.kostenuebernahme,
+    pipedriveFieldKey: KOSTEN_DACH_FIELD_KEY,
+    berechnet: baueKostenuebernahmeText,
+    immerAktuell: true,
     direction: 'pipedrive_to_sheet'
   },
   {
@@ -634,6 +706,8 @@ function flushLog() {
  * dann in Ruhe, statt sie leer zu schreiben.
  */
 function baueKombiniertenWert(fieldConfig, cf) {
+  // 4. berechnet -> eigene Funktion baut den Text (z.B. "Kostenübernahme" aus zwei enum-Feldern)
+  if (fieldConfig.berechnet) return fieldConfig.berechnet(cf);
   if (!fieldConfig.combineFrom) return cf[fieldConfig.pipedriveFieldKey];
 
   const teile = fieldConfig.combineFrom.map(key => cf[key]).filter(Boolean);
@@ -670,6 +744,18 @@ function zeigeWert(w) {
 /** Einheitlicher Zeitstempel für alle Zell-Notizen. */
 function notizZeitstempel() {
   return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy HH:mm');
+}
+
+/**
+ * Überschriebene Zelle markieren (Notiz + gelb). Eine Stelle für alle drei Schreibwege
+ * (syncPipedriveToSheetFields, fuelleLeereZellenNach, Canary) -- raeumeAlteNotizen() hängt am
+ * Format "↻ Von RP geändert am dd.MM.yyyy HH:mm", also nur hier ändern.
+ */
+function markiereGeaenderteZelle(zelle, vorher, neu) {
+  zelle.setNote(`↻ Von RP geändert am ${notizZeitstempel()}\n`
+              + `vorher: ${zeigeWert(vorher)}\n`
+              + `neu:    ${zeigeWert(neu)}`);
+  zelle.setBackground('#fff2cc'); // gelb, wird von raeumeAlteNotizen() wieder entfernt
 }
 
 /**

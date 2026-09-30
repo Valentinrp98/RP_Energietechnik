@@ -153,6 +153,13 @@ v1 ist **nicht** abgeschaltet. Drei Dinge laufen weiterhin nur über v1:
 | Verschiebegrund | `ef68d654014dd173df185b4bb1fbf08bbc4d6c0d` | enum | ✅ |
 | Empfehlungsquelle | `4d18df056a52fe09c9362b386c6fcd096c51ad6d` | varchar | ⚠️ |
 
+| Feld | field_code | Typ | Status |
+|---|---|---|---|
+| Dachmontage bezahlt von *(angelegt 30.09.2026)* | `8e0610f4a030dbf2e1f2012bb64c050f5fc9e892` | enum: RP = 422, Kunde = 423 | ✅ |
+| Elektromontage bezahlt von *(angelegt 30.09.2026)* | `f8f0f9f3234dc98ee660376fe646e2a75475fb84` | enum: RP = 424, Kunde = 425 | ✅ |
+
+> Setup: `Sevdesk-Pipdrive_sync/KostenFelderSetup.js`, befüllt von `KostenFuellen.js` (Full Service 154 ODER Finanzierungsstatus zugesagt 204 → RP; von Hand gesetzt bleibt). Anzeige: Sheet-Sync-Spalte „Kostenübernahme" (`Config.gs`, `KOSTEN_*` — Codes + Options-IDs dort eingetragen). `KostenFuellen.js` löst Code + RP-Option per Feldname auf, nicht über diese Tabelle.
+
 ### Anlage & sevdesk-Sync
 
 | Feld | field_code | |

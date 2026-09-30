@@ -463,10 +463,7 @@ function syncPipedriveToSheetFields() {
           zelle.setValue(wertZumSchreiben);
           // Notiz: sonst ändert sich z.B. der DC-Termin still, und der Monteur, der schon
           // disponiert hat, merkt es bestenfalls zufällig.
-          zelle.setNote(`↻ Von RP geändert am ${notizZeitstempel()}\n`
-                      + `vorher: ${zeigeWert(aktuellerWert)}\n`
-                      + `neu:    ${zeigeWert(pipedriveWert)}`);
-          zelle.setBackground('#fff2cc'); // gelb, wird von raeumeAlteNotizen() wieder entfernt
+          markiereGeaenderteZelle(zelle, aktuellerWert, pipedriveWert);
           summary.geschrieben++;
           logRow('pipedrive→sheet', dealId, partner, fieldConfig.label, 'geschrieben',
                  `${zeigeWert(aktuellerWert)} -> ${zeigeWert(pipedriveWert)}`);
