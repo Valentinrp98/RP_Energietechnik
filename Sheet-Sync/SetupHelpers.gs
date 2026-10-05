@@ -57,7 +57,8 @@ function fuegeErstellungsdatumSpalteHinzu() {
  * protectDealIdColumn() erneut ausführen, damit die Spalte mitgeschützt ist.
  */
 function fuegeKostenuebernahmeSpalteHinzu() {
-  ['ALE-Engineering (NÖ, Wien, BGL)', 'Kreuzeder (OÖ, SBG)', 'Berger Elektrotechnik (KTN)'].forEach(partner => {
+  // Greensky dazu 02.10.2026 (Start Greensky). Idempotent -- bei den anderen passiert nichts mehr.
+  ['ALE-Engineering (NÖ, Wien, BGL)', 'Kreuzeder (OÖ, SBG)', 'Berger Elektrotechnik (KTN)', 'Greensky (OÖ, SBG)'].forEach(partner => {
     let sheet;
     try {
       sheet = openPartnerSheet(partner);
@@ -206,6 +207,24 @@ function installSyncNeueZeilenTrigger() {
   Logger.log('syncNeueZeilen läuft jetzt alle 15 Minuten. onEdit-Trigger und syncPipedriveToSheetFields sind davon NICHT betroffen.');
 }
 
+/**
+ * EINMALIG (02.10.2026): löscht die liegengebliebenen Einmal-Trigger von verarbeitePendingCellEdits
+ * (Befund D3), die das 20er-Trigger-Limit gefüllt haben. Fasst sonst nichts an. Danach
+ * installOnEditTriggerFuerEinenPartner() erneut ausführen.
+ */
+function raeumeAlteEinmalTriggerAuf() {
+  let geloescht = 0;
+  ScriptApp.getProjectTriggers().forEach(t => {
+    if (t.getHandlerFunction() === 'verarbeitePendingCellEdits') {
+      ScriptApp.deleteTrigger(t);
+      geloescht++;
+    }
+  });
+  PropertiesService.getScriptProperties().deleteProperty(PENDING_TRIGGER_GEPLANT_PROPERTY);
+  Logger.log(`${geloescht} alte verarbeitePendingCellEdits-Trigger gelöscht. Übrig:`);
+  listInstalledTriggers();
+}
+
 function listInstalledTriggers() {
   ScriptApp.getProjectTriggers().forEach(t => {
     Logger.log(`${t.getHandlerFunction()} -- ${t.getEventType()} -- ${t.getTriggerSourceId ? t.getTriggerSourceId() : ''}`);
@@ -235,7 +254,7 @@ function removeAllTriggers() {
 // (ALE zuerst, jetzt Kreuzeder), nicht immer nur einen ersetzen. Neuen Partner einfach ergänzen,
 // sobald der so weit ist (Deal-IDs stehen, siehe project_montage_sheets_migration) -- bestehende
 // Partner in der Liste bleiben unangetastet, siehe Idempotenz-Kommentar unten.
-const CANARY_PARTNERS = ['ALE-Engineering (NÖ, Wien, BGL)', 'Kreuzeder (OÖ, SBG)'];
+const CANARY_PARTNERS = ['ALE-Engineering (NÖ, Wien, BGL)', 'Kreuzeder (OÖ, SBG)', 'Greensky (OÖ, SBG)']; // Greensky dazu 02.10.2026
 
 function installOnEditTriggerFuerEinenPartner() {
   CANARY_PARTNERS.forEach(partner => {
@@ -521,6 +540,7 @@ function raeumeAlteNotizen() {
           const notiz = notizen[r][c];
           if (!notiz) continue;
           if (notiz.indexOf('⚠') === 0) continue;              // Fehler bleiben stehen
+          if (svIstStatusHinweis(notiz)) continue;             // Storno-/Verschoben-Hinweis (StornoVerschoben.gs) = aktueller Zustand, kein Alt-Vermerk
           const m = notiz.match(/(\d{2})\.(\d{2})\.(\d{4})/);  // dd.MM.yyyy aus dem Notiztext
           if (!m) continue;
           if (new Date(`${m[3]}-${m[2]}-${m[1]}`) >= grenze) continue;
@@ -563,7 +583,7 @@ function listDealFieldsHelper() {
 // reinziehen, ohne den globalen syncNeueZeilen() company-weit laufen zu lassen.
 // createSheetRowForDeal() akzeptiert schon eine Deal-ID direkt (lädt den Deal nach), kein Umbau
 // dort nötig. DRY_RUN gilt hier genauso wie überall -- erst prüfen, dann DRY_RUN=false.
-const NEUE_DEALS_ZUM_ANLEGEN = [7319]; // Deal-IDs hier eintragen, die eine Sheet-Zeile bekommen sollen
+const NEUE_DEALS_ZUM_ANLEGEN = [5476]; // Deal-IDs hier eintragen, die eine Sheet-Zeile bekommen sollen
 
 /** Für Einzeltests/gezieltes Nachziehen einzelner Deals: Zeilen-Erstellung ohne den globalen Timer. */
 function testCreateSheetRow() {

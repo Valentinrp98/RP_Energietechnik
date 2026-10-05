@@ -33,8 +33,11 @@ function syncNeueZeilen() {
   let kandidaten = 0;
   const summary = {
     angelegt: 0, nachgefuellt: 0, dryRun: 0, existiert: 0,
-    keinOrdnerLink: 0, keinPartner: 0, sheetFehler: 0, nichtReady: 0
+    keinOrdnerLink: 0, keinPartner: 0, sheetFehler: 0, nichtReady: 0, partnerwechsel: 0,
+    statusHinweise: 0
   };
+  // Storno-/Verschoben-Hinweise (StornoVerschoben.gs) -- läuft nur mit, wenn SV_SCHARF = true.
+  const svZaehler = svNeueZaehler();
   // Deal-IDs der Kandidaten, die HÄNGEN -- das ist die einzige Information, die aus einem Lauf
   // ohne neue Zeile heraus etwas wert ist.
   const haengt = { keinOrdnerLink: [], keinPartner: [], sheetFehler: [] };
@@ -71,6 +74,9 @@ function syncNeueZeilen() {
         if (!istReady) {
           processed++;
           summary.nichtReady++;
+          // Auch Altbestand-Zeilen ohne "rdy for creation" bekommen Storno-/Verschoben-Hinweise
+          // (und verlieren sie wieder) -- sonst setzt nur der Editor-Lauf sie, und keiner räumt auf.
+          if (SV_SCHARF) svPflegeDeal(deal, sheetCache, svZaehler);
           continue;
         }
         kandidaten++;
@@ -87,6 +93,15 @@ function syncNeueZeilen() {
           case 'kein-partner': summary.keinPartner++; haengt.keinPartner.push(deal.id); break;
           default: summary.sheetFehler++; haengt.sheetFehler.push(deal.id); break;
         }
+        // Partner von Hand umgestellt? Alte Zeile/Ordner beim vorherigen Partner aufräumen
+        // (Partnerwechsel.gs). Erst wenn die Zeile beim neuen Partner sicher steht.
+        if (result.code === 'angelegt' || result.code === 'nachgefuellt' || result.code === 'existiert') {
+          summary.partnerwechsel += bereinigePartnerwechsel(deal, sheetCache);
+        }
+        // Storno / verschoben -> Hinweis an der Kunden-Zelle (StornoVerschoben.gs). Nach dem
+        // Partnerwechsel, damit die Zeilennummern zum aktuellen Sheet-Stand passen. Für jeden
+        // Ergebnis-Code: svPflegeDeal() sucht die Zeile selbst und tut nichts, wenn es keine gibt.
+        if (SV_SCHARF) svPflegeDeal(deal, sheetCache, svZaehler);
       }
     } while (cursor);
   } finally {
@@ -109,6 +124,9 @@ function syncNeueZeilen() {
       logRow('zeile anlegen', null, null, null, 'FEHLER',
              `${haengt.sheetFehler.length} Deal(s) mit Sheet-/Spalten-Problem: ${kuerzeIdListe(haengt.sheetFehler)}`);
     }
+
+    svMeldeUnklare(svZaehler, true);
+    summary.statusHinweise = svZaehler.gesetzt + svZaehler.entfernt;
 
     // Lauf-Status (überarbeitet 2.9.2026): Der Alarm hing vorher an "kandidaten > 0 && angelegt
     // === 0". Das ist aber der eingeschwungene Normalzustand -- alle 69 Kandidaten haben ihre

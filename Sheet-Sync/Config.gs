@@ -879,6 +879,12 @@ function planeVerarbeitungPendingCellEdits() {
   const feuertIn = (SCHREIB_VERZOEGERUNG_SEK + 10) * 1000;
   if (geplantBis > Date.now()) return; // es steht noch einer aus
   try {
+    // FIX D3 (02.10.2026): abgelaufene Einmal-Trigger bleiben in der Liste stehen und haben das
+    // 20er-Limit gefüllt ("too many triggers"). Hier liegt garantiert keiner mehr in der Zukunft
+    // (geplantBis-Check oben) -- also alle alten mit diesem Handler weg, bevor der neue kommt.
+    ScriptApp.getProjectTriggers()
+      .filter(t => t.getHandlerFunction() === 'verarbeitePendingCellEdits')
+      .forEach(t => ScriptApp.deleteTrigger(t));
     ScriptApp.newTrigger('verarbeitePendingCellEdits').timeBased().after(feuertIn).create();
     props.setProperty(PENDING_TRIGGER_GEPLANT_PROPERTY, String(Date.now() + feuertIn));
   } catch (e) {

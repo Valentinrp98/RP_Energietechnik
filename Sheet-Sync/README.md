@@ -23,6 +23,7 @@
 >   (`:108/161`) machen beide Read-Modify-Write auf `PENDING_CELL_EDITS`. Im ganzen Projekt gibt es
 >   **null** `LockService`-Aufrufe. Ein onEdit dazwischen wird überschrieben — ohne Fehler, ohne Notiz.
 >   *(Teil-Fix 2.9.: `syncNeueZeilen` hat jetzt ein `tryLock`. `FieldSync.gs` weiterhin nicht.)*
+> - ✅ **D3 BEHOBEN 02.10.2026** (ist eingetreten: 18 Leichen-Trigger, Limit voll, 9 Edits hingen; `planeVerarbeitungPendingCellEdits` löscht jetzt alte vor dem Neuanlegen, `raeumeAlteEinmalTriggerAuf()` einmalig gelaufen). Ursprünglicher Befund:
 > - **D3 — die Queue kann dauerhaft sterben.** `Config.gs:698` erzeugt `.after()`-Trigger, die nie
 >   gelöscht werden. Nach ~20 Bursts wirft `.create()`, wird bei `:700` nur geloggt, und ab da wird
 >   **nichts** mehr verarbeitet.
@@ -44,6 +45,11 @@ Zwei Aufgaben, beide zeitgesteuert bzw. edit-getriggert:
 - `FieldSync.gs` -- `handleSheetEdit()` (Sheet->Pipedrive, sofort bei Eingabe) und
   `syncPipedriveToSheetFields()` (Pipedrive->Sheet, zeitgesteuert)
 - `SetupHelpers.gs` -- Trigger installieren, Debug-/Testfunktionen
+- `StornoVerschoben.gs` (05.10.2026) -- Hinweis-Notiz + Farbe an der Kunden-Zelle:
+  Stornozeitpunkt gesetzt -> "⛔ Storno einstweilen"; Verschiebezeitpunkt gesetzt UND Stage 24 ->
+  "⏸ Keine Prio – verschoben auf später". Schalter `SV_SCHARF` (**scharf seit 05.10.2026**),
+  Editor-Funktion `pflegeStornoVerschobenHinweise()`; mit `true` läuft es in `syncNeueZeilen()` mit.
+  `raeumeAlteNotizen()` lässt diese Hinweise stehen.
 
 ## Vor dem ersten Test -- diese TODOs in Config.gs ausfüllen
 1. **KUNDENORDNER_LINK_FIELD_KEY**: derselbe field_code wie in `Ordnererstellung-bei-Gewonnen`
