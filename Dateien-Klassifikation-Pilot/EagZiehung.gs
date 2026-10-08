@@ -275,6 +275,19 @@ function eagZiehungSchutzAn() {
     `Tabs: ${ss.getSheets().map(t => t.getName()).join(', ')}`);
 }
 
+// Master übersichtlicher: E Partner, F PLZ, I Kunden-Mail, K kWp, L kWh, M Quote, N Neu/Erw ausblenden (Daten bleiben,
+// Formeln rechnen weiter). Wieder einblenden: Spaltenkopf-Pfeile im Sheet oder eagZiehungSpaltenZeigen().
+const EAG_Z_VERBERGEN_ = ['E', 'F', 'I', 'K', 'L', 'M', 'N'];
+function eagZiehungSpaltenVerbergen() {
+  const sh = eagListeHolen_().getSheetByName('Ticketliste');
+  EAG_Z_VERBERGEN_.forEach(x => sh.hideColumns(sh.getRange(x + '1').getColumn()));
+  Logger.log(`Ausgeblendet: ${EAG_Z_VERBERGEN_.join(', ')}`);
+}
+function eagZiehungSpaltenZeigen() {
+  const sh = eagListeHolen_().getSheetByName('Ticketliste');
+  EAG_Z_VERBERGEN_.forEach(x => sh.showColumns(sh.getRange(x + '1').getColumn()));
+}
+
 // Master: alles gesperrt außer den Hakerl-Spalten A (gezogen), O (EAG-Portal), P (Antrag)
 function eagZiehungSchutzMaster_(sh) {
   // alte Einzel-Sperren G/I (nur Owner) ablösen → RP darf jetzt auch dort
