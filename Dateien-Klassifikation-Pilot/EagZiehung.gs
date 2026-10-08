@@ -516,7 +516,11 @@ function eagZiehungOnEdit(e) {
 // Zeile), Master S umgestellt, beim Ausgefallenen gelöscht (gezogene bleiben; Tab leer → weg). Ergebnis in Team F8.
 function eagZiehungAusfall_(ss, person) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) return;
+  if (!lock.tryLock(90000)) { // Listen-Update (1-min-Trigger) hält den Lock → länger warten, sonst sichtbar melden
+    ss.getSheetByName(EAG_Z_TEAM_).getRange('F8').setValue(
+      `${Utilities.formatDate(new Date(), 'Europe/Vienna', 'HH:mm:ss')} ⚠️ Ausfall ${person} NICHT verteilt (Script belegt) → Anwesend nochmal ☑ und wieder ☐`);
+    return;
+  }
   try {
     const sh = ss.getSheetByName('Ticketliste'), team = ss.getSheetByName(EAG_Z_TEAM_), C = EAG_COL_;
     const melde = text => team.getRange('F8').setValue(

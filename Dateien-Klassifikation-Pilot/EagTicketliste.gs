@@ -158,6 +158,13 @@ function eagTicketlisteTriggerAn() {
   Logger.log('Trigger an: alle 10 min. Nach dem 22.10. eagTicketlisteTriggerAus() ausführen.');
 }
 
+// Während der Ziehung: jede Minute. Danach wieder eagTicketlisteTriggerAn() (10 min).
+function eagTicketlisteTrigger1Min() {
+  eagTicketlisteTriggerAus();
+  ScriptApp.newTrigger('eagTicketliste').timeBased().everyMinutes(1).create();
+  Logger.log('Trigger an: jede Minute. Zurück auf 10 min: eagTicketlisteTriggerAn().');
+}
+
 function eagTicketlisteTriggerAus() {
   ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'eagTicketliste')
     .forEach(t => ScriptApp.deleteTrigger(t));
