@@ -83,6 +83,7 @@ function eagZiehungLauf_(vorschau) {
     const leute = team.getRange(2, 1, Math.max(team.getLastRow() - 1, 1), 2).getValues()
       .filter(r => String(r[0]).trim() && r[1] === true).map(r => String(r[0]).trim());
     if (!leute.length) throw new Error('Niemand als anwesend angehakt (Tab „Team")');
+    const sortLog = vorschau ? '' : '\n' + eagZiehungFarbigNachUnten_(sh); // vor dem Lesen, Zeilen k gelten danach
 
     const n = sh.getLastRow() - 1, rng = sh.getRange(2, 1, n, EAG_Z_FIX_);
     const w = rng.getValues(), a = rng.getDisplayValues(), kRng = sh.getRange(2, C.kunde, n, 1);
@@ -144,7 +145,8 @@ function eagZiehungLauf_(vorschau) {
             liste.map(d => `${d.deal || d.kunde}${d.prio ? '🔴' : ''}${d.istFix ? '📌' : ''}/${d.kat}`).join(', ');
         }).join('\n') +
         `\nNicht verteilt (nicht ready): ${offen.map(d => `${d.deal || d.kunde} ${a[d.k][C.ready - 1]}`).join(', ') || '—'}` +
-        (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog);
+        (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog +
+        `\nBeim Verteilen nach unten: ${eagZiehungZuSchieben_(deals.map(d => !!d.farbe)).length} rot/grün-Zeilen`);
       return;
     }
 
@@ -171,7 +173,7 @@ function eagZiehungLauf_(vorschau) {
     const offen = deals.filter(d => !d.ready && !d.zieher && !d.raus);
     Logger.log(`Anwesend: ${leute.join(', ')}\n${links.join('\n')}\n` +
       `Nicht verteilt (nicht ready): ${offen.map(d => `${d.deal || d.kunde} ${a[d.k][C.ready - 1]}`).join(', ') || '—'}` +
-      (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog);
+      (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog + sortLog);
   } finally {
     lock.releaseLock();
   }
@@ -213,6 +215,54 @@ function eagZiehungTab_(ss, name, liste, pos) {
   return t;
 }
 
+// Einzeln ausführbar: rot/grün (Storno/selber) im Master nach unten, ohne neu zu verteilen
+function eagZiehungFarbigNachUnten() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) { Logger.log('Läuft schon, abgebrochen.'); return; }
+  try { Logger.log(eagZiehungFarbigNachUnten_(eagListeHolen_().getSheetByName('Ticketliste'))); }
+  finally { lock.releaseLock(); }
+}
+
+// Indizes der farbigen Zeilen, unter denen noch eine nicht-farbige steht (= müssen nach unten)
+function eagZiehungZuSchieben_(farbig) {
+  const letzteNormale = farbig.lastIndexOf(false);
+  return farbig.map((f, k) => (f && k < letzteNormale ? k : -1)).filter(k => k >= 0);
+}
+
+// Kunde (D) rot/grün → ganze Zeile per moveRows ans Ende (Notizen, Farben, Hakerl wandern mit), Rest bleibt in Reihenfolge.
+// Zeitstempel B ist ein Zirkelbezug → danach je gezogenem Deal prüfen und notfalls als fixen Wert zurückschreiben
+// (Haken weg → eagZiehungOnEdit setzt die Formel wieder).
+function eagZiehungFarbigNachUnten_(sh) {
+  const C = EAG_COL_, n = sh.getLastRow() - 1;
+  if (n < 2) return 'Sortierung: nichts zu tun.';
+  const kRng = sh.getRange(2, C.kunde, n, 1), schrift = kRng.getFontColors(), hg = kRng.getBackgrounds();
+  const zuSchieben = eagZiehungZuSchieben_(schrift.map((s, k) => !!(eagZiehungFarbe_(s[0]) || eagZiehungFarbe_(hg[k][0]))));
+  if (!zuSchieben.length) return 'Sortierung: rot/grün stehen schon unten.';
+  const vorher = sh.getRange(2, 1, n, C.deal).getValues(); // A gezogen, B Zeit, C Deal
+  // ab Zeile k+2 sind schon i Zeilen darüber weggeschoben worden; Ziel n+2 = hinter die letzte Zeile
+  zuSchieben.forEach((k, i) => sh.moveRows(sh.getRange(k + 2 - i, 1), n + 2));
+  SpreadsheetApp.flush();
+  const reihe = vorher.map((_, k) => k).filter(k => zuSchieben.indexOf(k) < 0).concat(zuSchieben);
+  const nachher = sh.getRange(2, 1, n, C.deal).getValues(), warn = [];
+  let fix = 0;
+  reihe.forEach((alt, pos) => {
+    const [gez, zeit, deal] = vorher[alt];
+    if (gez !== true || !(zeit instanceof Date)) return;
+    const p = deal !== '' ? nachher.findIndex(r => String(r[C.deal - 1]) === String(deal)) : pos;
+    if (p < 0) { warn.push(`${deal}: Zeile nicht wiedergefunden, Zeitpunkt war ${zeit}`); return; }
+    const b = nachher[p][C.zeit - 1];
+    if (!(b instanceof Date) || b.getTime() !== zeit.getTime()) { sh.getRange(p + 2, C.zeit).setValue(zeit); fix++; }
+  });
+  return `Sortierung: ${zuSchieben.length} rot/grün nach unten` + (fix ? `, ${fix} Zeitstempel fix zurückgeschrieben` : ', Zeitstempel unverändert') +
+    (warn.length ? `\n⚠️ ${warn.join('\n⚠️ ')}` : '');
+}
+
+// Haken weg → Zeitstempel-Formel zurück, falls B nach dem Umsortieren als fixer Wert drinsteht
+function eagZiehungZeitFormel_(master, row) {
+  const b = master.getRange(row, EAG_COL_.zeit);
+  if (!b.getFormula()) b.setFormula(`=IF(A${row},IF(B${row}="",NOW(),B${row}),"")`);
+}
+
 // Master: ZPN (G) + Mail (I) sperren -- Korrekturen gehören ins Montage-Sheet; Script läuft als Owner und darf weiter
 function eagZiehungSchutzMaster_(sh) {
   const besch = 'EAG: ZPN + Mail gesperrt (Korrektur im Montage-Sheet)';
@@ -248,10 +298,13 @@ function eagZiehungOnEdit(e) {
     const m = master.getRange(2, 1, master.getLastRow() - 1, C.zpn).getDisplayValues();
     t.getRange(r.getRow(), 1, r.getNumRows(), 6).getValues().forEach(([gez, , , zpn, , deal]) => {
       const k = m.findIndex(x => deal !== '' ? String(x[C.deal - 1]) === String(deal) : (zpn && x[C.zpn - 1] === zpn));
-      if (k >= 0) master.getRange(k + 2, C.gezogen).setValue(gez === true);
+      if (k < 0) return;
+      master.getRange(k + 2, C.gezogen).setValue(gez === true);
+      if (gez !== true) eagZiehungZeitFormel_(master, k + 2);
     });
   } else if (name === 'Ticketliste' && r.getColumn() <= C.gezogen && r.getLastColumn() >= C.gezogen) {
-    master.getRange(r.getRow(), 1, r.getNumRows(), EAG_Z_ZIEHER_).getValues().forEach(x => {
+    master.getRange(r.getRow(), 1, r.getNumRows(), EAG_Z_ZIEHER_).getValues().forEach((x, i) => {
+      if (x[C.gezogen - 1] !== true) eagZiehungZeitFormel_(master, r.getRow() + i);
       const tab = x[EAG_Z_ZIEHER_ - 1] && ss.getSheetByName(EAG_Z_PREFIX_ + String(x[EAG_Z_ZIEHER_ - 1]).trim());
       if (!tab || tab.getLastRow() < 2) return;
       const zeilen = tab.getRange(2, 4, tab.getLastRow() - 1, 3).getDisplayValues(); // D ZPN, E Mail, F Deal
