@@ -5,7 +5,8 @@
  *    aus Team), neuer Tab „Team" (= Menschen anlegen). Mehrfach ausführbar.
  * 2. Von Hand: Namen in „Team" eintragen + Anwesend anhaken; im Master Prio = „hoch" setzen;
  *    Deals, die fix an jemanden gehen, in T zuordnen (gewinnt immer, solange die Person anwesend ist).
- * 3. eagZiehungVerteilen(): aktualisiert zuerst die Liste, setzt Fix-Zuordnungen, verteilt dann alle übrigen
+ * 3. eagZiehungVorschau(): Test, loggt die Verteilung, schreibt nichts.
+ *    eagZiehungVerteilen(): aktualisiert zuerst die Liste, setzt Fix-Zuordnungen, verteilt dann alle übrigen
  *    ✅ ready, nicht gezogenen Deals gleichmäßig auf die Anwesenden (Fix-Deals zählen bei der Last mit) (Prio hoch → Kat A → B → C → D → ?), schreibt „Zieher" in den Master
  *    und baut die Tabs „🎟 <Name>" (Prio hoch ganz oben). Mehrfach ausführbar: Zuteilung an Anwesende bleibt,
  *    Deals von Abwesenden werden neu verteilt, bereits gezogene bleiben, wo sie sind.
@@ -62,8 +63,13 @@ function eagZiehungVorbereiten() {
   Logger.log(`Vorbereitet: ${ss.getUrl()}#gid=${ss.getSheetByName(EAG_Z_TEAM_).getSheetId()}`);
 }
 
-function eagZiehungVerteilen() {
-  eagTicketliste(); // frische Daten (eigener Lock)
+function eagZiehungVerteilen() { eagZiehungLauf_(false); }
+
+// Test: rechnet die Verteilung durch und loggt sie -- schreibt NICHTS (kein S, keine Tabs, kein Trigger, kein Listen-Update)
+function eagZiehungVorschau() { eagZiehungLauf_(true); }
+
+function eagZiehungLauf_(vorschau) {
+  if (!vorschau) eagTicketliste(); // frische Daten (eigener Lock)
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) { Logger.log('Läuft schon, abgebrochen.'); return; }
   try {
@@ -109,6 +115,19 @@ function eagZiehungVerteilen() {
       zaehle(d);
       if (alt) log.push(`${d.deal || d.kunde}: ${alt} (nicht anwesend) → ${d.zieher}`);
     });
+
+    if (vorschau) {
+      const offen = deals.filter(d => !d.ready && !d.zieher);
+      Logger.log(`VORSCHAU (nichts geschrieben) · Anwesend: ${leute.join(', ')}\n` +
+        leute.map(p => {
+          const liste = deals.filter(d => d.zieher === p).sort(ordnung);
+          return `${p}: ${liste.length} (${liste.filter(d => d.prio).length} hoch, ${liste.filter(d => d.istFix).length} fix) → ` +
+            liste.map(d => `${d.deal || d.kunde}${d.prio ? '🔴' : ''}${d.istFix ? '📌' : ''}/${d.kat}`).join(', ');
+        }).join('\n') +
+        `\nNicht verteilt (nicht ready): ${offen.map(d => `${d.deal || d.kunde} ${a[d.k][C.ready - 1]}`).join(', ') || '—'}` +
+        (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : ''));
+      return;
+    }
 
     const spalteS = w.map(r => [r[EAG_Z_ZIEHER_ - 1]]);
     deals.forEach(d => { spalteS[d.k][0] = d.zieher; });
