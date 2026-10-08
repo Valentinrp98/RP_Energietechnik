@@ -18,7 +18,7 @@ const EAG_Z_PRIO_ = 18, EAG_Z_ZIEHER_ = 19, EAG_Z_FIX_ = 20; // R, S, T im Maste
 const EAG_Z_TEAM_ = 'Team', EAG_Z_PREFIX_ = '🎟 ', EAG_Z_TEAM_ZEILEN_ = 20;
 // Ticket-Mail fürs EAG-Formular: Gruppe → alle im Team bekommen die Ticket-Mails (08.10., Test-Mail angekommen)
 const EAG_Z_TICKET_MAIL_ = 'eag@rp-energietechnik.at';
-const EAG_Z_SCHUTZ_ = 'EAG-Ziehung: nur zum Kopieren, nur Hakerl änderbar';
+const EAG_Z_SCHUTZ_ = 'EAG: RP alles, alle anderen nur Hakerl';
 // Personen-Tab (seit 08.10. abgespeckt): A Hakerl · B Zeitpunkt · C Kunde · D ZPN · E Mail · F Deal-ID (ausgeblendet, nur für den Sync)
 // Prio hoch = Kunde fett; Prio/Fix/Hinweise stehen als Zell-Notiz am Kunden
 const EAG_Z_HEAD_ = [['Ticket gezogen', 70], ['Zeitpunkt (Master)', 135], ['Kunde', 220], ['Einspeise-ZPN', 280],
@@ -209,9 +209,8 @@ function eagZiehungTab_(ss, name, liste, pos) {
     SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$A2=TRUE').setBackground('#C6E0B4')
       .setRanges([t.getRange(2, 1, n, h)]).build()
   ]);
-  // Nur zum Kopieren: ganzer Tab gesperrt außer Hakerl A (bei jedem Lauf neu, weil sich die Zeilenzahl ändert)
-  t.getProtections(SpreadsheetApp.ProtectionType.SHEET).forEach(p => p.remove());
-  eagZiehungNurIch_(t.protect().setDescription(EAG_Z_SCHUTZ_)).setUnprotectedRanges([t.getRange(2, 1, n, 1)]);
+  // Nur zum Kopieren (außer RP): ganzer Tab gesperrt außer Hakerl A (bei jedem Lauf neu, Zeilenzahl ändert sich)
+  eagZiehungSchutzTab_(t, [t.getRange(2, 1, n, 1)]);
   return t;
 }
 
@@ -263,12 +262,32 @@ function eagZiehungZeitFormel_(master, row) {
   if (!b.getFormula()) b.setFormula(`=IF(A${row},IF(B${row}="",NOW(),B${row}),"")`);
 }
 
-// Master: ZPN (G) + Mail (I) sperren -- Korrekturen gehören ins Montage-Sheet; Script läuft als Owner und darf weiter
+// Schutz für die ganze Datei (08.10.): RP-Domain darf alles, alle anderen (Link-Mitbearbeiter) nur die Hakerl.
+// Einzeln ausführbar, ohne neu zu verteilen. Script + onEdit-Trigger laufen als Owner und dürfen weiter schreiben.
+// Wirkt nur zusammen mit der Freigabe: Link-Leute brauchen „Mitbearbeiter", sonst können sie gar nichts anhaken.
+function eagZiehungSchutzAn() {
+  const ss = eagListeHolen_();
+  eagZiehungSchutzMaster_(ss.getSheetByName('Ticketliste'));
+  [EAG_Z_TEAM_, 'Info'].map(x => ss.getSheetByName(x)).filter(Boolean).forEach(t => eagZiehungSchutzTab_(t, []));
+  ss.getSheets().filter(t => t.getName().indexOf(EAG_Z_PREFIX_) === 0)
+    .forEach(t => eagZiehungSchutzTab_(t, t.getLastRow() > 1 ? [t.getRange(2, 1, t.getLastRow() - 1, 1)] : []));
+  Logger.log(`Schutz an: RP (@${Session.getEffectiveUser().getEmail().split('@')[1]}) alles, Link-Mitbearbeiter nur Hakerl. ` +
+    `Tabs: ${ss.getSheets().map(t => t.getName()).join(', ')}`);
+}
+
+// Master: alles gesperrt außer den Hakerl-Spalten A (gezogen), O (EAG-Portal), P (Antrag)
 function eagZiehungSchutzMaster_(sh) {
-  const besch = 'EAG: ZPN + Mail gesperrt (Korrektur im Montage-Sheet)';
-  if (sh.getProtections(SpreadsheetApp.ProtectionType.RANGE).some(p => p.getDescription() === besch)) return;
-  [`G2:G${EAG_MAX_ZEILEN_}`, `I2:I${EAG_MAX_ZEILEN_}`]
-    .forEach(a1 => eagZiehungNurIch_(sh.getRange(a1).protect().setDescription(besch)));
+  // alte Einzel-Sperren G/I (nur Owner) ablösen → RP darf jetzt auch dort
+  sh.getProtections(SpreadsheetApp.ProtectionType.RANGE)
+    .filter(p => p.getDescription() === 'EAG: ZPN + Mail gesperrt (Korrektur im Montage-Sheet)').forEach(p => p.remove());
+  const max = EAG_MAX_ZEILEN_, C = EAG_COL_;
+  eagZiehungSchutzTab_(sh, [C.gezogen, C.portal, C.antrag].map(c => sh.getRange(2, c, max - 1, 1)));
+}
+
+// Tab-Schutz neu setzen: ganze Tab gesperrt für Nicht-RP, frei bleiben nur die übergebenen Bereiche
+function eagZiehungSchutzTab_(t, frei) {
+  t.getProtections(SpreadsheetApp.ProtectionType.SHEET).forEach(p => p.remove());
+  return eagZiehungNurRp_(t.protect().setDescription(EAG_Z_SCHUTZ_)).setUnprotectedRanges(frei);
 }
 
 // Hex-Farbe → 'rot' | 'grün' | '' (deckt kräftige + helle Töne ab; Orange/Gelb/Grau zählen nicht)
@@ -281,11 +300,11 @@ function eagZiehungFarbe_(hex) {
   return '';
 }
 
-// Muster aus der Apps-Script-Doku: nur Owner + ausführender User dürfen bearbeiten
-function eagZiehungNurIch_(p) {
+// Muster aus der Apps-Script-Doku (Einzel-Editoren raus) + ganze RP-Domain darf bearbeiten (Workspace-Domain des Owners)
+function eagZiehungNurRp_(p) {
   p.addEditor(Session.getEffectiveUser());
   p.removeEditors(p.getEditors());
-  if (p.canDomainEdit()) p.setDomainEdit(false);
+  p.setDomainEdit(true);
   return p;
 }
 
