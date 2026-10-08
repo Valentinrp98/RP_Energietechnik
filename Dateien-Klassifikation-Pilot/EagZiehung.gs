@@ -280,7 +280,9 @@ function eagZiehungFortschrittAn() {
   Logger.log(`Fortschritt live in: ${tabs.map(t => t.getName()).join(', ')}`);
 }
 
-// Einzeln ausführbar: rot/grün (Storno/selber) im Master nach unten, ohne neu zu verteilen
+// Einzeln ausführbar, ohne neu zu verteilen: Master sortieren (ZPN da → ohne ZPN → rot/grün/Zusage unten)
+function eagZiehungSortieren() { eagZiehungFarbigNachUnten(); }
+
 function eagZiehungFarbigNachUnten() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) { Logger.log('Läuft schon, abgebrochen.'); return; }
@@ -294,7 +296,8 @@ function eagZiehungZuSchieben_(farbig) {
   return farbig.map((f, k) => (f && k < letzteNormale ? k : -1)).filter(k => k >= 0);
 }
 
-// Kunde (D) rot/grün → ganze Zeile per moveRows ans Ende (Notizen, Farben, Hakerl wandern mit), Rest bleibt in Reihenfolge.
+// Sortierung (seit 08.10. abends): 1) Einspeise-ZPN (G) da · 2) ohne ZPN (⏳) · 3) rot/grün/Zusage ganz unten.
+// Innerhalb der Gruppen bleibt die Reihenfolge. Ganze Zeilen per moveRows (Notizen, Farben, Hakerl wandern mit).
 // Zeitstempel B ist ein Zirkelbezug → danach je gezogenem Deal prüfen und notfalls als fixen Wert zurückschreiben
 // (Haken weg → eagZiehungOnEdit setzt die Formel wieder).
 function eagZiehungFarbigNachUnten_(sh) {
@@ -302,14 +305,23 @@ function eagZiehungFarbigNachUnten_(sh) {
   if (n < 2) return 'Sortierung: nichts zu tun.';
   const kRng = sh.getRange(2, C.kunde, n, 1), schrift = kRng.getFontColors(), hg = kRng.getBackgrounds();
   const zusage = sh.getMaxColumns() >= EAG_Z_ZUSAGE_ ? sh.getRange(2, EAG_Z_ZUSAGE_, n, 1).getValues() : schrift.map(() => [false]);
-  const zuSchieben = eagZiehungZuSchieben_(schrift.map((s, k) =>
-    !!(eagZiehungFarbe_(s[0]) || eagZiehungFarbe_(hg[k][0]) || zusage[k][0] === true)));
-  if (!zuSchieben.length) return 'Sortierung: rot/grün stehen schon unten.';
-  const vorher = sh.getRange(2, 1, n, C.deal).getValues(); // A gezogen, B Zeit, C Deal
-  // ab Zeile k+2 sind schon i Zeilen darüber weggeschoben worden; Ziel n+2 = hinter die letzte Zeile
-  zuSchieben.forEach((k, i) => sh.moveRows(sh.getRange(k + 2 - i, 1), n + 2));
+  const vorher = sh.getRange(2, 1, n, C.zpn).getValues(); // A gezogen, B Zeit, C Deal … G ZPN
+  const rang = vorher.map((r, k) => (eagZiehungFarbe_(schrift[k][0]) || eagZiehungFarbe_(hg[k][0]) || zusage[k][0] === true) ? 2
+    : (String(r[C.zpn - 1]).trim() ? 0 : 1));
+  const reihe = vorher.map((_, k) => k).sort((x, y) => rang[x] - rang[y] || x - y); // Ziel: reihe[pos] = alter Index
+  const ist = vorher.map((_, k) => k); // ist[pos] = alter Index der Zeile, die gerade an pos steht
+  let zuege = 0;
+  reihe.forEach((alt, pos) => { // Positionen davor sind fertig → Zeile steht an j ≥ pos, nach oben ziehen
+    const j = ist.indexOf(alt);
+    if (j === pos) return;
+    sh.moveRows(sh.getRange(j + 2, 1), pos + 2);
+    ist.splice(j, 1); ist.splice(pos, 0, alt);
+    zuege++;
+  });
+  const anz = [0, 1, 2].map(x => rang.filter(r => r === x).length);
+  const text = `${anz[0]} mit ZPN oben · ${anz[1]} ohne ZPN · ${anz[2]} rot/grün/Zusage unten`;
+  if (!zuege) return `Sortierung: passt schon (${text})`;
   SpreadsheetApp.flush();
-  const reihe = vorher.map((_, k) => k).filter(k => zuSchieben.indexOf(k) < 0).concat(zuSchieben);
   const nachher = sh.getRange(2, 1, n, C.deal).getValues(), warn = [];
   let fix = 0;
   reihe.forEach((alt, pos) => {
@@ -320,7 +332,7 @@ function eagZiehungFarbigNachUnten_(sh) {
     const b = nachher[p][C.zeit - 1];
     if (!(b instanceof Date) || b.getTime() !== zeit.getTime()) { sh.getRange(p + 2, C.zeit).setValue(zeit); fix++; }
   });
-  return `Sortierung: ${zuSchieben.length} rot/grün nach unten` + (fix ? `, ${fix} Zeitstempel fix zurückgeschrieben` : ', Zeitstempel unverändert') +
+  return `Sortierung: ${zuege} Zeilen verschoben (${text})` + (fix ? `, ${fix} Zeitstempel fix zurückgeschrieben` : ', Zeitstempel unverändert') +
     (warn.length ? `\n⚠️ ${warn.join('\n⚠️ ')}` : '');
 }
 
