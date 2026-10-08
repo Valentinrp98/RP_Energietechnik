@@ -209,9 +209,29 @@ function eagZiehungTab_(ss, name, liste, pos) {
     SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$A2=TRUE').setBackground('#C6E0B4')
       .setRanges([t.getRange(2, 1, n, h)]).build()
   ]);
+  eagZiehungFortschritt_(t);
   // Nur zum Kopieren (außer RP): ganzer Tab gesperrt außer Hakerl A (bei jedem Lauf neu, Zeilenzahl ändert sich)
   eagZiehungSchutzTab_(t, [t.getRange(2, 1, n, 1)]);
   return t;
+}
+
+// Live-Fortschritt im Kopf C1 („Kunde · 3/12 gezogen"), reine Formel → aktualisiert sich bei jedem Hakerl, kein Trigger.
+// Alles gezogen → Kopf grün. Daten bleiben ab Zeile 2 (onEdit-Indizes unverändert).
+function eagZiehungFortschritt_(t) {
+  const c1 = t.getRange('C1'), alle = '=COUNTIF($A$2:$A,TRUE)=COUNTA($C$2:$C)';
+  c1.setFormula('="Kunde · "&COUNTIF(A2:A,TRUE)&"/"&COUNTA(C2:C)&" gezogen"');
+  const regeln = t.getConditionalFormatRules().filter(r =>
+    !(r.getBooleanCondition() && r.getBooleanCondition().getCriteriaValues()[0] === alle));
+  regeln.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied(alle)
+    .setBackground('#38761D').setRanges([t.getRange(1, 1, 1, EAG_Z_HEAD_.length - 1)]).build());
+  t.setConditionalFormatRules(regeln);
+}
+
+// Einzeln ausführbar: Fortschritt in alle bestehenden 🎟-Tabs, ohne neu zu verteilen
+function eagZiehungFortschrittAn() {
+  const tabs = eagListeHolen_().getSheets().filter(t => t.getName().indexOf(EAG_Z_PREFIX_) === 0);
+  tabs.forEach(eagZiehungFortschritt_);
+  Logger.log(`Fortschritt live in: ${tabs.map(t => t.getName()).join(', ')}`);
 }
 
 // Einzeln ausführbar: rot/grün (Storno/selber) im Master nach unten, ohne neu zu verteilen
