@@ -33,6 +33,12 @@ function baueText(vorlage, kontext) {
   // Regel-Tabelle nicht durchzuhalten — mehrzeilige Zellen zerreissen dabei.
   text = text.split('\\n').join('\n');
 
+  // Link bewusst unterdrueckt (Berater fehlt) → Grund statt der allgemeinen
+  // "keine WhatsApp-Nummer"-Meldung aus raeumeZeileAuf(), die hier falsch waere.
+  if (kontext.wagrund) {
+    text = text.replace(/<\|[^>]*>/g, '⚠️ ' + kontext.wagrund);
+  }
+
   // Tabs und Mehrfach-Leerzeichen zusammenziehen, Umbrueche aber behalten.
   text = text.replace(/[ \t]+/g, ' ');
 
@@ -98,7 +104,8 @@ function baueKontext(deal, plzMap, feld, altWert, neuWert, tage, userMap, waText
     // einfach leer und raeumeZeileAuf() putzt die Luecke weg.
     um: ct && ct.uhrzeit ? 'um ' + ct.uhrzeit + ' Uhr' : '',
     cc: vornameVon(ccName),
-    cc_voll: ccName
+    cc_voll: ccName,
+    cc_tel: beraterTelefon(ccName)
   };
 
   // Der wa.me-Link braucht den fertigen Kundentext, und der Kundentext benutzt
@@ -108,7 +115,21 @@ function baueKontext(deal, plzMap, feld, altWert, neuWert, tage, userMap, waText
   // bleibt deshalb leer.
   kontext.watext = '';
   kontext.walink = '';
+  kontext.wagrund = '';
   if (waText) {
+    // Kundentext mit Berater-Name/-Telefon, aber der Wert fehlt (CC unbekannt
+    // oder nicht in BERATER_TELEFON) → kein Link. "{cc_voll} kommt zu Ihnen"
+    // ohne Namen oder "erreichen moechten: " ohne Nummer darf nicht rausgehen.
+    const fehlt = ['cc', 'cc_voll', 'cc_tel'].filter(function (p) {
+      return waText.indexOf('{' + p + '}') !== -1 && !kontext[p];
+    });
+    if (fehlt.length) {
+      kontext.wagrund = ccName
+        ? 'kein Berater-Telefon für ' + ccName + ' (Config BERATER_TELEFON)'
+        : 'Berater unbekannt';
+      Logger.log('⚠️ Deal %s: kein wa.me-Link, %s.', deal.id, kontext.wagrund);
+      return kontext;
+    }
     const kundentext = baueText(waText, kontext);
     kontext.watext = kundentext;
     kontext.walink = baueWaLink(kontext.telefon, kundentext);
@@ -118,6 +139,18 @@ function baueKontext(deal, plzMap, feld, altWert, neuWert, tage, userMap, waText
     }
   }
   return kontext;
+}
+
+// Erst voller Name, dann Vorname — falls der Pipedrive-Name vom Config-Schluessel
+// abweicht (z.B. ohne Nachname). Leer, wenn nichts passt.
+function beraterTelefon(ccName) {
+  if (!ccName) return '';
+  const norm = function (s) { return String(s).trim().toLowerCase(); };
+  const namen = Object.keys(BERATER_TELEFON);
+  const voll = namen.filter(function (n) { return norm(n) === norm(ccName); });
+  if (voll.length) return BERATER_TELEFON[voll[0]];
+  const vorname = namen.filter(function (n) { return norm(vornameVon(n)) === norm(vornameVon(ccName)); });
+  return vorname.length === 1 ? BERATER_TELEFON[vorname[0]] : '';
 }
 
 // Leerer String, solange BONUS_NETTO_FAKTOR nicht gesetzt ist. Die Vorlage

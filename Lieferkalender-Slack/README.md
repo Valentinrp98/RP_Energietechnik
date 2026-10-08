@@ -104,6 +104,7 @@ Dazu die Platzhalter aus dem Personen-Sweep und vom CT-Termin:
 | `{uhrzeit}` | `10:30` — nur bei `CT-Termin` gefuellt |
 | `{um}` | `um 10:30 Uhr`, **leer wenn der Termin keine Uhrzeit hat** |
 | `{cc}` / `{cc_voll}` | Vorname / voller Name des Activity-Owners (= Cash Collector) |
+| `{cc_tel}` | Handynummer des Beraters aus `BERATER_TELEFON` (Config.gs). Steht `{cc}`/`{cc_voll}`/`{cc_tel}` im `WA-Text` und der Wert fehlt → **kein Link**, Slack zeigt den Grund (seit 08.10.2026) |
 | `{watext}` | der fertige Kundentext aus Spalte `WA-Text` |
 | `{walink}` | `https://wa.me/43…?text=…` mit genau diesem Text |
 

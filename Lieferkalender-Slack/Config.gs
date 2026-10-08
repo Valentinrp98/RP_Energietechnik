@@ -122,6 +122,18 @@ const BONUS_PRO_LIEFERUNG_BRUTTO = 100;
 // falsche Netto-Zahl in einer Bonus-Meldung ist schlimmer als gar keine.
 const BONUS_NETTO_FAKTOR = null;
 
+// ---------- Berater-Telefon fuer die CT-Kundenerinnerung ----------
+// Platzhalter {cc_tel}. Schluessel = voller Name wie in Pipedrive /users
+// (Gross/Klein egal); passt der nicht, wird ueber den Vornamen gesucht.
+// Stand 08.10.2026, von Valentin genannt. Neuer Berater = neue Zeile + clasp push.
+// Fehlt die Nummer, gibt es BEWUSST keinen wa.me-Link (siehe baueKontext()) —
+// sonst stuende "erreichen moechten: " ohne Nummer beim Kunden.
+const BERATER_TELEFON = {
+  'Marco Benhammadi': '+43 676 6852310',
+  'Sean Golubovic':   '+43 650 9847390',
+  'Andre Rechberger': '+43 664 3472104'
+};
+
 // ---------- Betrieb ----------
 
 // true = Simulation. Es wird gelesen und verglichen, aber NICHT nach Slack

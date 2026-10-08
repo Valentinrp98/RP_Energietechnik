@@ -193,11 +193,19 @@ function startRegeln() {
   // an Valentin, abgeschickt wird also aus SEINER Nummer — eine Unterschrift
   // mit dem Namen des Cash Collectors passt dann nicht zum Absender. {cc}
   // bleibt in der Slack-Vorlage, dort ist "wer ist zustaendig" genau richtig.
-  const SIG = '\\nBeste Grüße\\nIhr Team von RP Energietechnik';
-  const WA = 'Guten Tag {vorname} {nachname}, kurze Erinnerung: unser Termin morgen ' +
-             '({datum}) {um} steht. Wir freuen uns auf Sie!' + SIG;
-  const WA_HEUTE = 'Guten Tag {vorname} {nachname}, kurze Erinnerung: unser Termin heute ' +
-             '{um} steht. Wir freuen uns auf Sie!' + SIG;
+  //
+  // Texte seit 08.10.2026: Berater mit Namen + Handynummer ({cc_voll},
+  // {cc_tel}). Die Unterschrift bleibt Firma — der Berater wird im Satz
+  // genannt, nicht als Absender. Fehlt Name oder Nummer, baut baueKontext()
+  // bewusst keinen Link (Slack zeigt den Grund).
+  const SIG = '\\nIhr Team von RP Energietechnik';
+  const WA = 'Hallo {vorname} {nachname}, morgen ({datum}) {um} ist es so weit: ' +
+             '{cc_voll} kommt zu Ihnen. Wir freuen uns auf das Gespräch! 😊 ' +
+             'Falls Sie ihm vorab etwas mitteilen möchten: {cc_tel}' +
+             '\\nLiebe Grüße' + SIG;
+  const WA_HEUTE = 'Hallo {vorname} {nachname}, wir freuen uns auf heute! ' +
+             '{cc_voll} ist {um} bei Ihnen. ☀️ Falls Sie ihn erreichen möchten: {cc_tel}' +
+             '\\nBis später & liebe Grüße' + SIG;
 
   // Ein Klick auf den Link oeffnet WhatsApp Desktop mit dem fertigen Text.
   const WA_L = '\\n<{walink}|📲 WhatsApp-Erinnerung öffnen> · <{deallink}|Deal {dealId}>';
