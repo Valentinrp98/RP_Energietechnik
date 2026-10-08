@@ -54,15 +54,11 @@ function eagZiehungVorbereiten() {
     t.getRange(1, 1, 1, 4).setValues([['Name', 'Anwesend', 'Zugeteilt', 'Gezogen']])
       .setFontWeight('bold').setFontColor('#FFFFFF').setBackground(EAG_FARBE_.track);
     t.getRange(2, 2, n, 1).insertCheckboxes();
-    t.getRange(2, 3, n, 2).setFormulas(Array.from({ length: n }, (_, k) => [
-      `=IF(A${k + 2}="","",COUNTIF(Ticketliste!S:S,A${k + 2}))`,
-      `=IF(A${k + 2}="","",COUNTIFS(Ticketliste!S:S,A${k + 2},Ticketliste!A:A,TRUE))`]));
     t.setColumnWidth(1, 160); t.setColumnWidth(6, 380); t.setFrozenRows(1);
   }
   const team = ss.getSheetByName(EAG_Z_TEAM_);
   team.getRange('E1').setValue('davon fix').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(EAG_FARBE_.track);
-  team.getRange(2, 5, EAG_Z_TEAM_ZEILEN_, 1).setFormulas(Array.from({ length: EAG_Z_TEAM_ZEILEN_ }, (_, k) =>
-    [`=IF(A${k + 2}="","",COUNTIF(Ticketliste!T:T,A${k + 2}))`]));
+  eagZiehungTeamFormeln_(team);
   team.getRange('F1:F5').setValues([['Ablauf'], ['1. Menschen hier anlegen (Spalte A), Anwesende anhaken'],
     ['2. Ticketliste Spalte R „Prio" = hoch → bei der Person ganz oben'],
     ['3. Ticketliste Spalte T „Fix-Zieher" = Name → Deal geht fix an diese Person'],
@@ -71,6 +67,19 @@ function eagZiehungVorbereiten() {
   sh.getRange(2, EAG_Z_FIX_, max - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation()
     .requireValueInRange(team.getRange(`A2:A${EAG_Z_TEAM_ZEILEN_ + 1}`), true).setAllowInvalid(true).build());
   Logger.log(`Vorbereitet: ${ss.getUrl()}#gid=${ss.getSheetByName(EAG_Z_TEAM_).getSheetId()}`);
+}
+
+// Team-Namen dürfen eine Klammer-Anmerkung haben („Lorin Palla (VP)") → zählt als „Lorin Palla" (Tab, Spalte S/T)
+function eagZiehungName_(s) { return String(s).replace(/\s*\(.*\)\s*$/, '').trim(); }
+
+// Team C Zugeteilt · D Gezogen · E davon fix -- Kriterium = Name ohne Klammer-Anmerkung
+function eagZiehungTeamFormeln_(team) {
+  team.getRange(2, 3, EAG_Z_TEAM_ZEILEN_, 3).setFormulas(Array.from({ length: EAG_Z_TEAM_ZEILEN_ }, (_, k) => {
+    const a = `A${k + 2}`, n = `REGEXREPLACE(${a},"\\s*\\(.*\\)\\s*$","")`;
+    return [`=IF(${a}="","",COUNTIF(Ticketliste!S:S,${n}))`,
+      `=IF(${a}="","",COUNTIFS(Ticketliste!S:S,${n},Ticketliste!A:A,TRUE))`,
+      `=IF(${a}="","",COUNTIF(Ticketliste!T:T,${n})+COUNTIF(Ticketliste!T:T,${n}&" (*"))`];
+  }));
 }
 
 function eagZiehungVerteilen() { eagZiehungLauf_(false); }
@@ -93,7 +102,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
     const ss = eagListeHolen_(), sh = ss.getSheetByName('Ticketliste'), team = ss.getSheetByName(EAG_Z_TEAM_), C = EAG_COL_;
     if (!team || sh.getMaxColumns() < EAG_Z_ZUSAGE_) throw new Error('Zuerst eagZiehungVorbereiten() ausführen');
     const leute = team.getRange(2, 1, Math.max(team.getLastRow() - 1, 1), 2).getValues()
-      .filter(r => String(r[0]).trim() && r[1] === true).map(r => String(r[0]).trim());
+      .filter(r => String(r[0]).trim() && r[1] === true).map(r => eagZiehungName_(r[0]));
     if (!leute.length) throw new Error('Niemand als anwesend angehakt (Tab „Team")');
     const sortLog = vorschau ? '' : '\n' + eagZiehungFarbigNachUnten_(sh); // vor dem Lesen, Zeilen k gelten danach
 
@@ -106,7 +115,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
       // Mail egal (Ticket-Mail = EAG_Z_TICKET_MAIL_) → „⚠️ Mail" mit ✅ ZPN zählt als ready
       ready: a[k][C.ready - 1].indexOf('✅') === 0 || (a[k][C.ready - 1] === '⚠️ Mail' && a[k][C.check - 1].indexOf('✅') === 0),
       prio: String(r[EAG_Z_PRIO_ - 1]).trim().toLowerCase() === 'hoch',
-      zieher: String(r[EAG_Z_ZIEHER_ - 1]).trim(), fix: String(r[EAG_Z_FIX_ - 1]).trim(),
+      zieher: eagZiehungName_(r[EAG_Z_ZIEHER_ - 1]), fix: eagZiehungName_(r[EAG_Z_FIX_ - 1]),
       notiz: notiz[k][0], schrift: schrift[k][0], hg: hg[k][0],
       farbe: eagZiehungFarbe_(schrift[k][0]) || eagZiehungFarbe_(hg[k][0]) || (r[EAG_Z_ZUSAGE_ - 1] === true ? 'Zusage' : '')
     })).filter(d => d.deal !== '' || d.zpn);
@@ -179,6 +188,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
     const spalteS = w.map(r => [r[EAG_Z_ZIEHER_ - 1]]);
     deals.forEach(d => { spalteS[d.k][0] = d.zieher; });
     sh.getRange(2, EAG_Z_ZIEHER_, n, 1).setValues(spalteS);
+    eagZiehungTeamFormeln_(team);
     eagZiehungSchutzMaster_(sh);
 
     // Tabs: alle mit zugeteilten Deals (auch Abwesende mit bereits gezogenen), übrige 🎟-Tabs weg
@@ -220,6 +230,7 @@ function eagZiehungTab_(ss, name, liste, pos) {
   EAG_Z_HEAD_.forEach((x, i) => t.setColumnWidth(i + 1, x[1]));
   t.setFrozenRows(1);
   if (t.getMaxColumns() > h) t.deleteColumns(h + 1, t.getMaxColumns() - h); // alte Spalten (Prio, PLZ, kWp …) weg
+  t.getRange(2, 1, n, h).setNumberFormat('General'); // alte Tabs: G hatte Text-Format → Hakerl wurde Text „false"
   t.getRange(2, 4, n, 1).setNumberFormat('@');
   t.getRange(2, 2, n, 1).setNumberFormat('dd.MM. HH:mm:ss');
   t.getRange(2, 1, n, 1).insertCheckboxes();
