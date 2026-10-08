@@ -92,7 +92,8 @@ function eagZiehungLauf_(vorschau) {
       ready: a[k][C.ready - 1].indexOf('✅') === 0 || (a[k][C.ready - 1] === '⚠️ Mail' && a[k][C.check - 1].indexOf('✅') === 0),
       prio: String(r[EAG_Z_PRIO_ - 1]).trim().toLowerCase() === 'hoch',
       zieher: String(r[EAG_Z_ZIEHER_ - 1]).trim(), fix: String(r[EAG_Z_FIX_ - 1]).trim(),
-      notiz: notiz[k][0], schrift: schrift[k][0], hg: hg[k][0]
+      notiz: notiz[k][0], schrift: schrift[k][0], hg: hg[k][0],
+      farbe: eagZiehungFarbe_(schrift[k][0]) || eagZiehungFarbe_(hg[k][0])
     })).filter(d => d.deal !== '' || d.zpn);
 
     const katRang = { A: 1, B: 2, C: 3, D: 4 };
@@ -102,19 +103,30 @@ function eagZiehungLauf_(vorschau) {
     leute.forEach(p => { last[p] = 0; hoch[p] = 0; });
     const zaehle = d => { last[d.zieher]++; if (d.prio) hoch[d.zieher]++; };
     const log = [], warn = [];
+    // Name rot = Storno, grün = macht der Kunde selbst → nicht verteilen (bereits gezogene bleiben)
+    deals.filter(d => d.farbe && !d.gezogen).forEach(d => {
+      d.raus = true;
+      if (d.zieher) log.push(`${d.deal || d.kunde}: ${d.zieher} → raus (${d.farbe})`);
+      d.zieher = '';
+    });
+    const raus = f => deals.filter(d => d.raus && d.farbe === f).map(d => d.deal || d.kunde).join(', ') || '—';
+    const sonstFarbe = deals.filter(d => !d.farbe && (!/^#0{6}$/i.test(d.schrift) || !/^#f{6}$/i.test(d.hg)))
+      .map(d => `${d.deal || d.kunde} (Schrift ${d.schrift}, Hintergrund ${d.hg})`);
+    const rausLog = `\nRaus rot (Storno): ${raus('rot')}\nRaus grün (selber): ${raus('grün')}` +
+      (sonstFarbe.length ? `\nAndere Farbe, wird verteilt: ${sonstFarbe.join(', ')}` : '');
     // Fix-Zieher (Spalte T) gewinnt, solange die Person anwesend ist; sonst normal verteilen + Warnung
     const person = {};
     leute.forEach(p => { person[p.toLowerCase()] = p; });
-    deals.filter(d => d.fix && d.ready && !d.gezogen).forEach(d => {
+    deals.filter(d => d.fix && d.ready && !d.gezogen && !d.raus).forEach(d => {
       const p = person[d.fix.toLowerCase()];
       if (!p) { warn.push(`${d.deal || d.kunde}: Fix-Zieher „${d.fix}" nicht anwesend → normal verteilt`); return; }
       if (d.zieher !== p) { if (d.zieher) log.push(`${d.deal || d.kunde}: ${d.zieher} → ${p} (fix)`); d.zieher = p; }
       d.istFix = true;
     });
-    deals.filter(d => d.fix && !d.ready && !d.gezogen)
+    deals.filter(d => d.fix && !d.ready && !d.gezogen && !d.raus)
       .forEach(d => warn.push(`${d.deal || d.kunde}: Fix-Zieher „${d.fix}", aber nicht ready → nicht verteilt`));
     deals.filter(d => leute.indexOf(d.zieher) >= 0).forEach(zaehle);
-    deals.filter(d => d.ready && !d.gezogen && leute.indexOf(d.zieher) < 0).sort(ordnung).forEach(d => {
+    deals.filter(d => d.ready && !d.gezogen && !d.raus && leute.indexOf(d.zieher) < 0).sort(ordnung).forEach(d => {
       const alt = d.zieher;
       d.zieher = leute.slice().sort((x, y) => last[x] - last[y] || hoch[x] - hoch[y] || leute.indexOf(x) - leute.indexOf(y))[0];
       zaehle(d);
@@ -122,7 +134,7 @@ function eagZiehungLauf_(vorschau) {
     });
 
     if (vorschau) {
-      const offen = deals.filter(d => !d.ready && !d.zieher);
+      const offen = deals.filter(d => !d.ready && !d.zieher && !d.raus);
       Logger.log(`VORSCHAU (nichts geschrieben) · Anwesend: ${leute.join(', ')}\n` +
         leute.map(p => {
           const liste = deals.filter(d => d.zieher === p).sort(ordnung);
@@ -130,7 +142,7 @@ function eagZiehungLauf_(vorschau) {
             liste.map(d => `${d.deal || d.kunde}${d.prio ? '🔴' : ''}${d.istFix ? '📌' : ''}/${d.kat}`).join(', ');
         }).join('\n') +
         `\nNicht verteilt (nicht ready): ${offen.map(d => `${d.deal || d.kunde} ${a[d.k][C.ready - 1]}`).join(', ') || '—'}` +
-        (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : ''));
+        (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog);
       return;
     }
 
@@ -154,10 +166,10 @@ function eagZiehungLauf_(vorschau) {
     if (!ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'eagZiehungOnEdit'))
       ScriptApp.newTrigger('eagZiehungOnEdit').forSpreadsheet(ss).onEdit().create();
 
-    const offen = deals.filter(d => !d.ready && !d.zieher);
+    const offen = deals.filter(d => !d.ready && !d.zieher && !d.raus);
     Logger.log(`Anwesend: ${leute.join(', ')}\n${links.join('\n')}\n` +
       `Nicht verteilt (nicht ready): ${offen.map(d => `${d.deal || d.kunde} ${a[d.k][C.ready - 1]}`).join(', ') || '—'}` +
-      (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : ''));
+      (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog);
   } finally {
     lock.releaseLock();
   }
@@ -203,6 +215,16 @@ function eagZiehungSchutzMaster_(sh) {
   if (sh.getProtections(SpreadsheetApp.ProtectionType.RANGE).some(p => p.getDescription() === besch)) return;
   [`G2:G${EAG_MAX_ZEILEN_}`, `I2:I${EAG_MAX_ZEILEN_}`]
     .forEach(a1 => eagZiehungNurIch_(sh.getRange(a1).protect().setDescription(besch)));
+}
+
+// Hex-Farbe → 'rot' | 'grün' | '' (deckt kräftige + helle Töne ab; Orange/Gelb/Grau zählen nicht)
+function eagZiehungFarbe_(hex) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ''));
+  if (!m) return '';
+  const [r, g, b] = m.slice(1).map(x => parseInt(x, 16));
+  if (r >= 150 && r - g >= 30 && r - b >= 30 && Math.abs(g - b) <= 60) return 'rot';
+  if (g >= 100 && g - r >= 15 && g - b >= 15 && Math.abs(r - b) <= 80) return 'grün';
+  return '';
 }
 
 // Muster aus der Apps-Script-Doku: nur Owner + ausführender User dürfen bearbeiten
