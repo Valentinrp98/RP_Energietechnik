@@ -38,7 +38,8 @@ function eagZiehungVorbereiten() {
   });
   sh.getRange(2, EAG_Z_PRIO_, max - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation()
     .requireValueInList(['hoch'], true).setAllowInvalid(false).build());
-  if (!sh.getRange(2, EAG_Z_ZUSAGE_).getDataValidation()) sh.getRange(2, EAG_Z_ZUSAGE_, max - 1, 1).insertCheckboxes();
+  // U-Checkboxen nur bis zur letzten Datenzeile (bis 400 → getLastRow = 400, Bug 08.10.); neue Zeilen: eagFormelnUndFarben_
+  if (eagLetzteZeile_(sh) > 1) sh.getRange(2, EAG_Z_ZUSAGE_, eagLetzteZeile_(sh) - 1, 1).insertCheckboxes();
   const f = sh.getFilter();
   if (f && f.getRange().getLastColumn() < EAG_Z_ZUSAGE_) { f.remove(); sh.getRange(1, 1, max, EAG_Z_ZUSAGE_).createFilter(); }
   // Prio hoch rot markieren (eagFormelnUndFarben_ lässt fremde Regeln stehen)
@@ -106,7 +107,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
     if (!leute.length) throw new Error('Niemand als anwesend angehakt (Tab „Team")');
     const sortLog = vorschau ? '' : '\n' + eagZiehungFarbigNachUnten_(sh); // vor dem Lesen, Zeilen k gelten danach
 
-    const n = sh.getLastRow() - 1, rng = sh.getRange(2, 1, n, EAG_Z_ZUSAGE_);
+    const n = eagLetzteZeile_(sh) - 1, rng = sh.getRange(2, 1, n, EAG_Z_ZUSAGE_);
     const w = rng.getValues(), a = rng.getDisplayValues(), kRng = sh.getRange(2, C.kunde, n, 1);
     const notiz = kRng.getNotes(), schrift = kRng.getFontColors(), hg = kRng.getBackgrounds();
     const deals = w.map((r, k) => ({
@@ -297,7 +298,7 @@ function eagZiehungZuSchieben_(farbig) {
 // Zeitstempel B ist ein Zirkelbezug → danach je gezogenem Deal prüfen und notfalls als fixen Wert zurückschreiben
 // (Haken weg → eagZiehungOnEdit setzt die Formel wieder).
 function eagZiehungFarbigNachUnten_(sh) {
-  const C = EAG_COL_, n = sh.getLastRow() - 1;
+  const C = EAG_COL_, n = eagLetzteZeile_(sh) - 1; // nicht getLastRow (leere Checkbox-Zeilen → Ziel hinter Zeile 400)
   if (n < 2) return 'Sortierung: nichts zu tun.';
   const kRng = sh.getRange(2, C.kunde, n, 1), schrift = kRng.getFontColors(), hg = kRng.getBackgrounds();
   const zusage = sh.getMaxColumns() >= EAG_Z_ZUSAGE_ ? sh.getRange(2, EAG_Z_ZUSAGE_, n, 1).getValues() : schrift.map(() => [false]);

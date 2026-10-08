@@ -54,6 +54,22 @@ const EAG_HEAD_ = [
   ['Projekt im EAG-Portal', 80, 'track'], ['Antrag eingereicht (bis 22.10.)', 100, 'track'], ['Kategorie', 75, 'anlage']
 ];
 const EAG_FARBE_ = { track: '#7F6000', ticket: '#1F4E78', anlage: '#375623' };
+// V „Neu seit" (08.10.): Zeitpunkt, wann die Zeile in die Liste kam (alte Zeilen leer)
+const EAG_COL_NEUSEIT_ = 22;
+// Sean-Nachtrag (08.10., von Sean kurzfristig erhalten) -- [Kunde, Geburtsdatum, ZPN roh, Mail]; ohne Deal-ID
+const EAG_SEAN_TAG_ = 'von Sean kurzfristig erhalten – später abklären';
+const EAG_SEAN_ = [
+  ['Gerhard Reiterer', '09.07.1960', '', 'gerhard.reiterer@icloud.com'],
+  ['Lukas Shamoun Privat', '15.07.1991', 'AT0010000000000000001000015612411', 'saidosh@hotmail.com'],
+  ['Lukas Shamoun Firma', '01.09.1992', 'AT0010000000000000001000015612853', 'saidosh@hotmail.com'],
+  ['Eva Bogengruber', '15.07.1974', 'AT0030000000000000000000030121742', 'johann.bogengruber@gmx.at'],
+  ['Edin Hamzic', '', '', 'hamzicedin20@gmail.com'],
+  ['Nuri Yorulmaz PV', '', 'AT00330004600EWERKWELSAG00A205202', 'nuri62.yorulmaz@gmail.com'],
+  ['Andreas Meister', '', '', 'meister@allyourfriends.de'],
+  ['Gerhard Spath', '13.04.1975', '', 'office@kfz-spath.at'],
+  ['Jürgen Pußwald', '05.07.1977', 'AT.008130.00000.00000000000003266301', 'juergen.pusswald@hotmail.com'],
+  ['Harald Lamprecht', '', 'AT.008000.08330.\n00000202606190630522', 'lamprecht4320@gmail.com']
+];
 const EAG_MAX_ZEILEN_ = 400; // Bereich für Formate/Regeln/Filter
 const EAG_INFO_BLEIBT_ = 'Bleibt immer: Haken, Zeitpunkt, EAG-Portal, Antrag, Farben/Formatierung. ' +
   'Kunde/PLZ/Mail/kWp/kWh/Neu-Erw werden nur in LEERE Zellen geschrieben.';
@@ -72,7 +88,10 @@ function eagTicketliste() {
     if (info) [['Bleibt immer:', EAG_INFO_BLEIBT_], ['ZPN + Kunde kommen immer', EAG_INFO_ZPN_]].forEach(([alt, neuText]) =>
       info.createTextFinder(alt).findAll().forEach(c => { if (c.getValue() !== neuText) c.setValue(neuText); }));
 
-    const last = sh.getLastRow();
+    const aufr = eagAufraeumen_(sh);
+    if (aufr) log.push(aufr);
+    eagNeuSeitSpalte_(sh);
+    const last = eagLetzteZeile_(sh); // NICHT getLastRow: Checkboxen/Formeln in leeren Zeilen zählen dort mit
     const ist = last > 1 ? sh.getRange(2, 1, last - 1, EAG_HEAD_.length).getValues() : [];
     const zeileVon = {};
     ist.forEach((r, k) => { if (r[C.deal - 1] !== '') zeileVon[r[C.deal - 1]] = k + 2; });
@@ -101,11 +120,12 @@ function eagTicketliste() {
     const neu = quelle.filter(q => !zeileVon[q.deal])
       .sort((a, b) => (a.zpn ? 0 : 1) - (b.zpn ? 0 : 1) || a.partner.localeCompare(b.partner) || a.deal - b.deal);
     if (neu.length) {
-      const start = Math.max(sh.getLastRow(), 1) + 1;
+      const start = eagLetzteZeile_(sh) + 1;
       neu.forEach(q => { if (!q.mail) q.mail = eagMailAusPipedrive_(q); });
       sh.getRange(start, 1, neu.length, EAG_HEAD_.length).setValues(neu.map((q, k) => eagZeile_(q, start + k)));
       sh.getRange(start, C.kunde, neu.length, 1).setNotes(neu.map(q => [q.notiz.join('\n')]));
       [C.gezogen, C.portal, C.antrag].forEach(c => sh.getRange(start, c, neu.length, 1).insertCheckboxes());
+      sh.getRange(start, EAG_COL_NEUSEIT_, neu.length, 1).setValue(new Date());
       log.push(`+${neu.length} neue Deals: ${neu.map(q => q.deal).join(', ')}`);
     }
 
@@ -118,7 +138,7 @@ function eagTicketliste() {
 
     eagFormelnUndFarben_(sh);
     SpreadsheetApp.flush();
-    const alle =sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), EAG_HEAD_.length).getDisplayValues();
+    const alle = sh.getRange(2, 1, Math.max(eagLetzteZeile_(sh) - 1, 1), EAG_HEAD_.length).getDisplayValues();
     const ready = alle.filter(r => r[C.ready - 1].indexOf('✅') === 0).length;
     const ohneMail = alle.filter(r => r[C.zpn - 1] && !r[C.mail - 1]).map(r => r[C.deal - 1]);
     const gezogen = alle.filter(r => r[C.gezogen - 1] === 'TRUE').length;
@@ -266,13 +286,14 @@ function eagZeile_(q, i) {
 // Bei jedem Lauf: Formel-Spalten H/J/M/Q + Farbregeln neu (Logik-Änderungen greifen auch in alten Zeilen).
 // A/B (Haken, Zeitstempel) und alle Werte-Spalten bleiben unangetastet.
 function eagFormelnUndFarben_(sh) {
-  const C = EAG_COL_, max = EAG_MAX_ZEILEN_, n = sh.getLastRow() - 1;
+  const C = EAG_COL_, max = EAG_MAX_ZEILEN_, n = eagLetzteZeile_(sh) - 1;
   if (n > 0) {
     const zeilen = Array.from({ length: n }, (_, k) => eagZeile_({}, k + 2));
     [C.check, C.ready, C.quote, C.kat].forEach(c =>
       sh.getRange(2, c, n, 1).setFormulas(zeilen.map(z => [z[c - 1]])));
     // Checkboxen nachziehen (Werte TRUE/FALSE bleiben erhalten)
     [C.gezogen, C.portal, C.antrag].forEach(c => sh.getRange(2, c, n, 1).insertCheckboxes());
+    if (sh.getMaxColumns() >= EAG_Z_ZUSAGE_) sh.getRange(2, EAG_Z_ZUSAGE_, n, 1).insertCheckboxes(); // U „Zusage schon"
     // Zeitstempel-Formel nur dort ergänzen, wo B komplett leer ist -- bestehende Zeitstempel nie anfassen
     const bR = sh.getRange(2, C.zeit, n, 1), bF = bR.getFormulas(), bV = bR.getValues();
     bF.forEach((f, k) => {
@@ -298,6 +319,105 @@ function eagFormelnUndFarben_(sh) {
     return !(b && eigene.has(b.getCriteriaValues()[0]));
   });
   sh.setConditionalFormatRules(fremde.concat(regeln));
+}
+
+// Letzte Zeile mit Deal-ID, Kunde oder ZPN (C/D/G). getLastRow zählt Checkboxen (FALSE) + Formeln in leeren
+// Zeilen mit → war am 08.10. 400 statt ~55 (Statistik falsch, Anhängen ab 401, rot/grün hinter Zeile 400).
+function eagLetzteZeile_(sh) {
+  const last = sh.getLastRow();
+  if (last < 2) return 1;
+  const v = sh.getRange(2, EAG_COL_.deal, last - 1, EAG_COL_.zpn - EAG_COL_.deal + 1).getValues();
+  for (let k = v.length - 1; k >= 0; k--) if (v[k][0] !== '' || v[k][1] !== '' || v[k][4] !== '') return k + 2;
+  return 1;
+}
+
+// Datenzeilen lückenlos nach oben (moveRows, Notizen/Farben wandern mit), darunter Checkboxen/Formeln/Werte A–V weg.
+// Zeitstempel B gezogener Zeilen danach prüfen und notfalls fix zurückschreiben (wie eagZiehungFarbigNachUnten_).
+function eagAufraeumen_(sh) {
+  const C = EAG_COL_, last = sh.getLastRow();
+  if (last < 2) return '';
+  const breite = Math.min(sh.getMaxColumns(), EAG_COL_NEUSEIT_);
+  const v = sh.getRange(2, 1, last - 1, breite).getValues();
+  const daten = v.map((r, k) => (r[C.deal - 1] !== '' || r[C.kunde - 1] !== '' || r[C.zpn - 1] !== '' ? k : -1)).filter(k => k >= 0);
+  const out = [];
+  let ziel = 0, verschoben = 0;
+  const merken = [];
+  daten.forEach(k => {
+    if (k !== ziel) {
+      if (v[k][C.gezogen - 1] === true && v[k][C.zeit - 1] instanceof Date) merken.push([ziel, v[k][C.zeit - 1]]);
+      sh.moveRows(sh.getRange(k + 2, 1), ziel + 2);
+      verschoben++;
+    }
+    ziel++;
+  });
+  if (verschoben) {
+    SpreadsheetApp.flush();
+    merken.forEach(([z, zeit]) => {
+      const b = sh.getRange(z + 2, C.zeit).getValue();
+      if (!(b instanceof Date) || b.getTime() !== zeit.getTime()) sh.getRange(z + 2, C.zeit).setValue(zeit);
+    });
+    out.push(`Aufgeräumt: ${verschoben} Zeile(n) aus dem Leerbereich nach oben geholt`);
+  }
+  const ende = daten.length + 1, rest = sh.getLastRow() - ende;
+  if (rest > 0) {
+    const cb = [C.gezogen, C.portal, C.antrag];
+    if (breite >= 21) cb.push(21);
+    cb.forEach(c => sh.getRange(ende + 1, c, rest, 1).removeCheckboxes());
+    sh.getRange(ende + 1, 1, rest, breite).clearContent();
+    out.push(`Leerzeilen ${ende + 1}–${ende + rest}: Checkboxen/Formeln entfernt`);
+  }
+  return out.join(' · ');
+}
+
+// V „Neu seit" anlegen (einmalig) + Filter bis V
+function eagNeuSeitSpalte_(sh) {
+  const c = EAG_COL_NEUSEIT_, max = EAG_MAX_ZEILEN_;
+  if (sh.getMaxColumns() < c) sh.insertColumnsAfter(sh.getMaxColumns(), c - sh.getMaxColumns());
+  if (sh.getRange(1, c).getValue() === 'Neu seit') return;
+  sh.getRange(1, c).setValue('Neu seit').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(EAG_FARBE_.track)
+    .setWrap(true).setVerticalAlignment('middle').setHorizontalAlignment('center');
+  sh.setColumnWidth(c, 110);
+  sh.getRange(2, c, max - 1, 1).setNumberFormat('dd.MM. HH:mm');
+  const f = sh.getFilter();
+  if (f && f.getRange().getLastColumn() < c) { f.remove(); sh.getRange(1, 1, max, c).createFilter(); }
+}
+
+// Einmal ausführen: Seans Liste (EAG_SEAN_) unten anhängen, ohne Deal-ID. Doppelte (ZPN oder Name) werden übersprungen
+// → mehrfach ausführbar. Notiz am Kunden = EAG_SEAN_TAG_ + Geburtsdatum. Kein ZPN → ⏳, wird nicht verteilt.
+function eagSeanNachtrag() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) { Logger.log('Läuft schon, abgebrochen.'); return; }
+  try {
+    const ss = eagListeHolen_(), sh = ss.getSheetByName('Ticketliste'), C = EAG_COL_;
+    const aufr = eagAufraeumen_(sh);
+    eagNeuSeitSpalte_(sh);
+    const last = eagLetzteZeile_(sh);
+    const ist = last > 1 ? sh.getRange(2, 1, last - 1, EAG_HEAD_.length).getDisplayValues() : [];
+    const norm = s => String(s).toLowerCase().replace(/\s+/g, '');
+    const zpnDa = new Set(ist.map(r => r[C.zpn - 1]).filter(Boolean)), nameDa = new Set(ist.map(r => norm(r[C.kunde - 1])));
+    const neu = [], skip = [];
+    EAG_SEAN_.forEach(([kunde, geb, roh, mail]) => {
+      const zpn = String(roh).replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+      if ((zpn && zpnDa.has(zpn)) || nameDa.has(norm(kunde))) { skip.push(kunde); return; }
+      neu.push({ deal: '', kunde, partner: 'Sean', plz: '', zpn, mail, kwp: '', kwh: '', neu: '',
+        notiz: [EAG_SEAN_TAG_, geb ? `Geb. ${geb}` : '', zpn ? '' : 'kein ZPN → später abklären'].filter(Boolean) });
+    });
+    if (neu.length) {
+      const start = last + 1;
+      sh.getRange(start, 1, neu.length, EAG_HEAD_.length).setValues(neu.map((q, k) => eagZeile_(q, start + k)));
+      sh.getRange(start, C.kunde, neu.length, 1).setNotes(neu.map(q => [q.notiz.join('\n')]));
+      [C.gezogen, C.portal, C.antrag].forEach(c => sh.getRange(start, c, neu.length, 1).insertCheckboxes());
+      if (sh.getMaxColumns() >= EAG_Z_ZUSAGE_) sh.getRange(start, EAG_Z_ZUSAGE_, neu.length, 1).insertCheckboxes();
+      sh.getRange(start, EAG_COL_NEUSEIT_, neu.length, 1).setValue(new Date());
+    }
+    SpreadsheetApp.flush();
+    const z = neu.length ? sh.getRange(last + 1, 1, neu.length, EAG_HEAD_.length).getDisplayValues() : [];
+    Logger.log(`${ss.getUrl()}\n${aufr || 'Aufräumen: nichts zu tun'}\n+${neu.length} von Sean (Zeile ${last + 1}–${last + neu.length}):\n` +
+      z.map(r => `${r[C.kunde - 1]} · ${r[C.zpn - 1] || '—'} · ${r[C.check - 1]} · ${r[C.ready - 1]}`).join('\n') +
+      (skip.length ? `\nÜbersprungen (schon drin): ${skip.join(', ')}` : ''));
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function eagListeHolen_() {
