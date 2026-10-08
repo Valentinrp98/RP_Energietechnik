@@ -1,25 +1,27 @@
 /**
  * EagZiehung.gs -- Ticketziehung 08.10.2026: Master (Tab „Ticketliste") → ein Tab pro Zieher
  *
- * 1. eagZiehungVorbereiten(): Master bekommt „Prio" (R, Dropdown „hoch") + „Zieher" (S), neuer Tab „Team".
- * 2. Von Hand: Namen in „Team" eintragen + Anwesend anhaken; im Master Prio = „hoch" setzen.
- * 3. eagZiehungVerteilen(): aktualisiert zuerst die Liste, verteilt dann alle ✅ ready, nicht gezogenen Deals
- *    gleichmäßig auf die Anwesenden (Prio hoch → Kat A → B → C → D → ?), schreibt „Zieher" in den Master
+ * 1. eagZiehungVorbereiten(): Master bekommt „Prio" (R, Dropdown „hoch"), „Zieher" (S), „Fix-Zieher" (T, Dropdown
+ *    aus Team), neuer Tab „Team" (= Menschen anlegen). Mehrfach ausführbar.
+ * 2. Von Hand: Namen in „Team" eintragen + Anwesend anhaken; im Master Prio = „hoch" setzen;
+ *    Deals, die fix an jemanden gehen, in T zuordnen (gewinnt immer, solange die Person anwesend ist).
+ * 3. eagZiehungVerteilen(): aktualisiert zuerst die Liste, setzt Fix-Zuordnungen, verteilt dann alle übrigen
+ *    ✅ ready, nicht gezogenen Deals gleichmäßig auf die Anwesenden (Fix-Deals zählen bei der Last mit) (Prio hoch → Kat A → B → C → D → ?), schreibt „Zieher" in den Master
  *    und baut die Tabs „🎟 <Name>" (Prio hoch ganz oben). Mehrfach ausführbar: Zuteilung an Anwesende bleibt,
  *    Deals von Abwesenden werden neu verteilt, bereits gezogene bleiben, wo sie sind.
  * 4. eagZiehungOnEdit (installierbarer Trigger, legt Schritt 3 an): Hakerl „Ticket gezogen" im Personen-Tab
  *    → Hakerl im Master (→ Zeitstempel B), und umgekehrt.
  */
 
-const EAG_Z_PRIO_ = 18, EAG_Z_ZIEHER_ = 19; // R, S im Master
+const EAG_Z_PRIO_ = 18, EAG_Z_ZIEHER_ = 19, EAG_Z_FIX_ = 20; // R, S, T im Master
 const EAG_Z_TEAM_ = 'Team', EAG_Z_PREFIX_ = '🎟 ', EAG_Z_TEAM_ZEILEN_ = 20;
 const EAG_Z_HEAD_ = [['Prio', 55], ['Ticket gezogen', 70], ['Zeitpunkt (Master)', 135], ['Deal-ID', 65], ['Kunde', 200],
   ['Einspeise-ZPN', 270], ['Ticket-E-Mail', 230], ['PLZ', 55], ['kWp', 55], ['Kategorie', 70], ['Partner', 80], ['Hinweise', 320]];
 
 function eagZiehungVorbereiten() {
   const ss = eagListeHolen_(), sh = ss.getSheetByName('Ticketliste'), max = EAG_MAX_ZEILEN_;
-  if (sh.getMaxColumns() < EAG_Z_ZIEHER_) sh.insertColumnsAfter(sh.getMaxColumns(), EAG_Z_ZIEHER_ - sh.getMaxColumns());
-  [[EAG_Z_PRIO_, 'Prio', 60], [EAG_Z_ZIEHER_, 'Zieher', 110]].forEach(([c, name, w]) => {
+  if (sh.getMaxColumns() < EAG_Z_FIX_) sh.insertColumnsAfter(sh.getMaxColumns(), EAG_Z_FIX_ - sh.getMaxColumns());
+  [[EAG_Z_PRIO_, 'Prio', 60], [EAG_Z_ZIEHER_, 'Zieher', 110], [EAG_Z_FIX_, 'Fix-Zieher', 110]].forEach(([c, name, w]) => {
     sh.getRange(1, c).setValue(name).setFontWeight('bold').setFontColor('#FFFFFF').setBackground(EAG_FARBE_.track)
       .setWrap(true).setVerticalAlignment('middle').setHorizontalAlignment('center');
     sh.setColumnWidth(c, w);
@@ -27,7 +29,7 @@ function eagZiehungVorbereiten() {
   sh.getRange(2, EAG_Z_PRIO_, max - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation()
     .requireValueInList(['hoch'], true).setAllowInvalid(false).build());
   const f = sh.getFilter();
-  if (f && f.getRange().getLastColumn() < EAG_Z_ZIEHER_) { f.remove(); sh.getRange(1, 1, max, EAG_Z_ZIEHER_).createFilter(); }
+  if (f && f.getRange().getLastColumn() < EAG_Z_FIX_) { f.remove(); sh.getRange(1, 1, max, EAG_Z_FIX_).createFilter(); }
   // Prio hoch rot markieren (eagFormelnUndFarben_ lässt fremde Regeln stehen)
   const formel = '=$R2="hoch"', regeln = sh.getConditionalFormatRules();
   if (!regeln.some(r => r.getBooleanCondition() && r.getBooleanCondition().getCriteriaValues()[0] === formel)) {
@@ -44,11 +46,19 @@ function eagZiehungVorbereiten() {
     t.getRange(2, 3, n, 2).setFormulas(Array.from({ length: n }, (_, k) => [
       `=IF(A${k + 2}="","",COUNTIF(Ticketliste!S:S,A${k + 2}))`,
       `=IF(A${k + 2}="","",COUNTIFS(Ticketliste!S:S,A${k + 2},Ticketliste!A:A,TRUE))`]));
-    t.getRange('F1:F4').setValues([['Ablauf'], ['1. Namen eintragen, Anwesende anhaken'],
-      ['2. Im Tab Ticketliste Spalte „Prio" = hoch setzen'], ['3. eagZiehungVerteilen() ausführen (EagZiehung.gs)']]);
-    t.getRange('F1').setFontWeight('bold');
-    t.setColumnWidth(1, 160); t.setColumnWidth(6, 340); t.setFrozenRows(1);
+    t.setColumnWidth(1, 160); t.setColumnWidth(6, 380); t.setFrozenRows(1);
   }
+  const team = ss.getSheetByName(EAG_Z_TEAM_);
+  team.getRange('E1').setValue('davon fix').setFontWeight('bold').setFontColor('#FFFFFF').setBackground(EAG_FARBE_.track);
+  team.getRange(2, 5, EAG_Z_TEAM_ZEILEN_, 1).setFormulas(Array.from({ length: EAG_Z_TEAM_ZEILEN_ }, (_, k) =>
+    [`=IF(A${k + 2}="","",COUNTIF(Ticketliste!T:T,A${k + 2}))`]));
+  team.getRange('F1:F5').setValues([['Ablauf'], ['1. Menschen hier anlegen (Spalte A), Anwesende anhaken'],
+    ['2. Ticketliste Spalte R „Prio" = hoch → bei der Person ganz oben'],
+    ['3. Ticketliste Spalte T „Fix-Zieher" = Name → Deal geht fix an diese Person'],
+    ['4. eagZiehungVerteilen() ausführen (EagZiehung.gs)']]);
+  team.getRange('F1').setFontWeight('bold');
+  sh.getRange(2, EAG_Z_FIX_, max - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation()
+    .requireValueInRange(team.getRange(`A2:A${EAG_Z_TEAM_ZEILEN_ + 1}`), true).setAllowInvalid(true).build());
   Logger.log(`Vorbereitet: ${ss.getUrl()}#gid=${ss.getSheetByName(EAG_Z_TEAM_).getSheetId()}`);
 }
 
@@ -58,19 +68,20 @@ function eagZiehungVerteilen() {
   if (!lock.tryLock(30000)) { Logger.log('Läuft schon, abgebrochen.'); return; }
   try {
     const ss = eagListeHolen_(), sh = ss.getSheetByName('Ticketliste'), team = ss.getSheetByName(EAG_Z_TEAM_), C = EAG_COL_;
-    if (!team || sh.getMaxColumns() < EAG_Z_ZIEHER_) throw new Error('Zuerst eagZiehungVorbereiten() ausführen');
+    if (!team || sh.getMaxColumns() < EAG_Z_FIX_) throw new Error('Zuerst eagZiehungVorbereiten() ausführen');
     const leute = team.getRange(2, 1, Math.max(team.getLastRow() - 1, 1), 2).getValues()
       .filter(r => String(r[0]).trim() && r[1] === true).map(r => String(r[0]).trim());
     if (!leute.length) throw new Error('Niemand als anwesend angehakt (Tab „Team")');
 
-    const n = sh.getLastRow() - 1, rng = sh.getRange(2, 1, n, EAG_Z_ZIEHER_);
+    const n = sh.getLastRow() - 1, rng = sh.getRange(2, 1, n, EAG_Z_FIX_);
     const w = rng.getValues(), a = rng.getDisplayValues(), kRng = sh.getRange(2, C.kunde, n, 1);
     const notiz = kRng.getNotes(), schrift = kRng.getFontColors(), hg = kRng.getBackgrounds();
     const deals = w.map((r, k) => ({
       k, gezogen: r[C.gezogen - 1] === true, deal: r[C.deal - 1], kunde: a[k][C.kunde - 1], zpn: a[k][C.zpn - 1],
       mail: a[k][C.mail - 1], plz: a[k][C.plz - 1], kwp: r[C.kwp - 1], kat: a[k][C.kat - 1], partner: a[k][C.partner - 1],
       ready: a[k][C.ready - 1].indexOf('✅') === 0, prio: String(r[EAG_Z_PRIO_ - 1]).trim().toLowerCase() === 'hoch',
-      zieher: String(r[EAG_Z_ZIEHER_ - 1]).trim(), notiz: notiz[k][0], schrift: schrift[k][0], hg: hg[k][0]
+      zieher: String(r[EAG_Z_ZIEHER_ - 1]).trim(), fix: String(r[EAG_Z_FIX_ - 1]).trim(),
+      notiz: notiz[k][0], schrift: schrift[k][0], hg: hg[k][0]
     })).filter(d => d.deal !== '' || d.zpn);
 
     const katRang = { A: 1, B: 2, C: 3, D: 4 };
@@ -79,8 +90,19 @@ function eagZiehungVerteilen() {
     const last = {}, hoch = {};
     leute.forEach(p => { last[p] = 0; hoch[p] = 0; });
     const zaehle = d => { last[d.zieher]++; if (d.prio) hoch[d.zieher]++; };
+    const log = [], warn = [];
+    // Fix-Zieher (Spalte T) gewinnt, solange die Person anwesend ist; sonst normal verteilen + Warnung
+    const person = {};
+    leute.forEach(p => { person[p.toLowerCase()] = p; });
+    deals.filter(d => d.fix && d.ready && !d.gezogen).forEach(d => {
+      const p = person[d.fix.toLowerCase()];
+      if (!p) { warn.push(`${d.deal || d.kunde}: Fix-Zieher „${d.fix}" nicht anwesend → normal verteilt`); return; }
+      if (d.zieher !== p) { if (d.zieher) log.push(`${d.deal || d.kunde}: ${d.zieher} → ${p} (fix)`); d.zieher = p; }
+      d.istFix = true;
+    });
+    deals.filter(d => d.fix && !d.ready && !d.gezogen)
+      .forEach(d => warn.push(`${d.deal || d.kunde}: Fix-Zieher „${d.fix}", aber nicht ready → nicht verteilt`));
     deals.filter(d => leute.indexOf(d.zieher) >= 0).forEach(zaehle);
-    const log = [];
     deals.filter(d => d.ready && !d.gezogen && leute.indexOf(d.zieher) < 0).sort(ordnung).forEach(d => {
       const alt = d.zieher;
       d.zieher = leute.slice().sort((x, y) => last[x] - last[y] || hoch[x] - hoch[y] || leute.indexOf(x) - leute.indexOf(y))[0];
@@ -110,7 +132,7 @@ function eagZiehungVerteilen() {
     const offen = deals.filter(d => !d.ready && !d.zieher);
     Logger.log(`Anwesend: ${leute.join(', ')}\n${links.join('\n')}\n` +
       `Nicht verteilt (nicht ready): ${offen.map(d => `${d.deal || d.kunde} ${a[d.k][C.ready - 1]}`).join(', ') || '—'}` +
-      (log.length ? `\nUmverteilt:\n${log.join('\n')}` : ''));
+      (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : ''));
   } finally {
     lock.releaseLock();
   }
@@ -134,7 +156,7 @@ function eagZiehungTab_(ss, name, liste, pos) {
   t.getRange(2, 1, n, h).setValues(liste.map((d, k) => {
     const z = `XLOOKUP(F${k + 2},Ticketliste!G:G,Ticketliste!B:B,"")`;
     return [d.prio ? 'hoch' : '', d.gezogen, `=IFERROR(IF(${z}="","",${z}),"")`, d.deal, d.kunde, d.zpn, d.mail,
-      d.plz, d.kwp, d.kat, d.partner, d.notiz];
+      d.plz, d.kwp, d.kat, d.partner, (d.istFix ? '📌 fix zugeordnet' + (d.notiz ? '\n' : '') : '') + d.notiz];
   }));
   // Namensfarben aus dem Master übernehmen
   t.getRange(2, 5, n, 1).setFontColors(liste.map(d => [d.schrift])).setBackgrounds(liste.map(d => [d.hg]));
