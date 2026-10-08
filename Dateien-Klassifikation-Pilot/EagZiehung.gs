@@ -426,13 +426,15 @@ function eagZiehungSpaltenZeigen() {
   EAG_Z_VERBERGEN_.forEach(x => sh.showColumns(sh.getRange(x + '1').getColumn()));
 }
 
-// Master: alles gesperrt außer den Hakerl-Spalten A (gezogen), O (EAG-Portal), P (Antrag), U (Zusage schon)
+// Master: alles gesperrt außer den Hakerl-Spalten A (gezogen), O (EAG-Portal), P (Antrag), U (Zusage schon),
+// W (Mail mit ZPN erhalten, wenn angelegt)
 function eagZiehungSchutzMaster_(sh) {
   // alte Einzel-Sperren G/I (nur Owner) ablösen → RP darf jetzt auch dort
   sh.getProtections(SpreadsheetApp.ProtectionType.RANGE)
     .filter(p => p.getDescription() === 'EAG: ZPN + Mail gesperrt (Korrektur im Montage-Sheet)').forEach(p => p.remove());
   const max = EAG_MAX_ZEILEN_, C = EAG_COL_;
-  eagZiehungSchutzTab_(sh, [C.gezogen, C.portal, C.antrag, EAG_Z_ZUSAGE_].map(c => sh.getRange(2, c, max - 1, 1)));
+  const frei = [C.gezogen, C.portal, C.antrag, EAG_Z_ZUSAGE_].concat(eagMailZpnDa_(sh) ? [EAG_COL_MAILZPN_] : []);
+  eagZiehungSchutzTab_(sh, frei.map(c => sh.getRange(2, c, max - 1, 1)));
 }
 
 // Tab-Schutz neu setzen: ganze Tab gesperrt für Nicht-RP, frei bleiben nur die übergebenen Bereiche

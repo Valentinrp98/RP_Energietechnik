@@ -295,6 +295,7 @@ function eagFormelnUndFarben_(sh) {
     // Checkboxen nachziehen (Werte TRUE/FALSE bleiben erhalten)
     [C.gezogen, C.portal, C.antrag].forEach(c => sh.getRange(2, c, n, 1).insertCheckboxes());
     if (sh.getMaxColumns() >= EAG_Z_ZUSAGE_) sh.getRange(2, EAG_Z_ZUSAGE_, n, 1).insertCheckboxes(); // U „Zusage schon"
+    if (eagMailZpnDa_(sh)) sh.getRange(2, EAG_COL_MAILZPN_, n, 1).insertCheckboxes(); // W „Mail mit ZPN erhalten"
     // Zeitstempel-Formel nur dort ergänzen, wo B komplett leer ist -- bestehende Zeitstempel nie anfassen
     const bR = sh.getRange(2, C.zeit, n, 1), bF = bR.getFormulas(), bV = bR.getValues();
     bF.forEach((f, k) => {
@@ -381,6 +382,25 @@ function eagNeuSeitSpalte_(sh) {
   sh.getRange(2, c, max - 1, 1).setNumberFormat('dd.MM. HH:mm');
   const f = sh.getFilter();
   if (f && f.getRange().getLastColumn() < c) { f.remove(); sh.getRange(1, 1, max, c).createFilter(); }
+}
+
+// W „Mail mit ZPN erhalten" (08.10.): Hakerl-Spalte, Handarbeit wie A/O/P. Einmal ausführen, mehrfach ausführbar.
+const EAG_COL_MAILZPN_ = 23, EAG_MAILZPN_KOPF_ = 'Mail mit ZPN erhalten';
+function eagMailZpnDa_(sh) {
+  return sh.getMaxColumns() >= EAG_COL_MAILZPN_ && sh.getRange(1, EAG_COL_MAILZPN_).getValue() === EAG_MAILZPN_KOPF_;
+}
+function eagMailZpnSpalteAn() {
+  const sh = eagListeHolen_().getSheetByName('Ticketliste'), c = EAG_COL_MAILZPN_, max = EAG_MAX_ZEILEN_;
+  if (sh.getMaxColumns() < c) sh.insertColumnsAfter(sh.getMaxColumns(), c - sh.getMaxColumns());
+  sh.getRange(1, c).setValue(EAG_MAILZPN_KOPF_).setFontWeight('bold').setFontColor('#FFFFFF').setBackground(EAG_FARBE_.track)
+    .setWrap(true).setVerticalAlignment('middle').setHorizontalAlignment('center');
+  sh.setColumnWidth(c, 110);
+  const n = eagLetzteZeile_(sh) - 1;
+  if (n > 0) sh.getRange(2, c, n, 1).insertCheckboxes();
+  const f = sh.getFilter();
+  if (f && f.getRange().getLastColumn() < c) { f.remove(); sh.getRange(1, 1, max, c).createFilter(); }
+  eagZiehungSchutzMaster_(sh); // W für Link-Mitbearbeiter freigeben
+  Logger.log(`W „${EAG_MAILZPN_KOPF_}" angelegt, Hakerl in ${n} Zeilen.`);
 }
 
 // Einmal ausführen: Seans Liste (EAG_SEAN_) unten anhängen, ohne Deal-ID. Doppelte (ZPN oder Name) werden übersprungen
