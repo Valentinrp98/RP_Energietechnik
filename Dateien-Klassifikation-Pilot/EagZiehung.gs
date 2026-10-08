@@ -19,8 +19,10 @@ const EAG_Z_TEAM_ = 'Team', EAG_Z_PREFIX_ = '🎟 ', EAG_Z_TEAM_ZEILEN_ = 20;
 // Ticket-Mail fürs EAG-Formular: Gruppe → alle im Team bekommen die Ticket-Mails (08.10., Test-Mail angekommen)
 const EAG_Z_TICKET_MAIL_ = 'eag@rp-energietechnik.at';
 const EAG_Z_SCHUTZ_ = 'EAG-Ziehung: nur zum Kopieren, nur Hakerl änderbar';
-const EAG_Z_HEAD_ = [['Prio', 55], ['Ticket gezogen', 70], ['Zeitpunkt (Master)', 135], ['Deal-ID', 65], ['Kunde', 200],
-  ['Einspeise-ZPN', 270], ['Ticket-E-Mail', 230], ['PLZ', 55], ['kWp', 55], ['Kategorie', 70], ['Partner', 80], ['Hinweise', 320]];
+// Personen-Tab (seit 08.10. abgespeckt): A Hakerl · B Zeitpunkt · C Kunde · D ZPN · E Mail · F Deal-ID (ausgeblendet, nur für den Sync)
+// Prio hoch = Kunde fett; Prio/Fix/Hinweise stehen als Zell-Notiz am Kunden
+const EAG_Z_HEAD_ = [['Ticket gezogen', 70], ['Zeitpunkt (Master)', 135], ['Kunde', 220], ['Einspeise-ZPN', 280],
+  ['Ticket-E-Mail', 230], ['Deal-ID', 65]];
 
 function eagZiehungVorbereiten() {
   const ss = eagListeHolen_(), sh = ss.getSheetByName('Ticketliste'), max = EAG_MAX_ZEILEN_;
@@ -187,25 +189,27 @@ function eagZiehungTab_(ss, name, liste, pos) {
     .setBackground(EAG_FARBE_.ticket).setWrap(true).setVerticalAlignment('middle');
   EAG_Z_HEAD_.forEach((x, i) => t.setColumnWidth(i + 1, x[1]));
   t.setFrozenRows(1);
-  t.getRange(2, 6, n, 1).setNumberFormat('@');
-  t.getRange(2, 3, n, 1).setNumberFormat('dd.MM. HH:mm:ss');
-  t.getRange(2, 2, n, 1).insertCheckboxes();
+  if (t.getMaxColumns() > h) t.deleteColumns(h + 1, t.getMaxColumns() - h); // alte Spalten (Prio, PLZ, kWp …) weg
+  t.getRange(2, 4, n, 1).setNumberFormat('@');
+  t.getRange(2, 2, n, 1).setNumberFormat('dd.MM. HH:mm:ss');
+  t.getRange(2, 1, n, 1).insertCheckboxes();
   t.getRange(2, 1, n, h).setValues(liste.map((d, k) => {
-    const z = `XLOOKUP(F${k + 2},Ticketliste!G:G,Ticketliste!B:B,"")`;
-    return [d.prio ? 'hoch' : '', d.gezogen, `=IFERROR(IF(${z}="","",${z}),"")`, d.deal, d.kunde, d.zpn, EAG_Z_TICKET_MAIL_,
-      d.plz, d.kwp, d.kat, d.partner, (d.istFix ? '📌 fix zugeordnet' + (d.notiz ? '\n' : '') : '') + d.notiz];
+    const z = `XLOOKUP(D${k + 2},Ticketliste!G:G,Ticketliste!B:B,"")`;
+    return [d.gezogen, `=IFERROR(IF(${z}="","",${z}),"")`, d.kunde, d.zpn, EAG_Z_TICKET_MAIL_, d.deal];
   }));
-  // Namensfarben aus dem Master übernehmen
-  t.getRange(2, 5, n, 1).setFontColors(liste.map(d => [d.schrift])).setBackgrounds(liste.map(d => [d.hg]));
+  // Kunde: Namensfarben aus dem Master, Prio hoch fett, Prio/Fix/Hinweise als Notiz (stört beim Kopieren nicht)
+  t.getRange(2, 3, n, 1).setFontColors(liste.map(d => [d.schrift])).setBackgrounds(liste.map(d => [d.hg]))
+    .setFontWeights(liste.map(d => [d.prio ? 'bold' : 'normal']))
+    .setNotes(liste.map(d => [[d.prio ? '🔴 Prio hoch' : '', d.istFix ? '📌 fix zugeordnet' : '',
+      `Deal ${d.deal} · ${d.partner} · Kat ${d.kat || '?'}`, d.notiz].filter(Boolean).join('\n')]));
+  t.hideColumns(h);
   t.setConditionalFormatRules([
-    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$B2=TRUE').setBackground('#C6E0B4')
-      .setRanges([t.getRange(2, 1, Math.max(n, 1), h)]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$A2="hoch"').setBackground('#F4CCCC').setBold(true)
-      .setRanges([t.getRange(2, 1, Math.max(n, 1), 1)]).build()
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$A2=TRUE').setBackground('#C6E0B4')
+      .setRanges([t.getRange(2, 1, n, h)]).build()
   ]);
-  // Nur zum Kopieren: ganzer Tab gesperrt außer Hakerl B (bei jedem Lauf neu, weil sich die Zeilenzahl ändert)
+  // Nur zum Kopieren: ganzer Tab gesperrt außer Hakerl A (bei jedem Lauf neu, weil sich die Zeilenzahl ändert)
   t.getProtections(SpreadsheetApp.ProtectionType.SHEET).forEach(p => p.remove());
-  eagZiehungNurIch_(t.protect().setDescription(EAG_Z_SCHUTZ_)).setUnprotectedRanges([t.getRange(2, 2, n, 1)]);
+  eagZiehungNurIch_(t.protect().setDescription(EAG_Z_SCHUTZ_)).setUnprotectedRanges([t.getRange(2, 1, n, 1)]);
   return t;
 }
 
@@ -240,9 +244,9 @@ function eagZiehungOnEdit(e) {
   const r = e.range, t = r.getSheet(), name = t.getName(), ss = t.getParent(), C = EAG_COL_;
   if (r.getRow() < 2) return;
   const master = ss.getSheetByName('Ticketliste');
-  if (name.indexOf(EAG_Z_PREFIX_) === 0 && r.getColumn() <= 2 && r.getLastColumn() >= 2) {
+  if (name.indexOf(EAG_Z_PREFIX_) === 0 && r.getColumn() === 1) { // Personen-Tab: A Hakerl, D ZPN, F Deal-ID
     const m = master.getRange(2, 1, master.getLastRow() - 1, C.zpn).getDisplayValues();
-    t.getRange(r.getRow(), 2, r.getNumRows(), 5).getValues().forEach(([gez, , deal, , zpn]) => {
+    t.getRange(r.getRow(), 1, r.getNumRows(), 6).getValues().forEach(([gez, , , zpn, , deal]) => {
       const k = m.findIndex(x => deal !== '' ? String(x[C.deal - 1]) === String(deal) : (zpn && x[C.zpn - 1] === zpn));
       if (k >= 0) master.getRange(k + 2, C.gezogen).setValue(gez === true);
     });
@@ -250,10 +254,10 @@ function eagZiehungOnEdit(e) {
     master.getRange(r.getRow(), 1, r.getNumRows(), EAG_Z_ZIEHER_).getValues().forEach(x => {
       const tab = x[EAG_Z_ZIEHER_ - 1] && ss.getSheetByName(EAG_Z_PREFIX_ + String(x[EAG_Z_ZIEHER_ - 1]).trim());
       if (!tab || tab.getLastRow() < 2) return;
-      const zeilen = tab.getRange(2, 4, tab.getLastRow() - 1, 3).getDisplayValues(); // D Deal, E Kunde, F ZPN
+      const zeilen = tab.getRange(2, 4, tab.getLastRow() - 1, 3).getDisplayValues(); // D ZPN, E Mail, F Deal
       const deal = x[C.deal - 1], zpn = String(x[C.zpn - 1]);
-      const k = zeilen.findIndex(z => deal !== '' ? z[0] === String(deal) : (zpn && z[2] === zpn));
-      if (k >= 0) tab.getRange(k + 2, 2).setValue(x[C.gezogen - 1] === true);
+      const k = zeilen.findIndex(z => deal !== '' ? z[2] === String(deal) : (zpn && z[0] === zpn));
+      if (k >= 0) tab.getRange(k + 2, 1).setValue(x[C.gezogen - 1] === true);
     });
   }
 }
