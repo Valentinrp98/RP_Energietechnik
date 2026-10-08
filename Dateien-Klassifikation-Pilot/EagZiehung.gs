@@ -15,6 +15,9 @@
  */
 
 const EAG_Z_PRIO_ = 18, EAG_Z_ZIEHER_ = 19, EAG_Z_FIX_ = 20; // R, S, T im Master
+// U „Zusage schon" (seit 08.10.): Förderzusage gibt's schon → kein Ticket nötig. Hakerl im Master U oder Personen-Tab G
+// → Zeile verschwindet sofort aus dem Personen-Tab (onEdit), Master-Zeile wandert beim nächsten Verteilen nach unten.
+const EAG_Z_ZUSAGE_ = 21, EAG_Z_TAB_ZUSAGE_ = 7, EAG_Z_TAB_DEAL_ = 6;
 const EAG_Z_TEAM_ = 'Team', EAG_Z_PREFIX_ = '🎟 ', EAG_Z_TEAM_ZEILEN_ = 20;
 // Ticket-Mail fürs EAG-Formular: Gruppe → alle im Team bekommen die Ticket-Mails (08.10., Test-Mail angekommen)
 const EAG_Z_TICKET_MAIL_ = 'eag@rp-energietechnik.at';
@@ -22,20 +25,22 @@ const EAG_Z_SCHUTZ_ = 'EAG: RP alles, alle anderen nur Hakerl';
 // Personen-Tab (seit 08.10. abgespeckt): A Hakerl · B Zeitpunkt · C Kunde · D ZPN · E Mail · F Deal-ID (ausgeblendet, nur für den Sync)
 // Prio hoch = Kunde fett; Prio/Fix/Hinweise stehen als Zell-Notiz am Kunden
 const EAG_Z_HEAD_ = [['Ticket gezogen', 70], ['Zeitpunkt (Master)', 135], ['Kunde', 220], ['Einspeise-ZPN', 280],
-  ['Ticket-E-Mail', 230], ['Deal-ID', 65]];
+  ['Ticket-E-Mail', 230], ['Deal-ID', 65], ['Zusage schon (Zeile geht weg)', 95]];
 
 function eagZiehungVorbereiten() {
   const ss = eagListeHolen_(), sh = ss.getSheetByName('Ticketliste'), max = EAG_MAX_ZEILEN_;
-  if (sh.getMaxColumns() < EAG_Z_FIX_) sh.insertColumnsAfter(sh.getMaxColumns(), EAG_Z_FIX_ - sh.getMaxColumns());
-  [[EAG_Z_PRIO_, 'Prio', 60], [EAG_Z_ZIEHER_, 'Zieher', 110], [EAG_Z_FIX_, 'Fix-Zieher', 110]].forEach(([c, name, w]) => {
+  if (sh.getMaxColumns() < EAG_Z_ZUSAGE_) sh.insertColumnsAfter(sh.getMaxColumns(), EAG_Z_ZUSAGE_ - sh.getMaxColumns());
+  [[EAG_Z_PRIO_, 'Prio', 60], [EAG_Z_ZIEHER_, 'Zieher', 110], [EAG_Z_FIX_, 'Fix-Zieher', 110],
+    [EAG_Z_ZUSAGE_, 'Zusage schon', 80]].forEach(([c, name, w]) => {
     sh.getRange(1, c).setValue(name).setFontWeight('bold').setFontColor('#FFFFFF').setBackground(EAG_FARBE_.track)
       .setWrap(true).setVerticalAlignment('middle').setHorizontalAlignment('center');
     sh.setColumnWidth(c, w);
   });
   sh.getRange(2, EAG_Z_PRIO_, max - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation()
     .requireValueInList(['hoch'], true).setAllowInvalid(false).build());
+  if (!sh.getRange(2, EAG_Z_ZUSAGE_).getDataValidation()) sh.getRange(2, EAG_Z_ZUSAGE_, max - 1, 1).insertCheckboxes();
   const f = sh.getFilter();
-  if (f && f.getRange().getLastColumn() < EAG_Z_FIX_) { f.remove(); sh.getRange(1, 1, max, EAG_Z_FIX_).createFilter(); }
+  if (f && f.getRange().getLastColumn() < EAG_Z_ZUSAGE_) { f.remove(); sh.getRange(1, 1, max, EAG_Z_ZUSAGE_).createFilter(); }
   // Prio hoch rot markieren (eagFormelnUndFarben_ lässt fremde Regeln stehen)
   const formel = '=$R2="hoch"', regeln = sh.getConditionalFormatRules();
   if (!regeln.some(r => r.getBooleanCondition() && r.getBooleanCondition().getCriteriaValues()[0] === formel)) {
@@ -86,13 +91,13 @@ function eagZiehungLauf_(vorschau, ausgleich) {
   if (!lock.tryLock(30000)) { Logger.log('Läuft schon, abgebrochen.'); return; }
   try {
     const ss = eagListeHolen_(), sh = ss.getSheetByName('Ticketliste'), team = ss.getSheetByName(EAG_Z_TEAM_), C = EAG_COL_;
-    if (!team || sh.getMaxColumns() < EAG_Z_FIX_) throw new Error('Zuerst eagZiehungVorbereiten() ausführen');
+    if (!team || sh.getMaxColumns() < EAG_Z_ZUSAGE_) throw new Error('Zuerst eagZiehungVorbereiten() ausführen');
     const leute = team.getRange(2, 1, Math.max(team.getLastRow() - 1, 1), 2).getValues()
       .filter(r => String(r[0]).trim() && r[1] === true).map(r => String(r[0]).trim());
     if (!leute.length) throw new Error('Niemand als anwesend angehakt (Tab „Team")');
     const sortLog = vorschau ? '' : '\n' + eagZiehungFarbigNachUnten_(sh); // vor dem Lesen, Zeilen k gelten danach
 
-    const n = sh.getLastRow() - 1, rng = sh.getRange(2, 1, n, EAG_Z_FIX_);
+    const n = sh.getLastRow() - 1, rng = sh.getRange(2, 1, n, EAG_Z_ZUSAGE_);
     const w = rng.getValues(), a = rng.getDisplayValues(), kRng = sh.getRange(2, C.kunde, n, 1);
     const notiz = kRng.getNotes(), schrift = kRng.getFontColors(), hg = kRng.getBackgrounds();
     const deals = w.map((r, k) => ({
@@ -103,7 +108,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
       prio: String(r[EAG_Z_PRIO_ - 1]).trim().toLowerCase() === 'hoch',
       zieher: String(r[EAG_Z_ZIEHER_ - 1]).trim(), fix: String(r[EAG_Z_FIX_ - 1]).trim(),
       notiz: notiz[k][0], schrift: schrift[k][0], hg: hg[k][0],
-      farbe: eagZiehungFarbe_(schrift[k][0]) || eagZiehungFarbe_(hg[k][0])
+      farbe: eagZiehungFarbe_(schrift[k][0]) || eagZiehungFarbe_(hg[k][0]) || (r[EAG_Z_ZUSAGE_ - 1] === true ? 'Zusage' : '')
     })).filter(d => d.deal !== '' || d.zpn);
 
     const katRang = { A: 1, B: 2, C: 3, D: 4 };
@@ -122,7 +127,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
     const raus = f => deals.filter(d => d.raus && d.farbe === f).map(d => d.deal || d.kunde).join(', ') || '—';
     const sonstFarbe = deals.filter(d => !d.farbe && (!/^#0{6}$/i.test(d.schrift) || !/^#f{6}$/i.test(d.hg)))
       .map(d => `${d.deal || d.kunde} (Schrift ${d.schrift}, Hintergrund ${d.hg})`);
-    const rausLog = `\nRaus rot (Storno): ${raus('rot')}\nRaus grün (selber): ${raus('grün')}` +
+    const rausLog = `\nRaus rot (Storno): ${raus('rot')}\nRaus grün (selber): ${raus('grün')}\nRaus Zusage schon: ${raus('Zusage')}` +
       (sonstFarbe.length ? `\nAndere Farbe, wird verteilt: ${sonstFarbe.join(', ')}` : '');
     // Fix-Zieher (Spalte T) gewinnt, solange die Person anwesend ist; sonst normal verteilen + Warnung
     const person = {};
@@ -207,6 +212,8 @@ function eagZiehungTab_(ss, name, liste, pos) {
     t.clear(); t.clearNotes(); t.clearConditionalFormatRules();
     t.getRange(1, 1, t.getMaxRows(), t.getMaxColumns()).clearDataValidations();
   } else t = ss.insertSheet(titel, Math.min(pos, ss.getSheets().length));
+  if (t.getMaxColumns() < h) t.insertColumnsAfter(t.getMaxColumns(), h - t.getMaxColumns()); // alte Tabs: G Zusage fehlt
+  t.showColumns(1, h);
   t.setTabColor('#7F6000');
   t.getRange(1, 1, 1, h).setValues([EAG_Z_HEAD_.map(x => x[0])]).setFontWeight('bold').setFontColor('#FFFFFF')
     .setBackground(EAG_FARBE_.ticket).setWrap(true).setVerticalAlignment('middle');
@@ -216,24 +223,30 @@ function eagZiehungTab_(ss, name, liste, pos) {
   t.getRange(2, 4, n, 1).setNumberFormat('@');
   t.getRange(2, 2, n, 1).setNumberFormat('dd.MM. HH:mm:ss');
   t.getRange(2, 1, n, 1).insertCheckboxes();
+  t.getRange(2, EAG_Z_TAB_ZUSAGE_, n, 1).insertCheckboxes();
   t.getRange(2, 1, n, h).setValues(liste.map((d, k) => {
     const z = `XLOOKUP(D${k + 2},Ticketliste!G:G,Ticketliste!B:B,"")`;
-    return [d.gezogen, `=IFERROR(IF(${z}="","",${z}),"")`, d.kunde, d.zpn, EAG_Z_TICKET_MAIL_, d.deal];
+    return [d.gezogen, `=IFERROR(IF(${z}="","",${z}),"")`, d.kunde, d.zpn, EAG_Z_TICKET_MAIL_, d.deal, false];
   }));
   // Kunde: Namensfarben aus dem Master, Prio hoch fett, Prio/Fix/Hinweise als Notiz (stört beim Kopieren nicht)
   t.getRange(2, 3, n, 1).setFontColors(liste.map(d => [d.schrift])).setBackgrounds(liste.map(d => [d.hg]))
     .setFontWeights(liste.map(d => [d.prio ? 'bold' : 'normal']))
     .setNotes(liste.map(d => [[d.prio ? '🔴 Prio hoch' : '', d.istFix ? '📌 fix zugeordnet' : '',
       `Deal ${d.deal} · ${d.partner} · Kat ${d.kat || '?'}`, d.notiz].filter(Boolean).join('\n')]));
-  t.hideColumns(h);
+  t.hideColumns(EAG_Z_TAB_DEAL_);
   t.setConditionalFormatRules([
     SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$A2=TRUE').setBackground('#C6E0B4')
       .setRanges([t.getRange(2, 1, n, h)]).build()
   ]);
   eagZiehungFortschritt_(t);
   // Nur zum Kopieren (außer RP): ganzer Tab gesperrt außer Hakerl A (bei jedem Lauf neu, Zeilenzahl ändert sich)
-  eagZiehungSchutzTab_(t, [t.getRange(2, 1, n, 1)]);
+  eagZiehungSchutzTab_(t, eagZiehungTabFrei_(t, n));
   return t;
+}
+
+// Personen-Tab: frei für Link-Leute = Hakerl A + Zusage G
+function eagZiehungTabFrei_(t, n) {
+  return n > 0 ? [t.getRange(2, 1, n, 1), t.getRange(2, EAG_Z_TAB_ZUSAGE_, n, 1)] : [];
 }
 
 // Live-Fortschritt im Kopf C1 („Kunde · 3/12 gezogen"), reine Formel → aktualisiert sich bei jedem Hakerl, kein Trigger.
@@ -244,7 +257,7 @@ function eagZiehungFortschritt_(t) {
   const regeln = t.getConditionalFormatRules().filter(r =>
     !(r.getBooleanCondition() && r.getBooleanCondition().getCriteriaValues()[0] === alle));
   regeln.push(SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied(alle)
-    .setBackground('#38761D').setRanges([t.getRange(1, 1, 1, EAG_Z_HEAD_.length - 1)]).build());
+    .setBackground('#38761D').setRanges([t.getRange(1, 1, 1, EAG_Z_TAB_DEAL_ - 1)]).build());
   t.setConditionalFormatRules(regeln);
 }
 
@@ -276,7 +289,9 @@ function eagZiehungFarbigNachUnten_(sh) {
   const C = EAG_COL_, n = sh.getLastRow() - 1;
   if (n < 2) return 'Sortierung: nichts zu tun.';
   const kRng = sh.getRange(2, C.kunde, n, 1), schrift = kRng.getFontColors(), hg = kRng.getBackgrounds();
-  const zuSchieben = eagZiehungZuSchieben_(schrift.map((s, k) => !!(eagZiehungFarbe_(s[0]) || eagZiehungFarbe_(hg[k][0]))));
+  const zusage = sh.getMaxColumns() >= EAG_Z_ZUSAGE_ ? sh.getRange(2, EAG_Z_ZUSAGE_, n, 1).getValues() : schrift.map(() => [false]);
+  const zuSchieben = eagZiehungZuSchieben_(schrift.map((s, k) =>
+    !!(eagZiehungFarbe_(s[0]) || eagZiehungFarbe_(hg[k][0]) || zusage[k][0] === true)));
   if (!zuSchieben.length) return 'Sortierung: rot/grün stehen schon unten.';
   const vorher = sh.getRange(2, 1, n, C.deal).getValues(); // A gezogen, B Zeit, C Deal
   // ab Zeile k+2 sind schon i Zeilen darüber weggeschoben worden; Ziel n+2 = hinter die letzte Zeile
@@ -311,7 +326,7 @@ function eagZiehungSchutzAn() {
   eagZiehungSchutzMaster_(ss.getSheetByName('Ticketliste'));
   [EAG_Z_TEAM_, 'Info'].map(x => ss.getSheetByName(x)).filter(Boolean).forEach(t => eagZiehungSchutzTab_(t, []));
   ss.getSheets().filter(t => t.getName().indexOf(EAG_Z_PREFIX_) === 0)
-    .forEach(t => eagZiehungSchutzTab_(t, t.getLastRow() > 1 ? [t.getRange(2, 1, t.getLastRow() - 1, 1)] : []));
+    .forEach(t => eagZiehungSchutzTab_(t, eagZiehungTabFrei_(t, t.getLastRow() - 1)));
   Logger.log(`Schutz an: RP (@${Session.getEffectiveUser().getEmail().split('@')[1]}) alles, Link-Mitbearbeiter nur Hakerl. ` +
     `Tabs: ${ss.getSheets().map(t => t.getName()).join(', ')}`);
 }
@@ -329,13 +344,13 @@ function eagZiehungSpaltenZeigen() {
   EAG_Z_VERBERGEN_.forEach(x => sh.showColumns(sh.getRange(x + '1').getColumn()));
 }
 
-// Master: alles gesperrt außer den Hakerl-Spalten A (gezogen), O (EAG-Portal), P (Antrag)
+// Master: alles gesperrt außer den Hakerl-Spalten A (gezogen), O (EAG-Portal), P (Antrag), U (Zusage schon)
 function eagZiehungSchutzMaster_(sh) {
   // alte Einzel-Sperren G/I (nur Owner) ablösen → RP darf jetzt auch dort
   sh.getProtections(SpreadsheetApp.ProtectionType.RANGE)
     .filter(p => p.getDescription() === 'EAG: ZPN + Mail gesperrt (Korrektur im Montage-Sheet)').forEach(p => p.remove());
   const max = EAG_MAX_ZEILEN_, C = EAG_COL_;
-  eagZiehungSchutzTab_(sh, [C.gezogen, C.portal, C.antrag].map(c => sh.getRange(2, c, max - 1, 1)));
+  eagZiehungSchutzTab_(sh, [C.gezogen, C.portal, C.antrag, EAG_Z_ZUSAGE_].map(c => sh.getRange(2, c, max - 1, 1)));
 }
 
 // Tab-Schutz neu setzen: ganze Tab gesperrt für Nicht-RP, frei bleiben nur die übergebenen Bereiche
@@ -362,11 +377,43 @@ function eagZiehungNurRp_(p) {
   return p;
 }
 
+// Zusage schon: Master U an; nicht gezogen → Zieher S leer (Team-Zähler stimmt, nächstes Verteilen nimmt ihn raus)
+function eagZiehungZusageMaster_(master, row, gezogen) {
+  master.getRange(row, EAG_Z_ZUSAGE_).setValue(true);
+  if (!gezogen) master.getRange(row, EAG_Z_ZIEHER_).setValue('');
+}
+
 // Installierbarer onEdit-Trigger (legt eagZiehungVerteilen an): Hakerl Personen-Tab ↔ Master
 function eagZiehungOnEdit(e) {
   const r = e.range, t = r.getSheet(), name = t.getName(), ss = t.getParent(), C = EAG_COL_;
   if (r.getRow() < 2) return;
   const master = ss.getSheetByName('Ticketliste');
+  if (name.indexOf(EAG_Z_PREFIX_) === 0 && r.getColumn() <= EAG_Z_TAB_ZUSAGE_ && r.getLastColumn() >= EAG_Z_TAB_ZUSAGE_) {
+    // Personen-Tab G „Zusage schon" → Master U, Zieher S leeren (wenn nicht gezogen), Zeile hier löschen (von unten)
+    const m = master.getRange(2, 1, master.getLastRow() - 1, C.zpn).getDisplayValues();
+    const z = t.getRange(r.getRow(), 1, r.getNumRows(), EAG_Z_TAB_ZUSAGE_).getValues();
+    for (let i = z.length - 1; i >= 0; i--) {
+      const [gez, , , zpn, , deal, zus] = z[i];
+      if (zus !== true) continue;
+      const k = m.findIndex(x => deal !== '' ? String(x[C.deal - 1]) === String(deal) : (zpn && x[C.zpn - 1] === zpn));
+      if (k >= 0) eagZiehungZusageMaster_(master, k + 2, gez === true);
+      t.deleteRow(r.getRow() + i);
+    }
+    return;
+  }
+  if (name === 'Ticketliste' && r.getColumn() <= EAG_Z_ZUSAGE_ && r.getLastColumn() >= EAG_Z_ZUSAGE_) {
+    // Master U „Zusage schon" angehakt → Zeile aus dem Personen-Tab löschen, Zieher S leeren (wenn nicht gezogen)
+    master.getRange(r.getRow(), 1, r.getNumRows(), EAG_Z_ZUSAGE_).getValues().forEach((x, i) => {
+      if (x[EAG_Z_ZUSAGE_ - 1] !== true) return;
+      const tab = x[EAG_Z_ZIEHER_ - 1] && ss.getSheetByName(EAG_Z_PREFIX_ + String(x[EAG_Z_ZIEHER_ - 1]).trim());
+      eagZiehungZusageMaster_(master, r.getRow() + i, x[C.gezogen - 1] === true);
+      if (!tab || tab.getLastRow() < 2) return;
+      const zeilen = tab.getRange(2, 4, tab.getLastRow() - 1, 3).getDisplayValues(); // D ZPN, E Mail, F Deal
+      const deal = x[C.deal - 1], zpn = String(x[C.zpn - 1]);
+      const k = zeilen.findIndex(z => deal !== '' ? z[2] === String(deal) : (zpn && z[0] === zpn));
+      if (k >= 0) tab.deleteRow(k + 2);
+    });
+  }
   if (name.indexOf(EAG_Z_PREFIX_) === 0 && r.getColumn() === 1) { // Personen-Tab: A Hakerl, D ZPN, F Deal-ID
     const m = master.getRange(2, 1, master.getLastRow() - 1, C.zpn).getDisplayValues();
     t.getRange(r.getRow(), 1, r.getNumRows(), 6).getValues().forEach(([gez, , , zpn, , deal]) => {
