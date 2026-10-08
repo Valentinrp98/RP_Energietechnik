@@ -185,11 +185,12 @@ function eagQuellenLesen_() {
       const deal = Number(get('Deal-ID'));
       if (!deal || EAG_SKIP_.indexOf(deal) >= 0) return;
       const hak = r[iHak] === true || String(t[iHak]).toUpperCase() === 'TRUE';
-      const zpnRe = /AT(?: ?[0-9A-Z]){20,31}/;
+      // Trenner (Leerzeichen . - / _) zwischen den Stellen erlaubt, z.B. „AT.008000.08055.…" (7490, 08.10.)
+      const zpnRe = /AT(?:[ .\-\/_]?[0-9A-Z]){20,31}/;
       const m = get('Zählpunkt').match(zpnRe) || get('Zählpunktnummer').match(zpnRe) ||
         get('Sonstige Informationen').match(zpnRe);
       if (!hak && !m) return;
-      out.push(eagDatensatz_(src.partner, deal, hak, m ? m[0].replace(/ /g, '') : '', get));
+      out.push(eagDatensatz_(src.partner, deal, hak, m ? m[0].replace(/[ .\-\/_]/g, '') : '', get));
     });
   });
   return out;
