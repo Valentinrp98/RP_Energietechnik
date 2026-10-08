@@ -73,7 +73,14 @@ function eagZiehungVerteilen() { eagZiehungLauf_(false); }
 // Test: rechnet die Verteilung durch und loggt sie -- schreibt NICHTS (kein S, keine Tabs, kein Trigger, kein Listen-Update)
 function eagZiehungVorschau() { eagZiehungLauf_(true); }
 
-function eagZiehungLauf_(vorschau) {
+// Neue Leute dazugekommen (Team-Tab: Name + Anwesend): Verteilen ohne Ausgleich gibt ihnen nur freie Deals.
+// Ausgleichen schiebt offene Deals von den Vollsten zu den Leersten, bis alle ±1 gleich viele OFFENE haben.
+// Gezogene + Fix-Deals bleiben; geschoben wird jeweils der letzte der Liste (= den hätte man zuletzt gezogen).
+// Während der Ziehung nur mit Ansage: wer gerade einen verschobenen Deal ausfüllt, verliert die Zeile im Tab.
+function eagZiehungAusgleichen() { eagZiehungLauf_(false, true); }
+function eagZiehungAusgleichenVorschau() { eagZiehungLauf_(true, true); }
+
+function eagZiehungLauf_(vorschau, ausgleich) {
   if (!vorschau) eagTicketliste(); // frische Daten (eigener Lock)
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) { Logger.log('Läuft schon, abgebrochen.'); return; }
@@ -135,13 +142,27 @@ function eagZiehungLauf_(vorschau) {
       zaehle(d);
       if (alt) log.push(`${d.deal || d.kunde}: ${alt} (nicht anwesend) → ${d.zieher}`);
     });
+    if (ausgleich) {
+      const offen = p => deals.filter(d => d.zieher === p && !d.gezogen);
+      const fest = {};
+      for (;;) {
+        const voll = leute.filter(p => !fest[p]).sort((x, y) => offen(y).length - offen(x).length)[0];
+        const leer = leute.slice().sort((x, y) => offen(x).length - offen(y).length)[0];
+        if (!voll || offen(voll).length - offen(leer).length <= 1) break;
+        const d = offen(voll).filter(x => !x.istFix).sort(ordnung).pop();
+        if (!d) { fest[voll] = true; continue; }
+        d.zieher = leer;
+        log.push(`${d.deal || d.kunde}: ${voll} → ${leer} (ausgleichen)`);
+      }
+    }
 
     if (vorschau) {
       const offen = deals.filter(d => !d.ready && !d.zieher && !d.raus);
-      Logger.log(`VORSCHAU (nichts geschrieben) · Anwesend: ${leute.join(', ')}\n` +
+      Logger.log(`VORSCHAU${ausgleich ? ' AUSGLEICHEN' : ''} (nichts geschrieben) · Anwesend: ${leute.join(', ')}\n` +
         leute.map(p => {
           const liste = deals.filter(d => d.zieher === p).sort(ordnung);
-          return `${p}: ${liste.length} (${liste.filter(d => d.prio).length} hoch, ${liste.filter(d => d.istFix).length} fix) → ` +
+          return `${p}: ${liste.length}, ${liste.filter(d => !d.gezogen).length} offen ` +
+            `(${liste.filter(d => d.prio).length} hoch, ${liste.filter(d => d.istFix).length} fix) → ` +
             liste.map(d => `${d.deal || d.kunde}${d.prio ? '🔴' : ''}${d.istFix ? '📌' : ''}/${d.kat}`).join(', ');
         }).join('\n') +
         `\nNicht verteilt (nicht ready): ${offen.map(d => `${d.deal || d.kunde} ${a[d.k][C.ready - 1]}`).join(', ') || '—'}` +
