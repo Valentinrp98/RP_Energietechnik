@@ -16,6 +16,9 @@
 
 const EAG_Z_PRIO_ = 18, EAG_Z_ZIEHER_ = 19, EAG_Z_FIX_ = 20; // R, S, T im Master
 const EAG_Z_TEAM_ = 'Team', EAG_Z_PREFIX_ = '🎟 ', EAG_Z_TEAM_ZEILEN_ = 20;
+// Ticket-Mail fürs EAG-Formular: Gruppe → alle im Team bekommen die Ticket-Mails (08.10., Test-Mail angekommen)
+const EAG_Z_TICKET_MAIL_ = 'eag@rp-energietechnik.at';
+const EAG_Z_SCHUTZ_ = 'EAG-Ziehung: nur zum Kopieren, nur Hakerl änderbar';
 const EAG_Z_HEAD_ = [['Prio', 55], ['Ticket gezogen', 70], ['Zeitpunkt (Master)', 135], ['Deal-ID', 65], ['Kunde', 200],
   ['Einspeise-ZPN', 270], ['Ticket-E-Mail', 230], ['PLZ', 55], ['kWp', 55], ['Kategorie', 70], ['Partner', 80], ['Hinweise', 320]];
 
@@ -85,7 +88,9 @@ function eagZiehungLauf_(vorschau) {
     const deals = w.map((r, k) => ({
       k, gezogen: r[C.gezogen - 1] === true, deal: r[C.deal - 1], kunde: a[k][C.kunde - 1], zpn: a[k][C.zpn - 1],
       mail: a[k][C.mail - 1], plz: a[k][C.plz - 1], kwp: r[C.kwp - 1], kat: a[k][C.kat - 1], partner: a[k][C.partner - 1],
-      ready: a[k][C.ready - 1].indexOf('✅') === 0, prio: String(r[EAG_Z_PRIO_ - 1]).trim().toLowerCase() === 'hoch',
+      // Mail egal (Ticket-Mail = EAG_Z_TICKET_MAIL_) → „⚠️ Mail" mit ✅ ZPN zählt als ready
+      ready: a[k][C.ready - 1].indexOf('✅') === 0 || (a[k][C.ready - 1] === '⚠️ Mail' && a[k][C.check - 1].indexOf('✅') === 0),
+      prio: String(r[EAG_Z_PRIO_ - 1]).trim().toLowerCase() === 'hoch',
       zieher: String(r[EAG_Z_ZIEHER_ - 1]).trim(), fix: String(r[EAG_Z_FIX_ - 1]).trim(),
       notiz: notiz[k][0], schrift: schrift[k][0], hg: hg[k][0]
     })).filter(d => d.deal !== '' || d.zpn);
@@ -132,6 +137,7 @@ function eagZiehungLauf_(vorschau) {
     const spalteS = w.map(r => [r[EAG_Z_ZIEHER_ - 1]]);
     deals.forEach(d => { spalteS[d.k][0] = d.zieher; });
     sh.getRange(2, EAG_Z_ZIEHER_, n, 1).setValues(spalteS);
+    eagZiehungSchutzMaster_(sh);
 
     // Tabs: alle mit zugeteilten Deals (auch Abwesende mit bereits gezogenen), übrige 🎟-Tabs weg
     const namen = leute.concat([...new Set(deals.map(d => d.zieher))].filter(p => p && leute.indexOf(p) < 0));
@@ -174,7 +180,7 @@ function eagZiehungTab_(ss, name, liste, pos) {
   t.getRange(2, 2, n, 1).insertCheckboxes();
   t.getRange(2, 1, n, h).setValues(liste.map((d, k) => {
     const z = `XLOOKUP(F${k + 2},Ticketliste!G:G,Ticketliste!B:B,"")`;
-    return [d.prio ? 'hoch' : '', d.gezogen, `=IFERROR(IF(${z}="","",${z}),"")`, d.deal, d.kunde, d.zpn, d.mail,
+    return [d.prio ? 'hoch' : '', d.gezogen, `=IFERROR(IF(${z}="","",${z}),"")`, d.deal, d.kunde, d.zpn, EAG_Z_TICKET_MAIL_,
       d.plz, d.kwp, d.kat, d.partner, (d.istFix ? '📌 fix zugeordnet' + (d.notiz ? '\n' : '') : '') + d.notiz];
   }));
   // Namensfarben aus dem Master übernehmen
@@ -185,7 +191,26 @@ function eagZiehungTab_(ss, name, liste, pos) {
     SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=$A2="hoch"').setBackground('#F4CCCC').setBold(true)
       .setRanges([t.getRange(2, 1, Math.max(n, 1), 1)]).build()
   ]);
+  // Nur zum Kopieren: ganzer Tab gesperrt außer Hakerl B (bei jedem Lauf neu, weil sich die Zeilenzahl ändert)
+  t.getProtections(SpreadsheetApp.ProtectionType.SHEET).forEach(p => p.remove());
+  eagZiehungNurIch_(t.protect().setDescription(EAG_Z_SCHUTZ_)).setUnprotectedRanges([t.getRange(2, 2, n, 1)]);
   return t;
+}
+
+// Master: ZPN (G) + Mail (I) sperren -- Korrekturen gehören ins Montage-Sheet; Script läuft als Owner und darf weiter
+function eagZiehungSchutzMaster_(sh) {
+  const besch = 'EAG: ZPN + Mail gesperrt (Korrektur im Montage-Sheet)';
+  if (sh.getProtections(SpreadsheetApp.ProtectionType.RANGE).some(p => p.getDescription() === besch)) return;
+  [`G2:G${EAG_MAX_ZEILEN_}`, `I2:I${EAG_MAX_ZEILEN_}`]
+    .forEach(a1 => eagZiehungNurIch_(sh.getRange(a1).protect().setDescription(besch)));
+}
+
+// Muster aus der Apps-Script-Doku: nur Owner + ausführender User dürfen bearbeiten
+function eagZiehungNurIch_(p) {
+  p.addEditor(Session.getEffectiveUser());
+  p.removeEditors(p.getEditors());
+  if (p.canDomainEdit()) p.setDomainEdit(false);
+  return p;
 }
 
 // Installierbarer onEdit-Trigger (legt eagZiehungVerteilen an): Hakerl Personen-Tab ↔ Master
