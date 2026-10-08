@@ -29,6 +29,23 @@ const EAG_Z_SCHUTZ_ = 'EAG: RP alles, alle anderen nur Hakerl';
 const EAG_Z_HEAD_ = [['Ticket gezogen', 70], ['Einspeise-ZPN', 280], ['Ticket-E-Mail', 230], ['Kunde', 220],
   ['Zeitpunkt', 135], ['Deal-ID', 65]];
 const EAG_Z_T_ZPN_ = 2, EAG_Z_T_KUNDE_ = 4, EAG_Z_T_ZEIT_ = 5;
+// Offline-Zieher (08.10. ~15:30): Herbert + Melanie haben ihre Liste vorab bekommen und ziehen OHNE das Sheet.
+// Diese ZPNs bleiben fix bei ihnen und werden NIE umverteilt (Verteilen, Ausgleichen, Ausfall) → kein Doppelziehen.
+// Die beiden zählen nie als anwesend (bekommen nichts dazu); ihre übrigen Deals gehen an die Anwesenden.
+const EAG_Z_OFFLINE_ = {
+  'Herbert Berger': ['AT0010000000000000001000015607548', 'AT0020000000000000000000100524839',
+    'AT0010000000000000001000015625597', 'AT0020000000000000000000100522298', 'AT0080000816200000202610070656397',
+    'AT0040000542300000000000010325064', 'AT0040000510200000000000010241421'],
+  'Melanie Reisinger': ['AT0010000000000000001000015612834', 'AT0040000502000000000000010325356',
+    'AT0020000000000000000000100524136', 'AT0020000000000000000000100524137', 'AT0010000000000000001000015625844',
+    'AT0020000000000000000000100524918', 'AT0030000000000000000000000472334', 'AT0080000877300000000000000005798']
+};
+const eagZiehungZpnNorm_ = z => String(z || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+function eagZiehungOffline_() { // normierter ZPN → Person
+  const m = {};
+  Object.keys(EAG_Z_OFFLINE_).forEach(p => EAG_Z_OFFLINE_[p].forEach(z => { m[eagZiehungZpnNorm_(z)] = p; }));
+  return m;
+}
 
 function eagZiehungVorbereiten() {
   const ss = eagListeHolen_(), sh = ss.getSheetByName('Ticketliste'), max = EAG_MAX_ZEILEN_;
@@ -108,7 +125,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
     const ss = eagListeHolen_(), sh = ss.getSheetByName('Ticketliste'), team = ss.getSheetByName(EAG_Z_TEAM_), C = EAG_COL_;
     if (!team || sh.getMaxColumns() < EAG_Z_ZUSAGE_) throw new Error('Zuerst eagZiehungVorbereiten() ausführen');
     const leute = team.getRange(2, 1, Math.max(team.getLastRow() - 1, 1), 2).getValues()
-      .filter(r => String(r[0]).trim() && r[1] === true).map(r => eagZiehungName_(r[0]));
+      .filter(r => String(r[0]).trim() && r[1] === true).map(r => eagZiehungName_(r[0])).filter(p => !EAG_Z_OFFLINE_[p]);
     if (!leute.length) throw new Error('Niemand als anwesend angehakt (Tab „Team")');
     const sortLog = vorschau ? '' : '\n' + eagZiehungFarbigNachUnten_(sh); // vor dem Lesen, Zeilen k gelten danach
 
@@ -144,10 +161,41 @@ function eagZiehungLauf_(vorschau, ausgleich) {
       .map(d => `${d.deal || d.kunde} (Schrift ${d.schrift}, Hintergrund ${d.hg})`);
     const rausLog = `\nRaus rot (Storno): ${raus('rot')}\nRaus grün (selber): ${raus('grün')}\nRaus Zusage schon: ${raus('Zusage')}` +
       (sonstFarbe.length ? `\nAndere Farbe, wird verteilt: ${sonstFarbe.join(', ')}` : '');
+    // Doppelter ZPN (z.B. Sean-Zeile ohne Deal-ID + später dieselbe Anlage mit Deal-ID aus dem Montage-Sheet) → nur EINE
+    // Zeile wird verteilt, sonst zieht man doppelt. Behalten: gezogen > hat schon Zieher > hat Deal-ID > weiter oben.
+    const proZpn = {};
+    deals.filter(d => eagZiehungZpnNorm_(d.zpn).length >= 20).forEach(d => {
+      (proZpn[eagZiehungZpnNorm_(d.zpn)] = proZpn[eagZiehungZpnNorm_(d.zpn)] || []).push(d);
+    });
+    Object.keys(proZpn).filter(z => proZpn[z].length > 1).forEach(z => {
+      const g = proZpn[z].slice().sort((x, y) => (y.gezogen - x.gezogen) || (!!y.zieher - !!x.zieher) ||
+        ((y.deal !== '') - (x.deal !== '')) || x.k - y.k);
+      g.slice(1).filter(d => !d.gezogen).forEach(d => {
+        warn.push(`${d.deal || d.kunde}: ZPN doppelt mit ${g[0].deal || g[0].kunde} → nicht verteilt (nur 1× ziehen)`);
+        if (d.zieher) log.push(`${d.deal || d.kunde}: ${d.zieher} → raus (ZPN doppelt)`);
+        d.raus = true; d.doppelt = true; d.zieher = '';
+      });
+    });
+    // Offline-Sperre (EAG_Z_OFFLINE_): fix bei Herbert/Melanie, nie umverteilen; nicht im Master gefunden → ⚠️
+    const off = eagZiehungOffline_(), gefunden = {};
+    deals.forEach(d => {
+      const p = off[eagZiehungZpnNorm_(d.zpn)];
+      if (!p) return;
+      gefunden[eagZiehungZpnNorm_(d.zpn)] = true;
+      if (d.doppelt) return;
+      if (d.raus) { warn.push(`${d.deal || d.kunde}: offline bei ${p}, aber ${d.farbe} → nicht verteilt`); return; }
+      if (d.zieher !== p && !d.gezogen) { log.push(`${d.deal || d.kunde}: ${d.zieher || '—'} → ${p} (offline)`); d.zieher = p; }
+      d.offline = true;
+    });
+    const offLog = '\n🔒 Offline (zieht ohne Sheet, wird nie umverteilt):\n' + Object.keys(EAG_Z_OFFLINE_).map(p => {
+      const fehlt = EAG_Z_OFFLINE_[p].filter(z => !gefunden[eagZiehungZpnNorm_(z)]);
+      return `${p}: ${EAG_Z_OFFLINE_[p].length - fehlt.length}/${EAG_Z_OFFLINE_[p].length} im Master` +
+        (fehlt.length ? ` · ⚠️ NICHT im Master: ${fehlt.join(', ')}` : ' ✅');
+    }).join('\n');
     // Fix-Zieher (Spalte T) gewinnt, solange die Person anwesend ist; sonst normal verteilen + Warnung
     const person = {};
     leute.forEach(p => { person[p.toLowerCase()] = p; });
-    deals.filter(d => d.fix && d.ready && !d.gezogen && !d.raus).forEach(d => {
+    deals.filter(d => d.fix && d.ready && !d.gezogen && !d.raus && !d.offline).forEach(d => {
       const p = person[d.fix.toLowerCase()];
       if (!p) { warn.push(`${d.deal || d.kunde}: Fix-Zieher „${d.fix}" nicht anwesend → normal verteilt`); return; }
       if (d.zieher !== p) { if (d.zieher) log.push(`${d.deal || d.kunde}: ${d.zieher} → ${p} (fix)`); d.zieher = p; }
@@ -156,7 +204,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
     deals.filter(d => d.fix && !d.ready && !d.gezogen && !d.raus)
       .forEach(d => warn.push(`${d.deal || d.kunde}: Fix-Zieher „${d.fix}", aber nicht ready → nicht verteilt`));
     deals.filter(d => leute.indexOf(d.zieher) >= 0).forEach(zaehle);
-    deals.filter(d => d.ready && !d.gezogen && !d.raus && leute.indexOf(d.zieher) < 0).sort(ordnung).forEach(d => {
+    deals.filter(d => d.ready && !d.gezogen && !d.raus && !d.offline && leute.indexOf(d.zieher) < 0).sort(ordnung).forEach(d => {
       const alt = d.zieher;
       d.zieher = leute.slice().sort((x, y) => last[x] - last[y] || hoch[x] - hoch[y] || leute.indexOf(x) - leute.indexOf(y))[0];
       zaehle(d);
@@ -186,7 +234,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
             liste.map(d => `${d.deal || d.kunde}${d.prio ? '🔴' : ''}${d.istFix ? '📌' : ''}/${d.kat}`).join(', ');
         }).join('\n') +
         `\nNicht verteilt (nicht ready): ${offen.map(d => `${d.deal || d.kunde} ${a[d.k][C.ready - 1]}`).join(', ') || '—'}` +
-        (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog +
+        (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog + offLog +
         `\nBeim Verteilen nach unten: ${eagZiehungZuSchieben_(deals.map(d => !!d.farbe)).length} rot/grün-Zeilen`);
       return;
     }
@@ -215,7 +263,7 @@ function eagZiehungLauf_(vorschau, ausgleich) {
     const offen = deals.filter(d => !d.ready && !d.zieher && !d.raus);
     Logger.log(`Anwesend: ${leute.join(', ')}\n${links.join('\n')}\n` +
       `Nicht verteilt (nicht ready): ${offen.map(d => `${d.deal || d.kunde} ${a[d.k][C.ready - 1]}`).join(', ') || '—'}` +
-      (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog + sortLog);
+      (log.length ? `\nUmverteilt:\n${log.join('\n')}` : '') + (warn.length ? `\n⚠️ Fix-Zuordnung:\n${warn.join('\n')}` : '') + rausLog + offLog + sortLog);
   } finally {
     lock.releaseLock();
   }
@@ -475,17 +523,19 @@ function eagZiehungAusfall_(ss, person) {
     if (!quelle || !eagZiehungIstTab_(quelle) || quelle.getLastRow() < 2) return melde('kein Tab / nichts offen');
     const leute = team.getRange(2, 1, Math.max(team.getLastRow() - 1, 1), 2).getValues()
       .filter(r => String(r[0]).trim() && r[1] === true).map(r => eagZiehungName_(r[0]))
-      .filter(p => p !== person && ss.getSheetByName(p) && eagZiehungIstTab_(ss.getSheetByName(p)));
+      .filter(p => p !== person && !EAG_Z_OFFLINE_[p] && ss.getSheetByName(p) && eagZiehungIstTab_(ss.getSheetByName(p)));
     if (!leute.length) return melde('niemand anderer anwesend (mit Tab) → nichts verschoben');
     const n = eagLetzteZeile_(sh) - 1, m = sh.getRange(2, 1, n, EAG_Z_ZIEHER_).getValues();
     const offen = {};
     leute.forEach(p => { offen[p] = m.filter(r => eagZiehungName_(r[EAG_Z_ZIEHER_ - 1]) === p && r[C.gezogen - 1] !== true).length; });
     const zeilen = quelle.getRange(2, 1, quelle.getLastRow() - 1, EAG_Z_HEAD_.length).getValues();
     const anzeige = quelle.getRange(2, 1, quelle.getLastRow() - 1, EAG_Z_HEAD_.length).getDisplayValues();
-    const weg = [], log = [], ziele = new Set();
+    const weg = [], log = [], ziele = new Set(), off = eagZiehungOffline_();
+    let gesperrt = 0;
     zeilen.forEach((z, i) => {
       if (z[0] === true) return; // gezogen → bleibt beim Ausgefallenen
       const zpn = anzeige[i][EAG_Z_T_ZPN_ - 1], deal = z[EAG_Z_HEAD_.length - 1];
+      if (off[eagZiehungZpnNorm_(zpn)]) { gesperrt++; return; } // offline-gesperrt → bleibt (EAG_Z_OFFLINE_)
       const k = m.findIndex(r => deal !== '' ? String(r[C.deal - 1]) === String(deal) : (zpn && String(r[C.zpn - 1]) === zpn));
       const p = leute.slice().sort((x, y) => offen[x] - offen[y] || leute.indexOf(x) - leute.indexOf(y))[0];
       const t = ss.getSheetByName(p), row = Math.max(t.getLastRow(), 1) + 1;
@@ -497,12 +547,12 @@ function eagZiehungAusfall_(ss, person) {
       offen[p]++; ziele.add(p); weg.push(i + 2);
       log.push(`${z[EAG_Z_T_KUNDE_ - 1]} → ${p}${k < 0 ? ' (⚠️ Master-Zeile nicht gefunden)' : ''}`);
     });
-    if (!weg.length) return melde('nichts offen, alles schon gezogen');
+    if (!weg.length) return melde(gesperrt ? `nichts verschoben (${gesperrt} offline-gesperrt, bleiben)` : 'nichts offen, alles schon gezogen');
     weg.reverse().forEach(r => quelle.deleteRow(r));
     ziele.forEach(p => { const t = ss.getSheetByName(p); eagZiehungSchutzTab_(t, eagZiehungTabFrei_(t, t.getLastRow() - 1)); });
     if (quelle.getLastRow() < 2) ss.deleteSheet(quelle);
     else eagZiehungSchutzTab_(quelle, eagZiehungTabFrei_(quelle, quelle.getLastRow() - 1));
-    melde(`${weg.length} neu verteilt: ${log.join(' · ')}`);
+    melde(`${weg.length} neu verteilt${gesperrt ? ` (${gesperrt} offline-gesperrt, bleiben)` : ''}: ${log.join(' · ')}`);
   } finally {
     lock.releaseLock();
   }

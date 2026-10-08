@@ -481,3 +481,47 @@ function eagListeHolen_() {
   props.setProperty(EAG_PROP_ID_, ss.getId());
   return ss;
 }
+
+// Seans ZPNs (EAG_SEAN_) zusätzlich in die Montage-Sheets schreiben (08.10.), damit die Montage-Sheets die Quelle bleiben.
+// Nur Sean-Einträge MIT ZPN. Kunde wird über den Namen gesucht (alle Namensteile ohne PV/Privat/Firma müssen in
+// „Kunden" vorkommen), über alle 4 Partner-Sheets. Geschrieben wird nur bei GENAU 1 Treffer und leerer Zählpunkt-Zelle
+// (oder Zelle ohne AT-Nummer); steht schon ein anderer ZPN drin → nur melden, nie überschreiben.
+// Doppelziehen verhindert eagZiehungLauf_ (doppelter ZPN → nur 1 Zeile wird verteilt).
+function eagSeanInsMontageVorschau() { eagSeanInsMontage_(false); }
+function eagSeanInsMontage() { eagSeanInsMontage_(true); }
+
+function eagSeanInsMontage_(schreiben) {
+  const norm = z => String(z || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+  const teile = s => String(s).toLowerCase().replace(/\b(pv|privat|firma)\b/g, ' ').split(/\s+/).filter(x => x.length > 1);
+  const tabs = EAG_QUELLEN_.map(src => {
+    const t = SpreadsheetApp.openById(src.id).getSheets().find(s => {
+      if (s.getLastColumn() < 1) return false;
+      const h = s.getRange(1, 1, 1, s.getLastColumn()).getDisplayValues()[0];
+      return h.indexOf('Deal-ID') >= 0 && h.indexOf('Netzanmeldung eingereicht') >= 0;
+    });
+    const a = t.getDataRange().getDisplayValues(), h = a[0].map(x => String(x).trim());
+    const sp = name => { const i = h.indexOf(name); return i >= 0 ? i : h.findIndex(x => x.indexOf(name) === 0); };
+    return { src, t, a, iKunde: sp('Kunden'), iDeal: sp('Deal-ID'), iZpn: h.indexOf('Zählpunkt') >= 0 ? h.indexOf('Zählpunkt') : sp('Zählpunktnummer') };
+  });
+  const out = [];
+  EAG_SEAN_.filter(e => norm(e[2])).forEach(([kunde, , roh]) => {
+    const zpn = norm(roh), n = teile(kunde), treffer = [];
+    tabs.forEach(q => q.a.slice(1).forEach((r, k) => {
+      const name = String(r[q.iKunde]).toLowerCase();
+      if (n.length && n.every(x => name.indexOf(x) >= 0)) treffer.push({ q, zeile: k + 2, r });
+    }));
+    // ZPN steht irgendwo schon? (dann ist alles gut)
+    const schonDa = tabs.flatMap(q => q.a.slice(1).map((r, k) => ({ q, zeile: k + 2, r })).filter(x => x.r.some(c => norm(c).indexOf(zpn) >= 0)));
+    if (schonDa.length) return out.push(`✅ ${kunde}: ZPN steht schon im ${schonDa.map(x => `${x.q.src.partner} Z${x.zeile}`).join(', ')}`);
+    if (treffer.length !== 1) return out.push(`⚠️ ${kunde}: ${treffer.length} Treffer → von Hand` +
+      (treffer.length ? ` (${treffer.map(x => `${x.q.src.partner} Z${x.zeile} „${x.r[x.q.iKunde]}"`).join(', ')})` : ''));
+    const { q, zeile, r } = treffer[0];
+    if (q.iZpn < 0) return out.push(`⚠️ ${kunde}: ${q.src.partner} hat keine Spalte „Zählpunkt"`);
+    const alt = String(r[q.iZpn]).trim();
+    const where = `${q.src.partner} Z${zeile} „${r[q.iKunde]}" Deal ${r[q.iDeal] || '—'}`;
+    if (/AT ?\d/.test(alt)) return out.push(`⚠️ ${kunde}: ${where} hat schon anderen ZPN „${alt}" → nicht überschrieben`);
+    if (schreiben) q.t.getRange(zeile, q.iZpn + 1).setNumberFormat('@').setValue(zpn);
+    out.push(`${schreiben ? '✍️ geschrieben' : '→ würde schreiben'} ${kunde}: ${zpn} → ${where}${alt ? ` (alt „${alt}")` : ''}`);
+  });
+  Logger.log(`${schreiben ? 'SCHREIBEN' : 'VORSCHAU (nichts geschrieben)'} Sean-ZPNs → Montage-Sheets\n${out.join('\n')}`);
+}
