@@ -15,8 +15,15 @@ const LOG_AUFBEWAHRUNG_TAGE = 120;
 // Anlagendetails, Fuellstand ungemessen) und Telefon (haengt an der Person,
 // braucht einen Extra-Call). Beides schaut Valentin im Deal nach — dafuer ist
 // {deallink} da.
+// Absatz in der Vorlage ("\n\n" oder echte Leerzeile). Wird VOR dem Einsetzen
+// der Platzhalter markiert, weil danach nicht mehr erkennbar ist, ob eine
+// Zeile absichtlich leer war oder nur ihr Platzhalter leer blieb.
+const ABSATZ_MARKE = '\u0001';
+
 function baueText(vorlage, kontext) {
-  let text = vorlage;
+  let text = vorlage
+    .split('\\n\\n').join('\\n' + ABSATZ_MARKE + '\\n')
+    .split('\n\n').join('\n' + ABSATZ_MARKE + '\n');
   Object.keys(kontext).forEach(function (name) {
     const wert = kontext[name];
     text = text.split('{' + name + '}').join(wert === null || wert === undefined ? '' : String(wert));
@@ -42,7 +49,20 @@ function baueText(vorlage, kontext) {
   // Tabs und Mehrfach-Leerzeichen zusammenziehen, Umbrueche aber behalten.
   text = text.replace(/[ \t]+/g, ' ');
 
-  return text.split('\n').map(raeumeZeileAuf).filter(function (z) { return z !== ''; }).join('\n');
+  // Zeilen, die erst durch einen leeren Platzhalter leer wurden, fliegen raus.
+  // Absichtliche Leerzeilen (schon in der Vorlage leer, z.B. Absaetze im
+  // WhatsApp-Text) bleiben — aber nur einzeln, nicht am Rand und nie doppelt.
+  const ergebnis = [];
+  text.split('\n').forEach(function (roh) {
+    if (roh === ABSATZ_MARKE) {
+      if (ergebnis.length > 0 && ergebnis[ergebnis.length - 1] !== '') ergebnis.push('');
+      return;
+    }
+    const z = raeumeZeileAuf(roh);
+    if (z !== '') ergebnis.push(z);
+  });
+  while (ergebnis.length > 0 && ergebnis[ergebnis.length - 1] === '') ergebnis.pop();
+  return ergebnis.join('\n');
 }
 
 // Ein leerer Platzhalter hinterlaesst sonst sein Trennzeichen: aus

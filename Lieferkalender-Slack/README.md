@@ -700,3 +700,29 @@ steht bewusst auf 500 statt 100: bei ~7000 Personen sind das 14 Calls statt 70
       kein "geloescht" ausloesen. Seine Snapshot-Zeile bleibt mit dem Hinweis
       "nicht mehr in Pipeline 2 (archiviert, verschoben oder geloescht?)"
       stehen. Sichtbar, aber still.
+
+## Ersttermin-Check (seit 08.10.2026) — `ErstterminCheck.gs`
+
+Erinnert Setter per Slack-DM, wenn sie einen Ersttermin (Betreff-Marker `(E)`)
+angelegt, aber die Setter-Info nicht befuellt haben. Grund: die Setter-Info-Notiz
+(Ordnererstellung-bei-Gewonnen/SetterInfoNotiz.gs) laeuft, aber 32 von 33
+gewonnenen Deals hatten keine Quali-Daten.
+
+- Haengt eingekapselt am Anfang von `sweep()` (kein eigener Trigger, kein eigener Lock)
+- Neue (E)-Activities via `updated_since`-Cursor -> Warteschlange (ScriptProperties)
+- Nach 30 min, nur Mo-Fr 08-18: < 2 von 8 Quali-Feldern -> DM an `creator_user_id`
+- Deal: `deal_id`, sonst offener Deal der Person in Pipeline 1 (neuester); ohne Deal -> DM an Valentin
+- Genau einmal pro Activity: Spalte B im Tab „Ersttermin-Check“ ist die Sperre
+- `ET_MODUS`: `AUS` / `TEST` (nur Valentin, mit „waere an X gegangen“) / `LIVE` (+ Kopie an Valentin solange `ET_KOPIE_AN_VALENTIN`)
+- Manuell: `testeErstterminCheck()` (Trockenlauf letzte 3 Tage, nur Log), `testeErstterminDm()`, `setzeErstterminCheckZurueck()`
+- Slack-Zuordnung: Kopie der Maps aus Closer-Score (User-ID bzw. E-Mail aus `/users` v1) — neue Setter dort UND hier eintragen
+
+## Storno/Verschoben → DM an Verkäufer (`StornoVerschoben.gs`, seit 13.10.2026)
+
+- Auslöser: `Stornozeitpunkt` oder `Verschiebezeitpunkt` geht an einem Pipeline-2-Deal von **leer auf einen Wert** (ohne / vor / nach CT — alle 6 Optionen).
+- Empfänger: Deal-Feld **Verkäufer** (`ce23b833…`) → Slack-DM von Ernst, Kopie an Valentin (`SV_KOPIE_AN_VALENTIN`). Verkäufer leer / keine Slack-ID → DM nur an Valentin mit „bitte weitergeben“.
+- 10 min Wartezeit nach dem Erkennen (Grund / „Verschoben auf“ kommen oft erst danach), gelesen wird beim Senden. Feld bis dahin wieder leer → keine DM.
+- Wertwechsel (z.B. vor CT → nach CT) → **Korrektur-DM** „jetzt nach CT (vorher vor CT)“, gleiche 10 min Wartezeit; steht der Wert beim Senden wieder auf dem alten → keine DM (VP 13.10.).
+- Text: Kundenname = eingebetteter Deal-Link; Telefon + Mail der Kontaktperson (eigener Abruf `/persons/{id}` pro DM); bei Verschoben eigene Zeile „Verschoben auf: …“ (leer → „noch offen“); Schluss „Fragen bzw. Neuigkeiten bitte an Valentin.“ (VP 13.10.).
+- Gedächtnis: ScriptProperties `SV_STAND` / `SV_QUEUE`. Erster Lauf füllt nur das Gedächtnis (0 DMs). Protokoll: Tab **Storno-Verschoben**.
+- Schalter `SV_MODUS` (AUS / TEST / LIVE). Editor: `testeStornoVerschoben()` (Trockenlauf alle Deals), `testeStornoVerschobenDm()` (Probe-DM an Valentin), `setzeStornoVerschobenZurueck()`.

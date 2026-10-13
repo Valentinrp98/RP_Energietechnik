@@ -38,11 +38,34 @@ function sweep() {
     Logger.log('=== Lieferkalender-Sweep gestartet — DRY_RUN=%s, SNAPSHOT_INITIALISIEREN=%s ===',
       DRY_RUN, SNAPSHOT_INITIALISIEREN);
 
+    // Ersttermin-Check (ErstterminCheck.gs) laeuft ZUERST und eingekapselt:
+    // so haengt er nicht davon ab, dass der Liefertermin-Teil durchlaeuft,
+    // und ein Fehler darin reisst die Liefertermin-Meldungen nicht mit.
+    // Eigener Schalter ET_MODUS — DRY_RUN gilt hier nicht.
+    try {
+      const etHinweis = erstterminCheck();
+      if (etHinweis) bilanz.hinweis = etHinweis;
+    } catch (etFehler) {
+      Logger.log('⚠️ Ersttermin-Check fehlgeschlagen: %s', etFehler.message);
+      bilanz.hinweis = 'ET-Fehler: ' + etFehler.message.slice(0, 150);
+    }
+
     const regeln = leseRegeln();
     const snapshot = leseSnapshot();
     const deals = holeFulfillmentDeals();
     bilanz.deals = deals.length;
     Logger.log('%s Deals in Pipeline %s.', deals.length, PIPELINE_ID);
+
+    // Storno/Verschoben-DM an den Verkaeufer (StornoVerschoben.gs). Nutzt die
+    // schon geholten Deals, eingekapselt wie der Ersttermin-Check.
+    // Eigener Schalter SV_MODUS — DRY_RUN gilt hier nicht.
+    try {
+      const svHinweis = stornoVerschobenCheck(deals);
+      if (svHinweis) bilanz.hinweis = bilanz.hinweis ? bilanz.hinweis + ' | ' + svHinweis : svHinweis;
+    } catch (svFehler) {
+      Logger.log('⚠️ Storno/Verschoben-Check fehlgeschlagen: %s', svFehler.message);
+      bilanz.hinweis = (bilanz.hinweis ? bilanz.hinweis + ' | ' : '') + 'SV-Fehler: ' + svFehler.message.slice(0, 150);
+    }
 
     // Der Personen-Sweep kostet Calls, also nur holen, wenn ihn eine Vorlage
     // wirklich braucht. Seit der CT-Erinnerung haengen dort auch Name und

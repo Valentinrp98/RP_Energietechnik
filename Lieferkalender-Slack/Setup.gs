@@ -198,14 +198,19 @@ function startRegeln() {
   // {cc_tel}). Die Unterschrift bleibt Firma — der Berater wird im Satz
   // genannt, nicht als Absender. Fehlt Name oder Nummer, baut baueKontext()
   // bewusst keinen Link (Slack zeigt den Grund).
+  // Kundentexte ohne Emojis und mit Leerzeilen (12.10.2026): Emojis kamen in
+  // WhatsApp Web als "�" an, und der Fliesstext in einem Block war schlecht
+  // lesbar. Absaetze statt Fliesstext, Nummer in eigener Zeile.
   const SIG = '\\nIhr Team von RP Energietechnik';
-  const WA = 'Hallo {vorname} {nachname}, morgen ({datum}) {um} ist es so weit: ' +
-             '{cc_voll} kommt zu Ihnen. Wir freuen uns auf das Gespräch! 😊 ' +
-             'Falls Sie ihm vorab etwas mitteilen möchten: {cc_tel}' +
-             '\\nLiebe Grüße' + SIG;
-  const WA_HEUTE = 'Hallo {vorname} {nachname}, wir freuen uns auf heute! ' +
-             '{cc_voll} ist {um} bei Ihnen. ☀️ Falls Sie ihn erreichen möchten: {cc_tel}' +
-             '\\nBis später & liebe Grüße' + SIG;
+  const WA = 'Hallo {vorname} {nachname},' +
+             '\\n\\nmorgen ({datum}) {um} ist es so weit: {cc_voll} kommt zu Ihnen. ' +
+             'Wir freuen uns auf das Gespräch!' +
+             '\\n\\nFalls Sie ihm vorab etwas mitteilen möchten:\\n{cc_tel}' +
+             '\\n\\nLiebe Grüße' + SIG;
+  const WA_HEUTE = 'Hallo {vorname} {nachname},' +
+             '\\n\\nwir freuen uns auf heute! {cc_voll} ist {um} bei Ihnen.' +
+             '\\n\\nFalls Sie ihn erreichen möchten:\\n{cc_tel}' +
+             '\\n\\nBis später & liebe Grüße' + SIG;
 
   // Ein Klick auf den Link oeffnet WhatsApp Desktop mit dem fertigen Text.
   const WA_L = '\\n<{walink}|📲 WhatsApp-Erinnerung öffnen> · <{deallink}|Deal {dealId}>';
