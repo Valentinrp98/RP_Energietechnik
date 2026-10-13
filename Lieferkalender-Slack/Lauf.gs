@@ -67,6 +67,16 @@ function sweep() {
       bilanz.hinweis = (bilanz.hinweis ? bilanz.hinweis + ' | ' : '') + 'SV-Fehler: ' + svFehler.message.slice(0, 150);
     }
 
+    // Liefer-Erfolg in #sales (LieferErfolg.gs), eingekapselt wie oben.
+    // Eigener Schalter LE_MODUS — DRY_RUN gilt hier nicht.
+    try {
+      const leHinweis = lieferErfolgCheck(deals);
+      if (leHinweis) bilanz.hinweis = bilanz.hinweis ? bilanz.hinweis + ' | ' + leHinweis : leHinweis;
+    } catch (leFehler) {
+      Logger.log('⚠️ Liefer-Erfolg fehlgeschlagen: %s', leFehler.message);
+      bilanz.hinweis = (bilanz.hinweis ? bilanz.hinweis + ' | ' : '') + 'LE-Fehler: ' + leFehler.message.slice(0, 150);
+    }
+
     // Der Personen-Sweep kostet Calls, also nur holen, wenn ihn eine Vorlage
     // wirklich braucht. Seit der CT-Erinnerung haengen dort auch Name und
     // Telefon dran — die Liste der Ausloeser ist deshalb laenger als {plz}.
