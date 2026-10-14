@@ -14,8 +14,8 @@
 //     Lieferung vom Freitag/Wochenende kommt also Montag nachmittag.
 //   - Nur neu ab jetzt: Liefertermine vor LE_START werden nie gemeldet.
 //   - Ort = Thread-Antwort unter dem "Auftrag …"-Post des Kunden in #sales,
-//     mit reply_broadcast ("Auch an #sales senden") — Kommentar UND
-//     Channel-Post in einem, der Kontext vom Abschluss steht gleich darueber.
+//     NUR im Thread, kein reply_broadcast (VP 14.10.2026: "nicht posten, nur
+//     im Thread lassen" — vorher ging es zusaetzlich als Channel-Post raus).
 //   - @Verkaeufer + @Cash Collector (Deal-Felder, befuellt von RollenFuellen.js).
 //     Verkaeufer leer -> Autor des "Auftrag …"-Posts (VP 13.10.).
 //   - Nur "Geliefert, Material angekommen" + @s — keine Anlagendaten (VP 13.10.).
@@ -35,7 +35,7 @@
 
 // 'AUS'  = Modul laeuft nicht
 // 'TEST' = Text geht NUR als DM an Valentin, mit Hinweis, wo er gelandet waere
-// 'LIVE' = Thread-Antwort + Broadcast in #sales
+// 'LIVE' = Thread-Antwort in #sales (ohne Broadcast)
 const LE_MODUS = 'LIVE';   // LIVE seit 13.10.2026 23:00 (VP: "umsetzen und starten")
 
 const LE_START = '2026-10-13';      // fruehester Liefertermin, der gemeldet wird
@@ -155,7 +155,7 @@ function leMelde(deal, datum, kontext, trocken) {
   if (post.ts && LE_MODUS === 'LIVE') {
     try {
       fetchSlackJson('chat.postMessage', null, {
-        channel: LE_SALES_CHANNEL_ID, thread_ts: post.ts, reply_broadcast: true,
+        channel: LE_SALES_CHANNEL_ID, thread_ts: post.ts, reply_broadcast: false,
         text: text, unfurl_links: false
       });
       return { ok: true, ziel: 'sales', text: text, spanneFehler: spanne.fehler || '',
